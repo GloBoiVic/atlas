@@ -5,13 +5,13 @@ Last updated: 2026-07-31
 ## Status
 
 - [ ] Not started
-- [x] In progress
-- [ ] Complete
+- [ ] In progress
+- [x] Complete
 
 ## Feature
 
 - **Number:** 01
-- **Name:** Project Foundation and Architecture Alignment
+- **Name:** Project Foundation
 - **File:** context/features/01-project-foundation.md
 
 ## Branch
@@ -21,12 +21,20 @@ Last updated: 2026-07-31
 
 ## What was built
 
-Cleaned and aligned the source-of-truth documentation. Ownership is explicit: project brief for product scope, architecture for runtime/contracts, roadmap for sequence, database for persistence, coding standards for structure, design for UI, and feature files for slice acceptance criteria.
+- Backend directory structure with FastAPI app, health check, config, EventBus, error types, structured logging, SQLAlchemy + PostgreSQL, and Alembic migrations
+- Worker entrypoint with graceful shutdown
+- Frontend Next.js app with landing page, dashboard placeholder, Tailwind CSS, and API client
+- Docker Compose: PostgreSQL, API, worker, and frontend services
+- pyproject.toml with all Python dependencies (FastAPI, SQLAlchemy, ccxt, pandas, structlog, ruff, mypy)
+- package.json with frontend dependencies (Next.js, React, TanStack Query, Axios, Sonner, Tailwind)
+- 19 passing tests (API health, config, errors, events, models)
+- ruff check and mypy pass clean
+- Deployment documentation, .env.example, .gitignore, .dockerignore
 
 ## What comes next
 
-Start Feature 01 implementation: Docker Compose deployment, FastAPI backend, Next.js frontend, PostgreSQL, Alembic, configuration, worker liveness, and health checks.
+Feature 02 — Core Infrastructure: EventBus persistence, config validation, structured logging verification.
 
 ## Notes
 
-Git repository initialized on `feature/01-project-foundation`. Documentation cleanup and consistency verification are complete; no application code has been written yet.
+Pushed to `origin/feature/01-project-foundation`. Ready to merge to `develop`.

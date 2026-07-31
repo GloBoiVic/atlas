@@ -10,17 +10,17 @@ None — this is the first feature.
 
 ## Deliverables
 
-- [ ] Project directory structure created
-- [ ] Docker Compose: frontend, API, worker, and PostgreSQL services
-- [ ] Python backend: FastAPI app with health check endpoint
-- [ ] SQLAlchemy: Database connection, base models
-- [ ] Alembic: Migration setup, initial migration
-- [ ] Next.js frontend: App loads, connects to backend
-- [ ] `.env.example` with all required environment variables
-- [ ] Deployment documentation for one remote VPS, Cloudflare HTTPS, and Google Access
-- [ ] `pyproject.toml` with all Python dependencies
-- [ ] `package.json` with all frontend dependencies
-- [ ] Linting and type checking configured (ruff, mypy, ESLint, TypeScript)
+- [x] Project directory structure created
+- [x] Docker Compose: frontend, API, worker, and PostgreSQL services
+- [x] Python backend: FastAPI app with health check endpoint
+- [x] SQLAlchemy: Database connection, base models
+- [x] Alembic: Migration setup, initial migration
+- [x] Next.js frontend: App loads, connects to backend
+- [x] `.env.example` with all required environment variables
+- [x] Deployment documentation for one remote VPS, Cloudflare HTTPS, and Google Access
+- [x] `pyproject.toml` with all Python dependencies
+- [x] `package.json` with all frontend dependencies
+- [x] Linting and type checking configured (ruff, mypy, ESLint, TypeScript)
 
 ## Technical Details
 
@@ -76,15 +76,15 @@ Cloudflare Access with Google authentication protects the deployed application. 
 
 ## Acceptance Criteria
 
-- [ ] `docker compose up` starts PostgreSQL, API, worker, and frontend
-- [ ] Backend starts and responds to `GET /health`
-- [ ] Frontend starts and displays a page
-- [ ] `ruff check` passes on backend
-- [ ] `mypy` passes on backend
-- [ ] `npm run lint` passes on frontend
-- [ ] Database migrations run successfully
-- [ ] Worker liveness is observable
-- [ ] Paper/testnet configuration boundaries are validated
+- [x] `docker compose up` starts PostgreSQL, API, worker, and frontend
+- [x] Backend starts and responds to `GET /health`
+- [x] Frontend starts and displays a page
+- [x] `ruff check` passes on backend
+- [x] `mypy` passes on backend
+- [x] `npm run lint` passes on frontend
+- [x] Database migrations run successfully
+- [x] Worker liveness is observable
+- [x] Paper/testnet configuration boundaries are validated
 
 ## Done when
 
