@@ -1,0 +1,37 @@
+"""Atlas worker entrypoint — runs BotSupervisor and background tasks."""
+import asyncio
+import signal
+
+import structlog
+
+from backend.config import settings
+from backend.core.logging import setup_logging
+
+logger = structlog.get_logger()
+shutdown_event = asyncio.Event()
+
+
+def handle_signal(signum: int, frame: object) -> None:
+    logger.info("worker_shutdown_signal", signal=signum)
+    shutdown_event.set()
+
+
+async def run_worker() -> None:
+    logger.info(
+        "worker_started",
+        environment=settings.ATLAS_ENVIRONMENT.value,
+    )
+    while not shutdown_event.is_set():
+        await asyncio.sleep(1)
+    logger.info("worker_stopped")
+
+
+def main() -> None:
+    setup_logging()
+    signal.signal(signal.SIGINT, handle_signal)
+    signal.signal(signal.SIGTERM, handle_signal)
+    asyncio.run(run_worker())
+
+
+if __name__ == "__main__":
+    main()
