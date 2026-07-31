@@ -1,0 +1,109 @@
+{
+  "$description": "Atlas design tokens — dark, mono-numeric, calm command center. Inter for prose, JetBrains Mono for numbers. One accent, three statuses. Source of truth for the CSS variables in atlas-tokens.css.",
+  "color": {
+    "bg":            { "$value": "#0a0b0f",            "$type": "color", "$description": "Page canvas — deepest background" },
+    "bg-elevated":   { "$value": "#111219",            "$type": "color", "$description": "Sticky bars, table headers" },
+    "surface":       { "$value": "#16171f",            "$type": "color", "$description": "Cards, panels, sections" },
+    "surface-2":     { "$value": "#1c1d27",            "$type": "color", "$description": "Hovered surface, secondary card" },
+    "surface-hover": { "$value": "#1a1b24",            "$type": "color", "$description": "Row hover, list item hover" },
+    "border":        { "$value": "#23242f",            "$type": "color", "$description": "Default 1px divider" },
+    "border-subtle": { "$value": "#1a1b24",            "$type": "color", "$description": "Hairline between rows" },
+    "border-strong": { "$value": "#2e2f3c",            "$type": "color", "$description": "Emphasized rule, button border" },
+    "fg":            { "$value": "#e8e9ed",            "$type": "color", "$description": "Primary text" },
+    "fg-secondary":  { "$value": "#9496a1",            "$type": "color", "$description": "Secondary text, table labels" },
+    "fg-muted":      { "$value": "#5c5e6a",            "$type": "color", "$description": "Meta, hints, timestamps" },
+    "accent":        { "$value": "#4e8eff",            "$type": "color", "$description": "Brand accent — use twice per screen max" },
+    "accent-dim":    { "$value": "#3a6fd4",            "$type": "color", "$description": "Accent hover / pressed" },
+    "accent-glow":   { "$value": "rgba(78, 142, 255, 0.12)", "$type": "color", "$description": "Focus halo, soft fills" },
+    "accent-soft":   { "$value": "rgba(78, 142, 255, 0.08)", "$type": "color", "$description": "Selected row tint" },
+    "positive":      { "$value": "#34d399",            "$type": "color", "$description": "Win, gain, running" },
+    "positive-dim":  { "$value": "rgba(52, 211, 153, 0.1)", "$type": "color" },
+    "negative":      { "$value": "#f87171",            "$type": "color", "$description": "Loss, drop, stopped" },
+    "negative-dim":  { "$value": "rgba(248, 113, 113, 0.1)", "$type": "color" },
+    "warn":          { "$value": "#fbbf24",            "$type": "color", "$description": "Paused, attention" },
+    "warn-dim":      { "$value": "rgba(251, 191, 36, 0.1)", "$type": "color" },
+    "info":          { "$value": "#60a5fa",            "$type": "color", "$description": "Signal, neutral highlight" },
+    "info-dim":      { "$value": "rgba(96, 165, 250, 0.1)", "$type": "color" }
+  },
+  "font": {
+    "sans": { "$value": "'Inter', -apple-system, system-ui, sans-serif", "$type": "fontFamily" },
+    "mono": { "$value": "'JetBrains Mono', ui-monospace, monospace",      "$type": "fontFamily" }
+  },
+  "text": {
+    "xs":      { "$value": "10px", "$type": "dimension" },
+    "sm":      { "$value": "11px", "$type": "dimension" },
+    "base":    { "$value": "13px", "$type": "dimension" },
+    "md":      { "$value": "14px", "$type": "dimension" },
+    "lg":      { "$value": "15px", "$type": "dimension" },
+    "xl":      { "$value": "18px", "$type": "dimension" },
+    "2xl":     { "$value": "22px", "$type": "dimension" },
+    "3xl":     { "$value": "26px", "$type": "dimension" },
+    "4xl":     { "$value": "30px", "$type": "dimension" },
+    "display": { "$value": "clamp(36px, 5vw, 56px)", "$type": "dimension" }
+  },
+  "weight": {
+    "regular":  { "$value": 400, "$type": "fontWeight" },
+    "medium":   { "$value": 500, "$type": "fontWeight" },
+    "semibold": { "$value": 600, "$type": "fontWeight" },
+    "bold":     { "$value": 700, "$type": "fontWeight" }
+  },
+  "leading": {
+    "tight":   { "$value": 1.1, "$type": "number" },
+    "snug":    { "$value": 1.3, "$type": "number" },
+    "normal":  { "$value": 1.5, "$type": "number" },
+    "relaxed": { "$value": 1.6, "$type": "number" }
+  },
+  "tracking": {
+    "tighter": { "$value": "-0.03em", "$type": "dimension" },
+    "tight":   { "$value": "-0.02em", "$type": "dimension" },
+    "normal":  { "$value": "0",       "$type": "dimension" },
+    "wide":    { "$value": "0.04em",  "$type": "dimension" },
+    "wider":   { "$value": "0.06em",  "$type": "dimension" },
+    "widest":  { "$value": "0.1em",   "$type": "dimension" }
+  },
+  "space": {
+    "1":  { "$value": "4px",  "$type": "dimension" },
+    "2":  { "$value": "8px",  "$type": "dimension" },
+    "3":  { "$value": "12px", "$type": "dimension" },
+    "4":  { "$value": "16px", "$type": "dimension" },
+    "5":  { "$value": "20px", "$type": "dimension" },
+    "6":  { "$value": "24px", "$type": "dimension" },
+    "7":  { "$value": "28px", "$type": "dimension" },
+    "8":  { "$value": "32px", "$type": "dimension" },
+    "10": { "$value": "40px", "$type": "dimension" },
+    "12": { "$value": "48px", "$type": "dimension" },
+    "16": { "$value": "64px", "$type": "dimension" },
+    "20": { "$value": "80px", "$type": "dimension" },
+    "24": { "$value": "96px", "$type": "dimension" }
+  },
+  "radius": {
+    "sm":   { "$value": "3px",    "$type": "dimension" },
+    "base": { "$value": "6px",    "$type": "dimension", "$description": "Default radius — buttons, inputs, cards" },
+    "md":   { "$value": "8px",    "$type": "dimension" },
+    "lg":   { "$value": "10px",   "$type": "dimension", "$description": "Sections, large cards, modal" },
+    "pill": { "$value": "100px",  "$type": "dimension" }
+  },
+  "duration": {
+    "fast":    { "$value": "120ms", "$type": "duration" },
+    "base":    { "$value": "150ms", "$type": "duration" },
+    "slow":    { "$value": "200ms", "$type": "duration" },
+    "slower":  { "$value": "400ms", "$type": "duration" },
+    "pulse":   { "$value": "2000ms","$type": "duration" }
+  },
+  "easing": {
+    "out":    { "$value": "cubic-bezier(0.16, 1, 0.3, 1)",  "$type": "cubicBezier" },
+    "in-out": { "$value": "cubic-bezier(0.4, 0, 0.2, 1)",   "$type": "cubicBezier" }
+  },
+  "layout": {
+    "container":         { "$value": "1440px", "$type": "dimension" },
+    "container-narrow":  { "$value": "1200px", "$type": "dimension" },
+    "topnav-height":     { "$value": "56px",   "$type": "dimension" },
+    "page-gutter":       { "$value": "32px",   "$type": "dimension" }
+  },
+  "z": {
+    "sticky":  { "$value": 50,   "$type": "number" },
+    "modal":   { "$value": 100,  "$type": "number" },
+    "toast":   { "$value": 200,  "$type": "number" },
+    "tooltip": { "$value": 300,  "$type": "number" }
+  }
+}
