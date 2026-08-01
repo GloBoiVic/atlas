@@ -60,6 +60,9 @@ def test_bot_run_has_worker_lease_fields():
     assert BotRun.__table__.c.worker_id.nullable is True
     assert BotRun.__table__.c.locked_at.nullable is True
     assert BotRun.__table__.c.bot_id.foreign_keys.pop().ondelete == "CASCADE"
+    assert {constraint.name for constraint in BotRun.__table__.constraints} >= {
+        "uq_bot_runs_bot_id"
+    }
 
 
 def test_metadata_registers_all_bot_foreign_key_targets():

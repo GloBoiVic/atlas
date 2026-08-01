@@ -33,3 +33,17 @@ Complete.
   level when no run exists yet.
 - SQL repository integration tests against PostgreSQL remain a Codespace/Compose concern because
   the host does not provide the PostgreSQL service.
+
+## Review Fixes
+
+- Added the `uq_bot_runs_bot_id` unique constraint to the ORM and migration; downgrade explicitly
+  removes the constraint before dropping `bot_runs`.
+- Replaced the missing-row `SELECT FOR UPDATE` lease path with a PostgreSQL atomic upsert. The
+  conflict update is conditional on an unclaimed row, the same worker, or a lease at least 30
+  seconds old, so concurrent first claims have one winner and stale leases remain reclaimable.
+- Made reconciliation recording use database conflict handling before reading the winning row,
+  which is idempotent under concurrent duplicate calls.
+- Added PostgreSQL dialect statement tests for the lease upsert and reconciliation conflict path,
+  plus ORM and migration constraint assertions. Live PostgreSQL concurrency and `alembic check`
+  remain unavailable on the Mac host because PostgreSQL is not running; the existing migration
+  rendering tests and full test suite pass.

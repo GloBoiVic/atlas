@@ -52,6 +52,7 @@ def test_upgrade_renders_reference_tables_and_constraints():
     assert 'FOREIGN KEY(strategy_version_id) REFERENCES strategy_versions (id)' in sql
     assert "pnl NUMERIC(20, 8) DEFAULT 0" in sql
     assert 'pnl NUMERIC(20, 8) DEFAULT 0 NOT NULL' not in sql
+    assert "CONSTRAINT uq_bot_runs_bot_id UNIQUE (bot_id)" in sql
 
 
 def test_downgrade_drops_dependents_before_reference_tables():
@@ -61,3 +62,6 @@ def test_downgrade_drops_dependents_before_reference_tables():
     assert sql.index('DROP TABLE bot_runs') < sql.index('DROP TABLE strategies')
     assert sql.index('DROP TABLE bots') < sql.index('DROP TABLE strategy_versions')
     assert sql.index('DROP TABLE strategy_versions') < sql.index('DROP TABLE strategies')
+    assert sql.index('ALTER TABLE bot_runs DROP CONSTRAINT uq_bot_runs_bot_id') < sql.index(
+        'DROP TABLE bot_runs'
+    )

@@ -36,6 +36,8 @@ Last updated: 2026-08-01
   schema and migration.
 - Supervisor Task 2 repository slice is complete: model-free protocols, SQLAlchemy and
   in-memory bot, lease, lifecycle, and reconciliation repositories are implemented and tested.
+- Supervisor Task 2 review fixes are complete: database-enforced one-run-per-bot, atomic first
+  lease claims, concurrent-safe reconciliation idempotency, and SQL dialect coverage.
 
 ## What comes next
 

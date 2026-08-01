@@ -1,8 +1,10 @@
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, cast
 
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.sql.dml import Insert
 
 from backend.persistence.models import Bot, BotRun, ReconciliationRun
 from backend.persistence.repositories.protocols import (
@@ -16,6 +18,55 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import CursorResult
 
 LEASE_TIMEOUT = timedelta(seconds=30)
+
+
+def _claim_statement(bot_id: str, worker_id: str, claim_time: datetime) -> Insert:
+    expiry = claim_time - LEASE_TIMEOUT
+    return (
+        insert(BotRun)
+        .values(
+            bot_id=bot_id,
+            worker_id=worker_id,
+            locked_at=claim_time,
+            status="starting",
+            started_at=claim_time,
+            last_heartbeat_at=claim_time,
+        )
+        .on_conflict_do_update(
+            index_elements=[BotRun.bot_id],
+            set_={
+                "worker_id": worker_id,
+                "locked_at": claim_time,
+                "status": "starting",
+                "last_heartbeat_at": claim_time,
+            },
+            where=or_(
+                BotRun.worker_id.is_(None),
+                BotRun.worker_id == worker_id,
+                BotRun.locked_at <= expiry,
+            ),
+        )
+        .returning(BotRun)
+    )
+
+
+def _reconciliation_insert_statement(result: ReconciliationRecord) -> Insert:
+    return (
+        insert(ReconciliationRun)
+        .values(
+            id=result.id,
+            account_id=result.account_id,
+            bot_id=result.bot_id,
+            status=result.status,
+            broker_snapshot=dict(result.broker_snapshot),
+            differences=dict(result.differences),
+            started_at=result.started_at,
+            completed_at=result.completed_at,
+            error_message=result.error_message,
+        )
+        .on_conflict_do_nothing(index_elements=[ReconciliationRun.id])
+        .returning(ReconciliationRun)
+    )
 
 
 def _bot_record(bot: Bot) -> BotRecord:
@@ -99,39 +150,10 @@ class SqlAlchemySupervisorRepositories:
         now: datetime | None = None,
     ) -> LeaseRecord | None:
         claim_time = now or datetime.now(UTC)
-        expiry = claim_time - LEASE_TIMEOUT
         async with self._session_factory.begin() as session:
-            result = await session.execute(
-                select(BotRun)
-                .where(BotRun.bot_id == bot_id)
-                .order_by(BotRun.started_at.desc())
-                .with_for_update()
-            )
-            run = result.scalars().first()
-            if (
-                run is not None
-                and run.worker_id not in (None, worker_id)
-                and run.locked_at is not None
-                and run.locked_at > expiry
-            ):
-                return None
-            if run is None:
-                run = BotRun(
-                    bot_id=bot_id,
-                    worker_id=worker_id,
-                    locked_at=claim_time,
-                    status="starting",
-                    started_at=claim_time,
-                    last_heartbeat_at=claim_time,
-                )
-                session.add(run)
-            else:
-                run.worker_id = worker_id
-                run.locked_at = claim_time
-                run.status = "starting"
-                run.last_heartbeat_at = claim_time
-            await session.flush()
-            return _lease_record(run)
+            result = await session.execute(_claim_statement(bot_id, worker_id, claim_time))
+            run = result.scalar_one_or_none()
+            return _lease_record(run) if run is not None else None
 
     async def renew(self, bot_id: str, worker_id: str, now: datetime | None = None) -> bool:
         heartbeat = now or datetime.now(UTC)
@@ -161,22 +183,12 @@ class SqlAlchemySupervisorRepositories:
 
     async def record(self, result: ReconciliationRecord) -> ReconciliationRecord:
         async with self._session_factory.begin() as session:
-            existing = await session.get(ReconciliationRun, result.id)
-            if existing is not None:
-                return _reconciliation_record(existing)
-            run = ReconciliationRun(
-                id=result.id,
-                account_id=result.account_id,
-                bot_id=result.bot_id,
-                status=result.status,
-                broker_snapshot=dict(result.broker_snapshot),
-                differences=dict(result.differences),
-                started_at=result.started_at,
-                completed_at=result.completed_at,
-                error_message=result.error_message,
-            )
-            session.add(run)
-            await session.flush()
+            inserted = await session.execute(_reconciliation_insert_statement(result))
+            run = inserted.scalar_one_or_none()
+            if run is None:
+                run = await session.get(ReconciliationRun, result.id)
+            if run is None:
+                raise RuntimeError("reconciliation insert did not produce a row")
             return _reconciliation_record(run)
 
     async def get_reconciliation(self, reconciliation_id: str) -> ReconciliationRecord | None:

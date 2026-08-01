@@ -99,6 +99,7 @@ def upgrade() -> None:
         sa.Column("last_heartbeat_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("error_message", sa.Text(), nullable=True),
         sa.ForeignKeyConstraint(["bot_id"], ["bots.id"], ondelete="CASCADE"),
+        sa.UniqueConstraint("bot_id", name="uq_bot_runs_bot_id"),
     )
     op.create_table(
         "reconciliation_runs",
@@ -130,6 +131,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_table("reconciliation_runs")
+    op.drop_constraint("uq_bot_runs_bot_id", "bot_runs", type_="unique")
     op.drop_table("bot_runs")
     op.drop_table("bots")
     op.drop_table("strategy_versions")

@@ -114,6 +114,7 @@ class Bot(Base):
 
 class BotRun(Base):
     __tablename__ = "bot_runs"
+    __table_args__ = (UniqueConstraint("bot_id", name="uq_bot_runs_bot_id"),)
 
     id: Mapped[str] = mapped_column(
         String(36), primary_key=True, default=lambda: str(uuid4())
