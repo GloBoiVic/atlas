@@ -1,7 +1,7 @@
 # GitHub Codespaces Development
 
 GitHub Codespaces is Atlas's supported development environment. It provides a Linux
-container, Python, Node.js, and Docker so the Mac host does not need Docker Desktop,
+container, Python, Node.js 20.9+, and Docker so the Mac host does not need Docker Desktop,
 Colima, or a local Docker daemon.
 
 ## Create a Codespace
@@ -80,6 +80,10 @@ python -m pytest
 npm --prefix frontend run lint
 npm --prefix frontend run typecheck
 ```
+
+Next.js 16 requires Node.js 20.9 or newer. Confirm the Codespace runtime before frontend
+checks with `node --version`; the frontend Docker image uses the same minimum runtime. The
+frontend lint check invokes ESLint directly because Next.js 16 removed `next lint`.
 
 These local checks validate source code and do not replace service validation. API, worker, and
 PostgreSQL integration validation must use the Docker Compose workflow above:

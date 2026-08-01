@@ -93,8 +93,8 @@ are complete.
 
 ## Notes
 
-Next.js 16 Task 1 is implemented on `chore/next16-upgrade`; Task 2 owns the follow-up
-documentation and Node.js runtime guidance.
+Next.js 16 Task 1 and Task 2 documentation/runtime guidance are implemented on
+`chore/next16-upgrade`.
 
 Branch from `main` because no `develop` branch exists. Run the full test suite immediately
 after moving `AccountMode`, then again after all Feature 02 slices. Docker/Compose verification

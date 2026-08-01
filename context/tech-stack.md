@@ -125,9 +125,9 @@ Next.js for server-side rendering, file-based routing, and API routes. React for
 
 | Requirement | Version | Rationale |
 |-------------|---------|-----------|
-| Next.js | `^15.0.0` (manifest range) | React framework with SSR, routing, API routes |
-| React | `^19.0.0` (manifest range) | Component-based UI |
-| Node.js | 20+ | Runtime for Next.js |
+| Next.js | `^16.2.12` (manifest range; resolved 16.2.12) | React framework with SSR and file-based routing |
+| React | `^19.2.8` (manifest range; resolved 19.2.8) | Component-based UI compatible with Next.js 16 |
+| Node.js | 20.9+ | Minimum runtime required by Next.js 16 |
 
 ### Language: TypeScript
 
@@ -280,7 +280,7 @@ For strategy exploration, data analysis, and indicator development. Uses the sam
 
 | Layer | Technology |
 |-------|------------|
-| Framework | Next.js `^15.0.0` |
+| Framework | Next.js `^16.2.12` |
 | Language | TypeScript `^5.7.0` |
 | UI Components | Shadcn/ui + selected Radix components |
 | Styling | Tailwind CSS `^4.0.0` |

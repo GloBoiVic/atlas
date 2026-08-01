@@ -603,11 +603,21 @@ async def test_full_backtest_flow():
 
 ---
 
-## Next.js 15
+## Next.js 16
 
-Reference skill: `.agents/skills/nextjs-core/SKILL.md`. The frontend is an operational UI
-over the FastAPI REST/WebSocket API; Next.js route handlers and Server Actions must not
-become a second trading-state API boundary without an architecture decision.
+Reference skill: `.agents/skills/nextjs-core/SKILL.md`. Atlas resolves Next.js 16.2.12 with
+React and React DOM 19.2.8. The frontend is an operational UI over the FastAPI REST/WebSocket
+API; Next.js route handlers and Server Actions must not become a second trading-state API
+boundary without an architecture decision.
+
+Next.js 16 requires Node.js 20.9 or newer. The `next lint` command and the Next config `eslint`
+option are removed; run the ESLint CLI through the frontend `lint` script instead. Atlas uses
+ESLint flat config in `frontend/eslint.config.mjs`. `next build` does not run linting, so lint
+and build remain separate checks.
+
+Next.js 16 uses Turbopack by default for `next dev` and `next build`. Atlas has no custom
+webpack or Turbopack configuration and does not enable optional React Compiler, Cache Components,
+filesystem caching, or other experimental features.
 
 ### File-Based Routing
 
@@ -629,7 +639,8 @@ app/
         └── route.ts            # /api/health
 ```
 
-Dynamic page parameters are promises in the current App Router API:
+Dynamic page parameters and page search parameters are promises in the Next.js 16 App Router
+API. Request-time `cookies()`, `headers()`, and `draftMode()` are asynchronous as well:
 
 ```tsx
 type StrategyPageProps = {
@@ -642,6 +653,10 @@ export default async function StrategyPage({ params }: StrategyPageProps) {
   return <StrategyDetails strategy={strategy} />
 }
 ```
+
+Use the same awaited pattern in layouts, route handlers, metadata and image generators, and
+sitemaps when those conventions are introduced. Task 1 verified that Atlas currently has no
+dynamic routes, metadata/image/sitemap generators, or synchronous request API usage.
 
 ### API Routes
 
@@ -704,10 +719,21 @@ export function TradingChart({ data }: { data: CandleData[] }) {
   failure, or missing-resource states.
 - Do not use Server Actions as a replacement for FastAPI trading endpoints without updating
   the architecture and security boundary first.
+- Keep FastAPI as the canonical API for trading commands, persistence, and durable state; a
+  frontend-local route handler is only appropriate for an explicitly local concern such as
+  health reporting.
+- Next.js 16's `proxy.ts` convention is the successor to `middleware.ts`; Atlas currently has
+  neither file nor related configuration. Review the proxy runtime and naming rules before
+  introducing request interception.
 
 ---
 
-## React 19
+## React 19.2
+
+Next.js 16's App Router is compatible with React 19.2. Atlas resolves React and React DOM
+19.2.8. Use React 19.2 APIs only where they solve a concrete UI need; React Compiler,
+`useEffectEvent`, View Transitions, and Activity are not enabled or required by the current
+application.
 
 ### Hooks
 
