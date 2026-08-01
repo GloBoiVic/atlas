@@ -58,3 +58,9 @@ the Docker/Compose runtime should be validated in a Codespace.
   intentionally made no dependency or override changes.
 - `node:20.9-slim` and the devcontainer Node feature declaration should be exercised in the
   supported Codespaces environment before deployment.
+
+## Review Correction
+
+The Proxy guidance now accurately states that, in Next.js 16.2.12, Proxy runs on the Node.js
+runtime by default and does not support a configurable `runtime` option. This correction is
+documentation-only; Atlas still has no `proxy.ts` or middleware implementation.

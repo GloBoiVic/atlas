@@ -723,7 +723,8 @@ export function TradingChart({ data }: { data: CandleData[] }) {
   frontend-local route handler is only appropriate for an explicitly local concern such as
   health reporting.
 - Next.js 16's `proxy.ts` convention is the successor to `middleware.ts`; Atlas currently has
-  neither file nor related configuration. Review the proxy runtime and naming rules before
+  neither file nor related configuration. Proxy runs on the Node.js runtime by default and does
+  not support a configurable `runtime` option. Review the proxy runtime and naming rules before
   introducing request interception.
 
 ---
