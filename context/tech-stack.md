@@ -210,6 +210,10 @@ For GitHub Codespaces development and the single-user remote deployment. The fro
 worker, and PostgreSQL run as separate containers. Codespaces supplies the Linux container
 runtime; Docker Desktop is not required for Atlas development.
 
+Codespace creation intentionally avoids installing the full application dependency trees.
+Compose image builds install each service's runtime dependencies so development and remote
+deployment use the same packaging path.
+
 | Requirement | Version | Rationale |
 |-------------|---------|-----------|
 | Docker Engine | 24+ | Container runtime supplied by Codespaces or Linux VPS |

@@ -31,6 +31,7 @@ Last updated: 2026-07-31
 - ruff check and mypy pass clean
 - Deployment documentation, .env.example, .gitignore, .dockerignore
 - GitHub Codespaces devcontainer with Python, Node.js, Docker, forwarded ports, and setup commands
+- Codespace creation avoids heavy dependency installation; Compose builds install service dependencies
 - Container package discovery and Alembic configuration fixed for Compose service networking
 - Frontend API URL made configurable at image build time for Codespaces/browser access
 

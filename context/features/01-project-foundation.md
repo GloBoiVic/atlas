@@ -27,8 +27,10 @@ None — this is the first feature.
 The canonical backend and Next.js App Router structure is defined in `context/coding-standards.md`. This feature creates that structure without duplicating it here.
 
 Development runs in GitHub Codespaces using the checked-in `.devcontainer/devcontainer.json`.
-Production-style deployment runs the same Compose topology on a Linux VPS. Docker Desktop on
-the developer's host is not a project prerequisite.
+Codespace creation does not install the full Python or frontend dependency trees; Compose
+installs them inside the API, worker, and frontend images. Production-style deployment runs
+the same Compose topology on a Linux VPS. Docker Desktop on the developer's host is not a
+project prerequisite.
 
 ### Docker Compose
 

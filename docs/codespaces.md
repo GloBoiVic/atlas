@@ -11,9 +11,11 @@ Colima, or a local Docker daemon.
 3. Choose **Code → Codespaces → Create codespace**.
 4. Use the repository's `.devcontainer/devcontainer.json` configuration.
 
-The devcontainer installs Python development dependencies and frontend dependencies after
-the Codespace is created. A new Codespace may take several minutes to build its Docker
-feature the first time.
+The devcontainer installs the development tools needed to run the environment, but does not
+install Atlas's full Python trading stack during creation. That stack includes heavy data
+packages such as Pandas and NumPy and is installed inside the API and worker images when
+Compose builds them. A new Codespace may take several minutes to build its Docker feature
+the first time.
 
 ## Start Atlas
 
@@ -26,6 +28,10 @@ docker compose exec api alembic upgrade head
 docker compose ps
 curl http://localhost:8000/health
 ```
+
+The API and worker images install backend dependencies. The frontend image installs
+frontend dependencies. This keeps Codespace creation within the memory limit and ensures
+the runtime uses the same dependency setup as deployment.
 
 Codespaces forwards port `3000` for the frontend and port `8000` for the API. Open the
 forwarded frontend port from the **Ports** panel. Keep PostgreSQL port `5432` private.
@@ -48,13 +54,19 @@ data. Do not use a Codespace as the production trading runtime.
 
 ## Validation
 
+Backend checks can be run locally in a larger Codespace after installing the optional
+development dependencies:
+
 ```bash
+python -m pip install -e ".[dev]"
 python -m ruff check .
 python -m mypy backend/
 python -m pytest
 npm --prefix frontend run lint
 npm --prefix frontend run typecheck
 ```
+
+The dependency install is intentionally manual. It is not part of Codespace creation.
 
 The production deployment remains a Docker Compose application on a Linux VPS behind
 Cloudflare Access. Codespaces changes development setup only.

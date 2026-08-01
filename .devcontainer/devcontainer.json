@@ -23,7 +23,6 @@
       "onAutoForward": "notify"
     }
   },
-  "postCreateCommand": "python -m pip install -e '.[dev]' && npm --prefix frontend install",
   "customizations": {
     "vscode": {
       "extensions": [

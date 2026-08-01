@@ -16,6 +16,9 @@ Read these files in order:
 Development environment: use GitHub Codespaces as documented in `docs/codespaces.md`.
 Do not assume Docker Desktop or a local Docker daemon is available on the developer's Mac.
 Atlas still uses Docker Compose for the API, worker, frontend, and PostgreSQL services.
+Codespace creation does not install the full application dependency trees; use Compose image
+builds for runtime dependencies and install optional development dependencies manually only
+when the machine has sufficient memory.
 
 When the work touches a covered library, also read the relevant local skill under
 `.agents/skills/`:
