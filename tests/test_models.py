@@ -75,6 +75,11 @@ def test_metadata_registers_all_bot_foreign_key_targets():
     assert StrategyVersion.__table__.c.strategy_id.foreign_keys
 
 
+def test_strategy_timestamps_are_nullable_per_documented_schema():
+    assert Strategy.__table__.c.created_at.nullable is True
+    assert Strategy.__table__.c.updated_at.nullable is True
+
+
 def test_bot_pnl_matches_documented_schema():
     pnl = Bot.__table__.c.pnl
     assert pnl.nullable is True

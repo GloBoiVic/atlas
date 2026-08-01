@@ -32,6 +32,8 @@ Last updated: 2026-08-01
 - Task 1 ORM models and migration are complete and verified.
 - Task 1 review fixes are complete: strategy reference tables now resolve ORM metadata and
   migration constraints, and bot P&L nullability/default matches the canonical schema.
+- Task 1 follow-up fix is complete: Strategy timestamp nullability now matches the canonical
+  schema and migration.
 
 ## What comes next
 

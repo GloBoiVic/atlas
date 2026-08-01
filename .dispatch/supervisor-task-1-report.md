@@ -62,3 +62,17 @@ The task implementation and this report are included in the task commit.
 
 - Live PostgreSQL migration execution remains unverified because PostgreSQL is unavailable on
   the Mac host. Offline Alembic rendering and structural tests cover the migration locally.
+
+## Follow-up Fix
+
+- Made `Strategy.created_at` and `Strategy.updated_at` explicitly nullable in the ORM, matching
+  the canonical schema and migration.
+- Added a focused model assertion covering both timestamp columns.
+
+## Follow-up Verification
+
+- Focused tests: `python3 -m pytest tests/test_models.py tests/test_migrations.py` -> passed.
+- Full tests: `python3 -m pytest` -> passed.
+- Ruff: `python3 -m ruff check .` -> passed.
+- Mypy: `python3 -m mypy backend` -> passed.
+- Diff check: `git diff --check` -> passed.
