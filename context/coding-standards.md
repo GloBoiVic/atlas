@@ -50,8 +50,7 @@ def calculate_position_size(balance, risk_per_trade, stop_distance):
 
 **Rules:**
 - Always use type hints on function signatures
-- Always use `Optional[X]` or `X | None` for nullable types
-- Always use `List[X]` for lists, `Dict[K, V]` for dicts
+- Use `X | None` for nullable types and built-in generics such as `list[X]` and `dict[K, V]`
 - Use `UUID` for IDs, not `str`
 - Use `Decimal` for backend money, prices, quantities, fees, and P&L. Float is allowed only for non-monetary ratios or bounded indicator calculations.
 
@@ -60,7 +59,7 @@ def calculate_position_size(balance, risk_per_trade, stop_distance):
 ```python
 # Variables and functions — snake_case
 candle_timestamp = clock.now()
-def get_strategy_by_id(strategy_id: UUID) -> Optional[Strategy]:
+def get_strategy_by_id(strategy_id: UUID) -> Strategy | None:
 
 # Classes — PascalCase
 class StrategyEngine:
@@ -90,14 +89,14 @@ def _calculate_risk(self, signal: Signal) -> Decimal:
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Optional
 from uuid import UUID
 
 # Third-party
 import pandas as pd
 import structlog
 from fastapi import APIRouter
-from sqlalchemy import Column, String
+from sqlalchemy import String
+from sqlalchemy.orm import Mapped, mapped_column
 
 # Local
 from backend.core.events import EventBus
@@ -159,6 +158,12 @@ def get_candles(instrument: str) -> list[Candle]:
 - Always use `async with` for context managers
 - Never block the event loop
 - Domain data providers return normalized Candle/Tick objects; use Pandas only inside bounded indicator or analysis calculations
+- Use `asyncio.run()` only at synchronous process entrypoints, such as the worker `main()` function.
+- Use `asyncio.get_running_loop()` inside running async code; do not use `asyncio.get_event_loop()` for new code.
+- Long-running tasks must handle cancellation by cleaning up and re-raising `asyncio.CancelledError`.
+- Keep explicit ownership of tasks created with `asyncio.create_task()` or `asyncio.TaskGroup`; do not create orphan tasks.
+- Use `asyncio.gather()` only when its failure and cancellation behavior is intentional. Use `return_exceptions=True` when independent operations must report failures separately.
+- Move unavoidable blocking library calls to an executor rather than running them on the event loop.
 
 ---
 

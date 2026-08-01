@@ -5,6 +5,9 @@
 Atlas uses PostgreSQL for persistent storage. SQLAlchemy 2.0 is the ORM. Alembic handles schema migrations.
 
 All data access goes through repository abstractions. Engines never directly manipulate database tables.
+The detailed SQLAlchemy API patterns are in `context/library-docs.md` and
+`.agents/skills/sqlalchemy-orm/SKILL.md`; this document owns Atlas's schema and persistence
+invariants.
 
 ---
 
@@ -12,14 +15,20 @@ All data access goes through repository abstractions. Engines never directly man
 
 ```python
 # backend/persistence/database.py
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from collections.abc import AsyncGenerator
+
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 DATABASE_URL = "postgresql+asyncpg://atlas:atlas@localhost:5432/atlas"
 
-engine = create_async_engine(DATABASE_URL, echo=False)
-async_session = async_sessionmaker(engine, expire_on_commit=False)
+engine = create_async_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
+async_session = async_sessionmaker(
+    engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+)
 
-async def get_session():
+async def get_session() -> AsyncGenerator[AsyncSession, None]:
     async with async_session() as session:
         yield session
 ```

@@ -13,7 +13,44 @@ Read these files in order:
 5. `context/library-docs.md` — project-specific library patterns
 6. `context/features/<current-feature>.md` — deliverables and acceptance criteria
 
-These context files are the source of truth. Do not rely on general knowledge when a project-specific document covers the decision.
+When the work touches a covered library, also read the relevant local skill under
+`.agents/skills/`:
+
+| Area | Skill |
+|------|-------|
+| FastAPI, Pydantic, streaming, routing | `.agents/skills/fastapi/SKILL.md` |
+| FastAPI dependency injection | `.agents/skills/fastapi-dependency-injection/SKILL.md` |
+| SQLAlchemy and Alembic | `.agents/skills/sqlalchemy-orm/SKILL.md` |
+| Async I/O and worker tasks | `.agents/skills/asyncio/SKILL.md` |
+| Next.js App Router | `.agents/skills/nextjs-core/SKILL.md` |
+| Tailwind CSS | `.agents/skills/tailwind-css/SKILL.md` |
+
+The authority order is:
+
+1. Security, product, and architecture invariants.
+2. Feature acceptance criteria.
+3. Actual dependency manifests and lockfiles.
+4. Official documentation for the resolved dependency versions.
+5. Project-specific guidance in `context/library-docs.md` and `context/coding-standards.md`.
+6. Local agent skills under `.agents/skills/`.
+7. General training knowledge.
+
+Local skills are reference material, not an authority over Atlas architecture or verified
+library documentation. If a skill conflicts with Atlas context or the resolved library
+version, follow the higher authority and update the project guidance when the decision is
+intentional.
+
+For version-sensitive API work:
+
+1. Identify the declared and resolved dependency version.
+2. Read the relevant local skill and its referenced material.
+3. Verify the pattern against the official documentation or changelog for that version.
+4. Check that it preserves Atlas boundaries, especially repository ownership, bot isolation,
+   deterministic backtesting, and the FastAPI-to-frontend API boundary.
+5. Run the relevant lint, type, test, and build commands.
+
+These context files are the source of truth for project decisions. Do not rely on general
+knowledge when a project-specific document covers the decision.
 
 ## Development Rules
 
@@ -24,6 +61,7 @@ These context files are the source of truth. Do not rely on general knowledge wh
 5. Write tests with every feature. Risk and execution require comprehensive coverage.
 6. Run backend `ruff check`, `mypy`, and tests. Run frontend linting, type checking, and tests.
 7. Mark completed deliverables in the current feature file.
+8. Update affected context documentation when a library pattern or architectural decision changes.
 
 ## Product Constraints
 

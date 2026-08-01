@@ -23,6 +23,8 @@ Fetch, normalize, and store market data. CSV provider for backtesting, API provi
 ### DataProvider Interface
 
 ```python
+from collections.abc import AsyncGenerator
+
 class DataProvider(ABC):
     @abstractmethod
     async def get_historical_candles(
@@ -33,12 +35,12 @@ class DataProvider(ABC):
     @abstractmethod
     async def subscribe_live_candles(
         self, instrument: str, timeframe: str
-    ) -> AsyncIterator[Candle]
+    ) -> AsyncGenerator[Candle, None]
 
     @abstractmethod
     async def subscribe_ticks(
         self, instrument: str
-    ) -> AsyncIterator[Tick]
+    ) -> AsyncGenerator[Tick, None]
 ```
 
 ### Data Models

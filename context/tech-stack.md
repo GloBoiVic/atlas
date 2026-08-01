@@ -22,8 +22,8 @@ FastAPI provides async API endpoints, WebSocket support, automatic OpenAPI docs,
 
 | Requirement | Version | Rationale |
 |-------------|---------|-----------|
-| FastAPI | 0.141.1 | Async-first, WebSocket support, Pydantic v2 integration |
-| Uvicorn | 0.52.0 | ASGI server for FastAPI |
+| FastAPI | `>=0.115,<1` (manifest range) | Async-first, WebSocket support, Pydantic v2 integration |
+| Uvicorn | `>=0.34,<1` (manifest range) | ASGI server for FastAPI |
 
 **Alternatives considered:**
 - Flask — no native async or WebSocket support
@@ -36,9 +36,9 @@ PostgreSQL for persistent storage. SQLAlchemy as the ORM for type-safe database 
 | Requirement | Version | Rationale |
 |-------------|---------|-----------|
 | PostgreSQL | 15+ | Reliable, concurrent access, production-ready |
-| SQLAlchemy | 2.0.51 | Modern async support, type-safe queries, ORM + Core |
-| Alembic | 1.18.5 | Schema versioning and migrations |
-| asyncpg | 0.31.0 | Async PostgreSQL driver for SQLAlchemy |
+| SQLAlchemy | `>=2.0,<3` (manifest range) | Modern async support, type-safe queries, ORM + Core |
+| Alembic | `>=1.14,<2` (manifest range) | Schema versioning and migrations |
+| asyncpg | `>=0.30,<1` (manifest range) | Async PostgreSQL driver for SQLAlchemy |
 
 **Alternatives considered:**
 - SQLite — no concurrent access, not production-ready
@@ -50,8 +50,8 @@ Pandas is the standard for time-series data manipulation in Python. NumPy for nu
 
 | Requirement | Version | Rationale |
 |-------------|---------|-----------|
-| Pandas | 3.0.5 | Time-series data, OHLC manipulation, rolling calculations |
-| NumPy | 1.26+ | Numerical operations, array computations |
+| Pandas | `>=2.2,<4` (manifest range) | Time-series data, OHLC manipulation, rolling calculations |
+| NumPy | `>=1.26,<3` (manifest range) | Numerical operations, array computations |
 
 ### Crypto Exchange API: ccxt
 
@@ -59,7 +59,7 @@ Unified interface to 100+ cryptocurrency exchanges. Handles authentication, rate
 
 | Requirement | Version | Rationale |
 |-------------|---------|-----------|
-| ccxt | 4.5.70 | Unified API for Binance, Coinbase, and 100+ exchanges |
+| ccxt | `>=4,<5` (manifest range) | Unified API for Binance, Coinbase, and 100+ exchanges |
 
 ### Deferred Forex API: Oanda v20 API
 
@@ -67,7 +67,7 @@ Oanda's REST API for future forex data and trading. It is not an MVP integration
 
 | Requirement | Version | Rationale |
 |-------------|---------|-----------|
-| httpx | 0.28.1 | Async HTTP client for future HTTP-based adapters |
+| httpx | `>=0.28,<1` (manifest range) | Async HTTP client for future HTTP-based adapters |
 
 **Alternatives considered:**
 - oandapyV20 — unmaintained, we can wrap the API directly with more control
@@ -78,7 +78,7 @@ For live data feeds (Binance Spot WebSocket first; Oanda deferred).
 
 | Requirement | Version | Rationale |
 |-------------|---------|-----------|
-| websockets | 17.0 | Async WebSocket client for live data feeds |
+| websockets | `>=14,<18` (manifest range) | Async WebSocket client for live data feeds |
 
 ### Configuration: Pydantic Settings + dotenv
 
@@ -86,8 +86,8 @@ Pydantic for typed configuration. dotenv for environment variables (API keys, da
 
 | Requirement | Version | Rationale |
 |-------------|---------|-----------|
-| pydantic-settings | 2.14.2 | Typed settings with validation |
-| python-dotenv | 1.2.2 | Load environment variables from .env files |
+| pydantic-settings | `>=2.6,<3` (manifest range) | Typed settings with validation |
+| python-dotenv | `>=1,<2` (manifest range) | Load environment variables from .env files |
 
 ### Logging: structlog
 
@@ -95,7 +95,7 @@ Structured logging for debugging and error tracking. Better than stdlib logging 
 
 | Requirement | Version | Rationale |
 |-------------|---------|-----------|
-| structlog | 26.1.0 | Structured logging, better than stdlib for production |
+| structlog | `>=24,<27` (manifest range) | Structured logging, better than stdlib for production |
 
 **Alternatives considered:**
 - stdlib logging — works but unstructured, harder to query
@@ -104,16 +104,16 @@ Structured logging for debugging and error tracking. Better than stdlib logging 
 
 | Requirement | Version | Rationale |
 |-------------|---------|-----------|
-| pytest | 9.1.1 | Standard Python test framework |
-| pytest-asyncio | 1.4.0 | Async test support |
-| pytest-cov | 7.1.0 | Coverage reporting |
+| pytest | `>=8,<9` (manifest range) | Standard Python test framework |
+| pytest-asyncio | `>=0.24,<0.27` (manifest range) | Async test support |
+| pytest-cov | `>=6,<8` (manifest range) | Coverage reporting |
 
 ### Linting / Type Checking
 
 | Requirement | Version | Rationale |
 |-------------|---------|-----------|
-| ruff | 0.16.1 | Fast Python linter and formatter (replaces flake8, isort, black) |
-| mypy | 2.3.0 | Static type checking |
+| ruff | `>=0.8,<1` (manifest range) | Fast Python linter and formatter (replaces flake8, isort, black) |
+| mypy | `>=1.13,<2` (manifest range) | Static type checking |
 
 ---
 
@@ -125,8 +125,8 @@ Next.js for server-side rendering, file-based routing, and API routes. React for
 
 | Requirement | Version | Rationale |
 |-------------|---------|-----------|
-| Next.js | 16.2.12 | React framework with SSR, routing, API routes |
-| React | 19.2.8 | Component-based UI |
+| Next.js | `^15.0.0` (manifest range) | React framework with SSR, routing, API routes |
+| React | `^19.0.0` (manifest range) | Component-based UI |
 | Node.js | 20+ | Runtime for Next.js |
 
 ### Language: TypeScript
@@ -135,7 +135,7 @@ Type safety for frontend code. Catches errors at compile time, improves maintain
 
 | Requirement | Version | Rationale |
 |-------------|---------|-----------|
-| TypeScript | 7.0.2 | Type safety, better DX, fewer runtime errors |
+| TypeScript | `^5.7.0` (manifest range) | Type safety, better DX, fewer runtime errors |
 
 ### UI Components: Shadcn/ui
 
@@ -144,7 +144,7 @@ Copy-paste React components built with Radix UI and Tailwind CSS. No dependency 
 | Requirement | Version | Rationale |
 |-------------|---------|-----------|
 | shadcn/ui | latest | Accessible, customizable, no dependency lock-in |
-| Radix UI | 2.1.24 | Headless UI primitives (used by shadcn/ui) |
+| Radix UI | Managed by selected Shadcn components | Headless UI primitives (used by shadcn/ui) |
 
 **Alternatives considered:**
 - Material UI — heavier, more opinionated styling
@@ -157,7 +157,7 @@ Utility-first CSS framework. Pairs with Shadcn/ui.
 
 | Requirement | Version | Rationale |
 |-------------|---------|-----------|
-| Tailwind CSS | 4.3.3 | Utility-first CSS, pairs with shadcn/ui |
+| Tailwind CSS | `^4.0.0` (manifest range) | Utility-first CSS, pairs with shadcn/ui |
 
 ### Charts: TradingView Lightweight Charts
 
@@ -165,7 +165,7 @@ Free, open-source financial charting library. Lightweight (35KB), fast, and purp
 
 | Requirement | Version | Rationale |
 |-------------|---------|-----------|
-| lightweight-charts | 5.2.0 | Free, open-source (Apache 2.0), 35KB, financial charts |
+| lightweight-charts | Not yet declared | Free, open-source financial charting library when added |
 
 **Alternatives considered:**
 - Plotly.js — heavier (3MB+), not financial-specific
@@ -178,7 +178,7 @@ Server state management for API data fetching, caching, and real-time updates.
 
 | Requirement | Version | Rationale |
 |-------------|---------|-----------|
-| @tanstack/react-query | 5.101.4 | Server state management, caching, WebSocket integration |
+| @tanstack/react-query | `^5.60.0` (manifest range) | Server state management, caching, WebSocket integration |
 
 ### HTTP Client: Axios
 
@@ -186,7 +186,7 @@ For REST API calls from the frontend.
 
 | Requirement | Version | Rationale |
 |-------------|---------|-----------|
-| axios | 1.19.0 | HTTP client with interceptors, error handling |
+| axios | `^1.7.0` (manifest range) | HTTP client with interceptors, error handling |
 
 ### Toast Notifications: Sonner
 
@@ -225,7 +225,7 @@ Schema versioning and migrations for PostgreSQL.
 
 | Requirement | Version | Rationale |
 |-------------|---------|-----------|
-| Alembic | 1.18.5 | SQLAlchemy migration tool |
+| Alembic | `>=1.14,<2` (manifest range) | SQLAlchemy migration tool |
 
 ---
 
@@ -256,30 +256,30 @@ For strategy exploration, data analysis, and indicator development. Uses the sam
 | Layer | Technology |
 |-------|------------|
 | Language | Python 3.12+ |
-| API | FastAPI 0.141.1 + Uvicorn 0.52.0 |
+| API | FastAPI `>=0.115,<1` + Uvicorn `>=0.34,<1` |
 | Database | PostgreSQL 15+ |
-| ORM | SQLAlchemy 2.0.51 |
-| Migrations | Alembic 1.18.5 |
-| Data Analysis | Pandas 3.0.5 + NumPy |
-| Crypto API | ccxt 4.5.70 |
-| Forex API | httpx 0.28.1 (Oanda REST) |
-| WebSocket | websockets 17.0 |
-| Configuration | pydantic-settings 2.14.2 + python-dotenv 1.2.2 |
-| Logging | structlog 26.1.0 |
-| Testing | pytest 9.1.1 + pytest-asyncio 1.4.0 |
-| Linting | ruff 0.16.1 + mypy 2.3.0 |
+| ORM | SQLAlchemy `>=2.0,<3` |
+| Migrations | Alembic `>=1.14,<2` |
+| Data Analysis | Pandas `>=2.2,<4` + NumPy `>=1.26,<3` |
+| Crypto API | ccxt `>=4,<5` |
+| Forex API | httpx `>=0.28,<1` (Oanda deferred) |
+| WebSocket | websockets `>=14,<18` |
+| Configuration | pydantic-settings `>=2.6,<3` + python-dotenv `>=1,<2` |
+| Logging | structlog `>=24,<27` |
+| Testing | pytest `>=8,<9` + pytest-asyncio `>=0.24,<0.27` |
+| Linting | ruff `>=0.8,<1` + mypy `>=1.13,<2` |
 
 ### Frontend Stack
 
 | Layer | Technology |
 |-------|------------|
-| Framework | Next.js 16.2.12 |
-| Language | TypeScript 7.0.2 |
-| UI Components | Shadcn/ui + Radix UI 2.1.24 |
-| Styling | Tailwind CSS 4.3.3 |
-| Charts | TradingView Lightweight Charts 5.2.0 |
-| State Management | TanStack React Query 5.101.4 |
-| HTTP Client | Axios 1.19.0 |
+| Framework | Next.js `^15.0.0` |
+| Language | TypeScript `^5.7.0` |
+| UI Components | Shadcn/ui + selected Radix components |
+| Styling | Tailwind CSS `^4.0.0` |
+| Charts | Not yet declared |
+| State Management | TanStack React Query `^5.60.0` |
+| HTTP Client | Axios `^1.7.0` |
 
 ### Infrastructure
 
@@ -298,6 +298,12 @@ For strategy exploration, data analysis, and indicator development. Uses the sam
 ---
 
 ## Principles
+
+Version values in this document are declaration ranges from the project manifests, not
+installed versions. Atlas currently has no committed Python or frontend lockfile. When a
+dependency is added or upgraded, update the manifest, generate the appropriate lockfile,
+and verify version-sensitive API guidance against the official documentation for the
+resolved version.
 
 1. **No dependency lock-in.** Prefer libraries that are open-source, well-maintained, and don't lock you into a specific ecosystem.
 2. **Minimal dependencies.** Don't add a library if the standard library or existing dependency already solves the problem.

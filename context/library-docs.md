@@ -10,16 +10,22 @@ Read the relevant section before implementing any feature that touches these lib
 
 Before implementing any feature that uses a third party library:
 
-1. **Read this file** for project-specific patterns that override general library knowledge.
+1. **Read this file** for project-specific patterns and boundaries.
 
 2. **Check the architecture context file** for how the component fits into the system.
 
 3. **Check the feature file** for acceptance criteria and technical details.
 
+4. **Read the relevant local skill** under `.agents/skills/` for detailed library patterns.
+
+5. **Verify version-sensitive APIs** against the declared/resolved dependency version and
+   official documentation or changelog before implementing them.
+
 The order of authority is:
 
 ```
-This file (project rules) → Architecture file → Feature file → General training knowledge
+Security/product/architecture invariants → Feature file → Manifest/lockfile → Official
+versioned docs → This file → Local skills → General training knowledge
 ```
 
 Never rely on general training knowledge alone for library APIs — they change frequently and training data may be outdated.
@@ -27,6 +33,9 @@ Never rely on general training knowledge alone for library APIs — they change 
 ---
 
 ## FastAPI
+
+Reference skill: `.agents/skills/fastapi/SKILL.md`. Dependency injection details:
+`.agents/skills/fastapi-dependency-injection/SKILL.md`.
 
 ### App Setup
 
@@ -50,19 +59,22 @@ app.add_middleware(
 
 ```python
 # backend/api/routes/strategies.py
+from typing import Annotated
+
 from fastapi import APIRouter, Depends
 
 router = APIRouter(prefix="/strategies", tags=["strategies"])
+StrategyServiceDep = Annotated[StrategyService, Depends(get_strategy_service)]
 
 @router.get("/")
-async def list_strategies(service: StrategyService = Depends(get_strategy_service)):
+async def list_strategies(service: StrategyServiceDep) -> list[StrategyRead]:
     return await service.list_active()
 
 @router.post("/")
 async def create_strategy(
     config: StrategyCreate,
-    service: StrategyService = Depends(get_strategy_service),
-):
+    service: StrategyServiceDep,
+) -> StrategyRead:
     return await service.register(config)
 ```
 
@@ -72,11 +84,18 @@ Routes remain thin. Services own business logic and repositories own database ac
 
 ```python
 # backend/api/deps.py
+from collections.abc import AsyncGenerator
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from backend.persistence.database import async_session
 
-async def get_session():
+async def get_session() -> AsyncGenerator[AsyncSession, None]:
     async with async_session() as session:
         yield session
+
+# Transaction commit/rollback ownership must be explicit at the service/repository
+# boundary. Do not add commits to routes or hide trading-state transitions in DI.
 ```
 
 ### WebSocket
@@ -87,17 +106,17 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 class ConnectionManager:
     def __init__(self):
-        self.connections: list[WebSocket] = []
+        self.active_connections: list[WebSocket] = []
 
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
-        self.connections.append(websocket)
+        self.active_connections.append(websocket)
 
-    async def disconnect(self, websocket: WebSocket):
-        self.connections.remove(websocket)
+    def disconnect(self, websocket: WebSocket) -> None:
+        self.active_connections.remove(websocket)
 
-    async def broadcast(self, message: dict):
-        for connection in self.connections:
+    async def broadcast(self, message: dict[str, object]) -> None:
+        for connection in self.active_connections:
             await connection.send_json(message)
 
 manager = ConnectionManager()
@@ -107,17 +126,18 @@ async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
     try:
         while True:
-            data = await websocket.receive_text()
+            await websocket.receive_text()
     except WebSocketDisconnect:
-        await manager.disconnect(websocket)
+        manager.disconnect(websocket)
 ```
 
 ### Rules
 
-- Always use `Depends(get_session)` for database sessions — never create sessions directly in routes
+- Prefer `Annotated[..., Depends(...)]` aliases for reusable dependencies. Database sessions are
+  created by the dependency boundary — never create sessions directly in routes.
 - Always use `APIRouter` for route groups — never add routes directly to `app`
 - Always handle errors gracefully — return proper HTTP status codes
-- Always use Pydantic models for request/response validation
+- Always use Pydantic v2 models for request/response validation and explicit route return types
 - Routes are thin — business logic goes in services, not routes
 - Never put trading logic in routes
 
@@ -125,53 +145,65 @@ async def websocket_endpoint(websocket: WebSocket):
 
 ## SQLAlchemy
 
+Reference skill: `.agents/skills/sqlalchemy-orm/SKILL.md`. Atlas uses SQLAlchemy 2.0's typed
+ORM API; do not copy legacy `Column`-based examples from older documentation.
+
 ### Base Model
 
 ```python
 # backend/persistence/models.py
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import Column, DateTime, String
-from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy import DateTime, String
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 class Base(DeclarativeBase):
     pass
 
 class TimestampMixin:
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
 ```
 
 ### Model Example
 
 ```python
 # backend/persistence/models.py
-from sqlalchemy import Column, String, Boolean, JSON, ForeignKey
-from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import relationship
+from sqlalchemy import JSON, Boolean, String
+from sqlalchemy.orm import Mapped, mapped_column
 
 class Strategy(Base, TimestampMixin):
     __tablename__ = "strategies"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    name = Column(String(255), nullable=False)
-    entrypoint = Column(String(500), nullable=False)
-    repository = Column(String(500), nullable=False)
-    version = Column(String(50), nullable=False, default="1.0.0")
-    commit_sha = Column(String(64), nullable=False)
-    parameters = Column(JSON, nullable=False, default=dict)
-    is_active = Column(Boolean, default=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    entrypoint: Mapped[str] = mapped_column(String(500), nullable=False)
+    repository: Mapped[str] = mapped_column(String(500), nullable=False)
+    version: Mapped[str] = mapped_column(String(50), nullable=False, default="1.0.0")
+    commit_sha: Mapped[str] = mapped_column(String(64), nullable=False)
+    parameters: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False, default=dict)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 ```
 
 ### Async Session
 
 ```python
 # backend/persistence/database.py
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-engine = create_async_engine(DATABASE_URL, echo=False)
-async_session = async_sessionmaker(engine, expire_on_commit=False)
+engine = create_async_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
+async_session = async_sessionmaker(
+    engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+)
 ```
 
 ### Query Patterns
@@ -186,7 +218,7 @@ strategy = result.scalar_one_or_none()
 
 # Get all with filter
 result = await session.execute(
-    select(Strategy).where(Strategy.is_active == True).order_by(Strategy.created_at.desc())
+    select(Strategy).where(Strategy.is_active.is_(True)).order_by(Strategy.created_at.desc())
 )
 strategies = list(result.scalars().all())
 
@@ -370,6 +402,27 @@ httpx is reserved for future HTTP-based provider or broker adapters. Binance Spo
 
 ---
 
+## asyncio
+
+Reference skill: `.agents/skills/asyncio/SKILL.md`.
+
+Atlas's worker runs multiple isolated bot pipelines. Async task ownership, cancellation,
+failure isolation, and graceful shutdown are part of the architecture, not optional helper
+details.
+
+### Rules
+
+- Use `asyncio.run()` only at synchronous process entrypoints.
+- Use `asyncio.get_running_loop()` inside running async code; do not use
+  `asyncio.get_event_loop()` for new code.
+- Keep explicit ownership of tasks created with `asyncio.create_task()` or `asyncio.TaskGroup`.
+- Long-running tasks must clean up and re-raise `asyncio.CancelledError`.
+- Use `asyncio.gather()` only when its failure behavior is intentional. Independent bot or
+  feed operations must not be silently cancelled because an unrelated operation failed.
+- Move unavoidable blocking calls to an executor; do not block the worker event loop.
+
+---
+
 ## websockets
 
 ### Live Data Feed
@@ -412,22 +465,26 @@ async def connect_with_reconnect(url: str, on_message, max_retries: int = 5):
 
 ---
 
-## pydantic-settings
+## Pydantic and pydantic-settings
+
+Reference skill: `.agents/skills/fastapi/SKILL.md` and its Pydantic reference. Atlas uses
+Pydantic v2 APIs throughout new transport and configuration models.
 
 ### Configuration
 
 ```python
 # backend/config.py
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://atlas:atlas@localhost:5432/atlas"
     binance_api_key: str = ""
     binance_api_secret: str = ""
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+    )
 
 settings = Settings()
 ```
@@ -435,6 +492,8 @@ settings = Settings()
 ### Rules
 
 - Always use `BaseSettings` for configuration — never raw `os.getenv`
+- Use `model_config`, not the Pydantic v1 `class Config` pattern.
+- Use `field_validator` and `model_validator`, not `validator` or `root_validator`.
 - Always load from `.env` files — never hardcode secrets
 - Always provide sensible defaults for non-critical settings
 - Never log or expose API keys
@@ -543,7 +602,11 @@ async def test_full_backtest_flow():
 
 ---
 
-## Next.js 16
+## Next.js 15
+
+Reference skill: `.agents/skills/nextjs-core/SKILL.md`. The frontend is an operational UI
+over the FastAPI REST/WebSocket API; Next.js route handlers and Server Actions must not
+become a second trading-state API boundary without an architecture decision.
 
 ### File-Based Routing
 
@@ -565,21 +628,34 @@ app/
         └── route.ts            # /api/health
 ```
 
+Dynamic page parameters are promises in the current App Router API:
+
+```tsx
+type StrategyPageProps = {
+  params: Promise<{ id: string }>
+}
+
+export default async function StrategyPage({ params }: StrategyPageProps) {
+  const { id } = await params
+  const strategy = await fetchStrategy(id)
+  return <StrategyDetails strategy={strategy} />
+}
+```
+
 ### API Routes
 
 ```typescript
-// app/api/strategies/route.ts
+// Use FastAPI for Atlas trading and persistence endpoints. This pattern is only
+// for a frontend-local route handler when one is explicitly required.
+// app/api/health/route.ts
 import { NextResponse } from "next/server"
 
-export async function GET() {
-  const strategies = await fetchStrategies()
-  return NextResponse.json(strategies)
-}
-
-export async function POST(request: Request) {
-  const body = await request.json()
-  const strategy = await createStrategy(body)
-  return NextResponse.json(strategy, { status: 201 })
+export async function GET(): Promise<Response> {
+  try {
+    return NextResponse.json({ status: "ok" })
+  } catch {
+    return NextResponse.json({ error: "Unable to read health" }, { status: 503 })
+  }
 }
 ```
 
@@ -588,10 +664,18 @@ export async function POST(request: Request) {
 ```tsx
 // app/dashboard/page.tsx
 export default async function DashboardPage() {
-  const data = await fetchStrategies() // Server-side fetch
-  return <Dashboard data={data} />
+  const [strategies, account] = await Promise.all([
+    fetchStrategies(),
+    fetchAccountSummary(),
+  ])
+  return <Dashboard strategies={strategies} account={account} />
 }
 ```
+
+Use `Suspense` and route-level `loading.tsx` boundaries for slow, independently useful
+dashboard sections. Do not broadly cache positions, P&L, bot status, or broker state;
+freshness and WebSocket connection state must be explicit. Cache only stable or explicitly
+scoped data, and revalidate it narrowly after the owning FastAPI mutation completes.
 
 ### Client Components
 
@@ -612,6 +696,13 @@ export function TradingChart({ data }: { data: CandleData[] }) {
 - Always use `NextResponse` for API route responses
 - Always handle errors in API routes — return proper status codes
 - Never put sensitive data in Client Components — server-side first
+- Treat FastAPI as the canonical API for trading commands and durable state.
+- Use `params` and `searchParams` according to the verified Next.js version; await promise
+  values in the App Router API.
+- Add `loading.tsx`, `error.tsx`, and `not-found.tsx` where a route has meaningful loading,
+  failure, or missing-resource states.
+- Do not use Server Actions as a replacement for FastAPI trading endpoints without updating
+  the architecture and security boundary first.
 
 ---
 
@@ -888,6 +979,9 @@ toast.promise(saveStrategy(), {
 
 ## Tailwind CSS
 
+Reference skill: `.agents/skills/tailwind-css/SKILL.md`. Atlas styling tokens and component
+patterns are defined in `context/ui-tokens.md` and `context/ui-registry.md`.
+
 ### Utility Classes
 
 ```tsx
@@ -897,10 +991,28 @@ toast.promise(saveStrategy(), {
 </div>
 ```
 
+Use the shared `cn()` utility for conditional or conflicting classes:
+
+```tsx
+import { clsx, type ClassValue } from "clsx"
+import { twMerge } from "tailwind-merge"
+
+export function cn(...inputs: ClassValue[]): string {
+  return twMerge(clsx(inputs))
+}
+```
+
+Atlas uses Tailwind 4's CSS-first setup. Define project tokens in the existing stylesheet
+and use the `atlas-*` utilities documented in `context/ui-tokens.md`; do not introduce a
+legacy configuration file unless the dependency setup changes.
+
 ### Rules
 
 - Always use utility classes — never write custom CSS unless absolutely necessary
 - Always use consistent spacing (p-4, gap-4, etc.)
-- Always use responsive prefixes for mobile support (md:, lg:)
-- Never use `@apply` — it defeats the purpose of Tailwind
+- Use mobile-first responsive prefixes where the layout needs to adapt; Atlas remains
+  desktop-first, so do not sacrifice the operational desktop layout for parity.
+- Prefer components, CVA, and token utilities over repeated class strings. Use `@apply` only
+  when it is justified by the existing Tailwind 4 stylesheet architecture.
 - Follow existing color patterns in the codebase
+- Never use color alone for trading status; pair semantic colors with text or iconography.
