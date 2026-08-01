@@ -1,7 +1,8 @@
 """Runtime ownership and lifecycle supervision for isolated bot pipelines."""
 
 import asyncio
-from contextlib import suppress
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager, suppress
 from typing import Final
 from uuid import UUID, uuid4
 
@@ -51,6 +52,7 @@ class BotSupervisor:
         self.worker_id = uuid4()
         self._pipelines: dict[str, BotPipeline] = {}
         self._locks: dict[str, asyncio.Lock] = {}
+        self._lock_holders: dict[str, asyncio.Task[object]] = {}
         self._claimed: set[str] = set()
         self._ownership_lost: set[str] = set()
         self._operations: set[asyncio.Task[object]] = set()
@@ -80,7 +82,7 @@ class BotSupervisor:
         assert operation is not None
         self._operations.add(operation)
         try:
-            async with self._lock_for(bot_id):
+            async with self._bot_lock(bot_id):
                 bot = await self.repositories.get(bot_id)
                 if bot is None:
                     return False
@@ -149,7 +151,7 @@ class BotSupervisor:
         try:
             if self._shutting_down:
                 return False
-            async with self._lock_for(bot_id):
+            async with self._bot_lock(bot_id):
                 if self._shutting_down:
                     return False
                 bot_record = await self.repositories.get(bot_id)
@@ -160,6 +162,7 @@ class BotSupervisor:
                     existing_pipeline is not None
                     and bot_record.status == "running"
                     and existing_pipeline.execution_enabled
+                    and bot_id not in self._ownership_lost
                 ):
                     return True
                 lease = await self.repositories.claim(bot_id, str(self.worker_id), self.clock.now())
@@ -242,11 +245,12 @@ class BotSupervisor:
         assert operation is not None
         self._operations.add(operation)
         try:
-            async with self._lock_for(bot_id):
+            async with self._bot_lock(bot_id):
                 bot = await self.repositories.get(bot_id)
                 if bot is None:
                     return False
                 pipeline = self._pipelines.get(bot_id)
+                failure_owned = bot_id in self._ownership_lost or bot.status == "error"
                 if bot.status == "stopped" and pipeline is None:
                     await self._release_claim(bot_id)
                     return True
@@ -254,15 +258,16 @@ class BotSupervisor:
                     pipeline.set_execution_enabled(False)
                 failure: BaseException | None = None
                 try:
-                    await self._persist(
-                        bot_id,
-                        LifecycleUpdate(
-                            desired_status="stopped",
-                            status="stopping",
-                            started_at=bot.started_at,
-                            stopped_at=None,
-                        ),
-                    )
+                    if not failure_owned:
+                        await self._persist(
+                            bot_id,
+                            LifecycleUpdate(
+                                desired_status="stopped",
+                                status="stopping",
+                                started_at=bot.started_at,
+                                stopped_at=None,
+                            ),
+                        )
                     if pipeline is not None:
                         await pipeline.stop()
                 except asyncio.CancelledError as exception:
@@ -273,14 +278,15 @@ class BotSupervisor:
                 finally:
                     self._pipelines.pop(bot_id, None)
                     try:
-                        await self._persist(
-                            bot_id,
-                            LifecycleUpdate(
-                                desired_status="stopped",
-                                status="stopped",
-                                stopped_at=self.clock.now(),
-                            ),
-                        )
+                        if not failure_owned:
+                            await self._persist(
+                                bot_id,
+                                LifecycleUpdate(
+                                    desired_status="stopped",
+                                    status="stopped",
+                                    stopped_at=self.clock.now(),
+                                ),
+                            )
                     except asyncio.CancelledError as exception:
                         failure = failure or exception
                     except Exception as exception:
@@ -316,25 +322,26 @@ class BotSupervisor:
 
     async def _handle_lease_failure(self, bot_id: str, error: str) -> None:
         self._ownership_lost.add(bot_id)
-        pipeline = self._pipelines.get(bot_id)
-        if pipeline is not None:
-            pipeline.set_execution_enabled(False)
-        try:
-            await self._persist_error(bot_id, error)
-        except Exception:
-            logger.exception("bot_lease_loss_persist_failed", bot_id=bot_id)
-        if pipeline is not None:
+        async with self._bot_lock(bot_id):
+            pipeline = self._pipelines.get(bot_id)
+            if pipeline is not None:
+                pipeline.set_execution_enabled(False)
             try:
-                await pipeline.stop()
+                await self._persist_error(bot_id, error)
             except Exception:
-                logger.exception(
-                    "bot_lease_loss_cleanup_failed",
-                    bot_id=bot_id,
-                    worker_id=str(self.worker_id),
-                )
-            finally:
-                self._pipelines.pop(bot_id, None)
-        await self._release_claim(bot_id)
+                logger.exception("bot_lease_loss_persist_failed", bot_id=bot_id)
+            if pipeline is not None:
+                try:
+                    await pipeline.stop()
+                except Exception:
+                    logger.exception(
+                        "bot_lease_loss_cleanup_failed",
+                        bot_id=bot_id,
+                        worker_id=str(self.worker_id),
+                    )
+                finally:
+                    self._pipelines.pop(bot_id, None)
+            await self._release_claim(bot_id)
         logger.error("bot_lease_ownership_lost", bot_id=bot_id, worker_id=str(self.worker_id))
 
     async def _heartbeat_loop(self) -> None:
@@ -358,18 +365,20 @@ class BotSupervisor:
         pipeline: BotPipeline | None,
         error: str | None = None,
     ) -> None:
-        if pipeline is not None:
-            pipeline.set_execution_enabled(False)
-            self._pipelines.pop(bot_id, None)
-            try:
-                await pipeline.stop()
-            except Exception:
-                logger.exception("bot_pipeline_cleanup_failed", bot_id=bot_id)
-        if error is not None:
-            try:
-                await self._persist_error(bot_id, error)
-            except Exception:
-                logger.exception("bot_start_error_persist_failed", bot_id=bot_id)
+        async with self._bot_lock(bot_id):
+            if pipeline is not None:
+                pipeline.set_execution_enabled(False)
+                self._pipelines.pop(bot_id, None)
+                try:
+                    await pipeline.stop()
+                except Exception:
+                    logger.exception("bot_pipeline_cleanup_failed", bot_id=bot_id)
+            if error is not None:
+                try:
+                    await self._persist_error(bot_id, error)
+                except Exception:
+                    logger.exception("bot_start_error_persist_failed", bot_id=bot_id)
+            await self._release_claim(bot_id)
 
     async def _release_claim(self, bot_id: str) -> None:
         if bot_id not in self._claimed:
@@ -393,6 +402,23 @@ class BotSupervisor:
 
     def _lock_for(self, bot_id: str) -> asyncio.Lock:
         return self._locks.setdefault(bot_id, asyncio.Lock())
+
+    @asynccontextmanager
+    async def _bot_lock(self, bot_id: str) -> AsyncIterator[None]:
+        """Serialize bot operations while allowing failure handling to be reentrant."""
+        operation = asyncio.current_task()
+        assert operation is not None
+        if self._lock_holders.get(bot_id) is operation:
+            yield
+            return
+        lock = self._lock_for(bot_id)
+        await lock.acquire()
+        self._lock_holders[bot_id] = operation
+        try:
+            yield
+        finally:
+            self._lock_holders.pop(bot_id, None)
+            lock.release()
 
     async def _persist(self, bot_id: str, state: LifecycleUpdate) -> None:
         record = await self.repositories.persist_lifecycle(bot_id, state)

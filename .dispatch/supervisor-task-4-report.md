@@ -84,3 +84,27 @@ The current branch fixes them as follows:
 - Ruff: `python3 -m ruff check .` -> passed.
 - Mypy: `python3 -m mypy backend` -> passed.
 - Diff check: `git diff --check` -> passed.
+
+## Remaining Race Fix
+
+- `_handle_lease_failure()` now holds the affected bot's task-aware per-bot lock across
+  execution disablement, `ERROR` persistence, pipeline stop/removal, and lease release.
+- Start cleanup uses the same lock boundary, and the lock wrapper permits reentrant use by the
+  owning task so failure handling cannot deadlock when called from an already locked operation.
+- Stop preserves an existing or claimed lease-failure `ERROR` state instead of writing `STOPPED`.
+- Added deterministic failure-versus-start and failure-versus-stop regression tests. Different bot
+  locks remain independent.
+
+## Remaining Race Verification
+
+- Focused tests: `python3 -m pytest tests/test_supervisor.py -q` -> 19 passed.
+- Full tests: `python3 -m pytest -q` -> 119 passed.
+- Ruff: `python3 -m ruff check .` -> passed.
+- Mypy: `python3 -m mypy backend` -> passed.
+- Diff check: `git diff --check` -> passed.
+
+## Remaining Race Concerns
+
+- Live PostgreSQL lease concurrency remains a Codespace/Compose verification concern inherited
+  from Task 2; the regression tests use the deterministic in-memory repository.
+- Worker entrypoint wiring remains Task 5 scope.

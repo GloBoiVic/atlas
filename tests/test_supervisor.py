@@ -12,6 +12,7 @@ from backend.core.events import BotStatusChanged, EventBus
 from backend.persistence.repositories import (
     BotRecord,
     InMemorySupervisorRepositories,
+    LeaseRecord,
     LifecycleUpdate,
 )
 from backend.worker.protocols import (
@@ -111,6 +112,33 @@ class FailingRenewalRepositories(InMemorySupervisorRepositories):
         if self.fail_renewal and bot_id == self.failing_bot_id:
             raise RuntimeError("renewal failed")
         return await super().renew(bot_id, worker_id, now)
+
+
+class GatedErrorRepositories(InMemorySupervisorRepositories):
+    def __init__(self, bots: list[BotRecord]) -> None:
+        super().__init__(bots=bots)
+        self.error_started = asyncio.Event()
+        self.allow_error = asyncio.Event()
+        self.claim_count = 0
+
+    async def persist_lifecycle(
+        self,
+        bot_id: str,
+        state: LifecycleUpdate,
+    ) -> BotRecord | None:
+        if state.status == "error":
+            self.error_started.set()
+            await self.allow_error.wait()
+        return await super().persist_lifecycle(bot_id, state)
+
+    async def claim(
+        self,
+        bot_id: str,
+        worker_id: str,
+        now: datetime | None = None,
+    ) -> LeaseRecord | None:
+        self.claim_count += 1
+        return await super().claim(bot_id, worker_id, now)
 
 
 def make_bot(
@@ -318,9 +346,10 @@ async def test_ownership_loss_during_startup_never_enables_or_persists_running()
         await asyncio.sleep(0)
 
     await repositories.release(bot.id, str(supervisor.worker_id))
-    await supervisor.heartbeat_once()
     gate.set()
+    heartbeat = asyncio.create_task(supervisor.heartbeat_once())
     assert await starting is False
+    await heartbeat
     current = await repositories.get(bot.id)
     assert current is not None and current.status == "error"
     assert factory.pipelines[bot.id].execution_enabled is False
@@ -413,4 +442,54 @@ async def test_heartbeat_renewal_failure_isolated_to_one_bot() -> None:
     assert current is not None and current.status == "running"
     repositories.fail_renewal = False
     assert await repositories.renew(bots[0].id, str(supervisor.worker_id)) is False
+    await supervisor.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_lease_failure_holds_bot_lock_before_concurrent_start_can_reclaim() -> None:
+    bot = make_bot()
+    repositories = GatedErrorRepositories([bot])
+    supervisor = BotSupervisor(
+        repositories,
+        FakeFactory(),
+        FakeReconciler(),
+        FakeClock(),
+        EventBus(),
+    )
+    assert await supervisor.start(bot.id) is True
+    failure = asyncio.create_task(supervisor._handle_lease_failure(bot.id, "lease lost"))
+    await repositories.error_started.wait()
+    starting = asyncio.create_task(supervisor.start(bot.id))
+    await asyncio.sleep(0)
+    assert starting.done() is False
+    assert repositories.claim_count == 1
+    assert bot.id in repositories._leases  # type: ignore[attr-defined]
+    repositories.allow_error.set()
+    await failure
+    assert await starting is True
+    await supervisor.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_stop_cannot_overwrite_lease_failure_error() -> None:
+    bot = make_bot()
+    repositories = GatedErrorRepositories([bot])
+    supervisor = BotSupervisor(
+        repositories,
+        FakeFactory(),
+        FakeReconciler(),
+        FakeClock(),
+        EventBus(),
+    )
+    assert await supervisor.start(bot.id) is True
+    failure = asyncio.create_task(supervisor._handle_lease_failure(bot.id, "lease lost"))
+    await repositories.error_started.wait()
+    stopping = asyncio.create_task(supervisor.stop(bot.id))
+    await asyncio.sleep(0)
+    assert stopping.done() is False
+    repositories.allow_error.set()
+    await failure
+    assert await stopping is True
+    current = await repositories.get(bot.id)
+    assert current is not None and current.status == "error"
     await supervisor.shutdown()
