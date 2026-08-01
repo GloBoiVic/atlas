@@ -1,0 +1,185 @@
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, cast
+
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from backend.persistence.models import Bot, BotRun, ReconciliationRun
+from backend.persistence.repositories.protocols import (
+    BotRecord,
+    LeaseRecord,
+    LifecycleUpdate,
+    ReconciliationRecord,
+)
+
+if TYPE_CHECKING:
+    from sqlalchemy.engine import CursorResult
+
+LEASE_TIMEOUT = timedelta(seconds=30)
+
+
+def _bot_record(bot: Bot) -> BotRecord:
+    return BotRecord(
+        id=bot.id,
+        name=bot.name,
+        account_id=bot.account_id,
+        broker=bot.broker,
+        mode=bot.mode,
+        instrument=bot.instrument,
+        timeframe=bot.timeframe,
+        desired_status=bot.desired_status,
+        status=bot.status,
+        last_error=bot.last_error,
+        started_at=bot.started_at,
+        stopped_at=bot.stopped_at,
+    )
+
+
+def _lease_record(run: BotRun) -> LeaseRecord:
+    if run.worker_id is None or run.locked_at is None:
+        raise ValueError("cannot expose an unclaimed bot run as a lease")
+    return LeaseRecord(
+        id=run.id,
+        bot_id=run.bot_id,
+        worker_id=run.worker_id,
+        locked_at=run.locked_at,
+        status=run.status,
+        started_at=run.started_at,
+        last_heartbeat_at=run.last_heartbeat_at,
+    )
+
+
+def _reconciliation_record(run: ReconciliationRun) -> ReconciliationRecord:
+    return ReconciliationRecord(
+        id=run.id,
+        account_id=run.account_id,
+        bot_id=run.bot_id,
+        status=run.status,
+        broker_snapshot=run.broker_snapshot,
+        differences=run.differences,
+        started_at=run.started_at,
+        completed_at=run.completed_at,
+        error_message=run.error_message,
+    )
+
+
+class SqlAlchemySupervisorRepositories:
+    """SQLAlchemy repositories that own sessions and transaction boundaries."""
+
+    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
+        self._session_factory = session_factory
+
+    async def get_restore_candidates(self) -> list[BotRecord]:
+        async with self._session_factory() as session:
+            result = await session.execute(select(Bot).where(Bot.desired_status != "stopped"))
+            return [_bot_record(bot) for bot in result.scalars().all()]
+
+    async def get(self, bot_id: str) -> BotRecord | None:
+        async with self._session_factory() as session:
+            bot = await session.get(Bot, bot_id)
+            return _bot_record(bot) if bot is not None else None
+
+    async def persist_lifecycle(self, bot_id: str, state: LifecycleUpdate) -> BotRecord | None:
+        async with self._session_factory.begin() as session:
+            bot = await session.get(Bot, bot_id)
+            if bot is None:
+                return None
+            bot.desired_status = state.desired_status
+            bot.status = state.status
+            bot.last_error = state.last_error
+            bot.started_at = state.started_at
+            bot.stopped_at = state.stopped_at
+            await session.flush()
+            return _bot_record(bot)
+
+    async def claim(
+        self,
+        bot_id: str,
+        worker_id: str,
+        now: datetime | None = None,
+    ) -> LeaseRecord | None:
+        claim_time = now or datetime.now(UTC)
+        expiry = claim_time - LEASE_TIMEOUT
+        async with self._session_factory.begin() as session:
+            result = await session.execute(
+                select(BotRun)
+                .where(BotRun.bot_id == bot_id)
+                .order_by(BotRun.started_at.desc())
+                .with_for_update()
+            )
+            run = result.scalars().first()
+            if (
+                run is not None
+                and run.worker_id not in (None, worker_id)
+                and run.locked_at is not None
+                and run.locked_at > expiry
+            ):
+                return None
+            if run is None:
+                run = BotRun(
+                    bot_id=bot_id,
+                    worker_id=worker_id,
+                    locked_at=claim_time,
+                    status="starting",
+                    started_at=claim_time,
+                    last_heartbeat_at=claim_time,
+                )
+                session.add(run)
+            else:
+                run.worker_id = worker_id
+                run.locked_at = claim_time
+                run.status = "starting"
+                run.last_heartbeat_at = claim_time
+            await session.flush()
+            return _lease_record(run)
+
+    async def renew(self, bot_id: str, worker_id: str, now: datetime | None = None) -> bool:
+        heartbeat = now or datetime.now(UTC)
+        async with self._session_factory.begin() as session:
+            result = cast(
+                "CursorResult[object]",
+                await session.execute(
+                    update(BotRun)
+                    .where(BotRun.bot_id == bot_id, BotRun.worker_id == worker_id)
+                    .values(locked_at=heartbeat, last_heartbeat_at=heartbeat)
+                ),
+            )
+            return result.rowcount == 1
+
+    async def release(self, bot_id: str, worker_id: str, now: datetime | None = None) -> bool:
+        del now
+        async with self._session_factory.begin() as session:
+            result = cast(
+                "CursorResult[object]",
+                await session.execute(
+                    update(BotRun)
+                    .where(BotRun.bot_id == bot_id, BotRun.worker_id == worker_id)
+                    .values(worker_id=None, locked_at=None, status="stopped")
+                ),
+            )
+            return result.rowcount == 1
+
+    async def record(self, result: ReconciliationRecord) -> ReconciliationRecord:
+        async with self._session_factory.begin() as session:
+            existing = await session.get(ReconciliationRun, result.id)
+            if existing is not None:
+                return _reconciliation_record(existing)
+            run = ReconciliationRun(
+                id=result.id,
+                account_id=result.account_id,
+                bot_id=result.bot_id,
+                status=result.status,
+                broker_snapshot=dict(result.broker_snapshot),
+                differences=dict(result.differences),
+                started_at=result.started_at,
+                completed_at=result.completed_at,
+                error_message=result.error_message,
+            )
+            session.add(run)
+            await session.flush()
+            return _reconciliation_record(run)
+
+    async def get_reconciliation(self, reconciliation_id: str) -> ReconciliationRecord | None:
+        async with self._session_factory() as session:
+            run = await session.get(ReconciliationRun, reconciliation_id)
+            return _reconciliation_record(run) if run is not None else None

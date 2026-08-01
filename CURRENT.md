@@ -34,11 +34,13 @@ Last updated: 2026-08-01
   migration constraints, and bot P&L nullability/default matches the canonical schema.
 - Task 1 follow-up fix is complete: Strategy timestamp nullability now matches the canonical
   schema and migration.
+- Supervisor Task 2 repository slice is complete: model-free protocols, SQLAlchemy and
+  in-memory bot, lease, lifecycle, and reconciliation repositories are implemented and tested.
 
 ## What comes next
 
-Do not claim Feature 02 complete. Health monitor and the remaining Feature 02 acceptance
-criteria are still deferred to a later slice.
+Do not claim Feature 02 complete. Health monitor, BotSupervisor runtime integration, and the
+remaining Feature 02 acceptance criteria are still deferred to later slices.
 
 ## Notes
 
