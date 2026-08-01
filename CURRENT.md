@@ -21,7 +21,7 @@ Last updated: 2026-08-01
 
 ## What was built
 
-- Feature 02 implementation in progress. Existing Feature 01 foundation remains complete.
+- Feature 02 implementation in progress. Clock abstraction and deterministic tests are complete.
 - Task 2 reviewer fixes complete: UTC event validation, callback typing, stats contract cleanup,
   expanded EventBus coverage, and the lifecycle event re-review fix.
 
