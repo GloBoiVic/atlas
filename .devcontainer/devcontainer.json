@@ -11,7 +11,6 @@
     "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}
   },
   "privileged": true,
-  "overrideCommand": false,
   "forwardPorts": [3000, 8000],
   "portsAttributes": {
     "3000": {
