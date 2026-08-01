@@ -26,9 +26,11 @@ Last updated: 2026-08-01
 - Five requested Feature 02 slices are complete and verified: EventBus, Clock abstraction,
   configuration, retry/circuit breaker error handling, and structured logging.
 - BotSupervisor slice is now in progress on `feature/02-bot-supervisor`.
+- Supervisor Task 3 runtime protocols and contract tests are complete.
 - Error handling remains partial because the health monitor is deferred.
 - Task 2 reviewer fixes complete: UTC event validation, callback typing, stats contract cleanup,
   expanded EventBus coverage, and the lifecycle event re-review fix.
+- Supervisor Task 3 runtime protocol slice is complete; BotSupervisor implementation remains next.
 - Task 1 ORM models and migration are complete and verified.
 - Task 1 review fixes are complete: strategy reference tables now resolve ORM metadata and
   migration constraints, and bot P&L nullability/default matches the canonical schema.
