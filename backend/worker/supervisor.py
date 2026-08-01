@@ -301,18 +301,40 @@ class BotSupervisor:
         try:
             owned = await self.repositories.renew(bot_id, str(self.worker_id), self.clock.now())
         except Exception as exception:
-            logger.exception("bot_lease_renewal_failed", bot_id=bot_id, error=str(exception))
+            logger.exception(
+                "bot_lease_renewal_failed",
+                bot_id=bot_id,
+                worker_id=str(self.worker_id),
+                error=str(exception),
+                error_type=type(exception).__name__,
+            )
+            await self._handle_lease_failure(bot_id, str(exception))
             return
         if owned:
             return
+        await self._handle_lease_failure(bot_id, "bot lease ownership lost")
+
+    async def _handle_lease_failure(self, bot_id: str, error: str) -> None:
         self._ownership_lost.add(bot_id)
         pipeline = self._pipelines.get(bot_id)
         if pipeline is not None:
             pipeline.set_execution_enabled(False)
         try:
-            await self._persist_error(bot_id, "bot lease ownership lost")
+            await self._persist_error(bot_id, error)
         except Exception:
             logger.exception("bot_lease_loss_persist_failed", bot_id=bot_id)
+        if pipeline is not None:
+            try:
+                await pipeline.stop()
+            except Exception:
+                logger.exception(
+                    "bot_lease_loss_cleanup_failed",
+                    bot_id=bot_id,
+                    worker_id=str(self.worker_id),
+                )
+            finally:
+                self._pipelines.pop(bot_id, None)
+        await self._release_claim(bot_id)
         logger.error("bot_lease_ownership_lost", bot_id=bot_id, worker_id=str(self.worker_id))
 
     async def _heartbeat_loop(self) -> None:

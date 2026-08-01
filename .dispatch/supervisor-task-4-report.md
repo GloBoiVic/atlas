@@ -27,6 +27,25 @@ Complete.
 - Mypy: `python3 -m mypy backend` -> passed.
 - Diff check: `git diff --check` -> passed.
 
+## Critical Finding Follow-up
+
+- Lease renewal exceptions now use the same fail-closed path as a lost lease: execution is
+  disabled immediately, the bot persists `ERROR` with the exception message, the pipeline stops,
+  and the lease is released safely.
+- Exception logs retain structured `worker_id`, `bot_id`, `error`, and `error_type` context while
+  the per-bot heartbeat failure remains isolated from other bots.
+- Expanded `test_heartbeat_renewal_failure_isolated_to_one_bot` to verify the failed bot is stopped,
+  execution-disabled, persisted as `ERROR`, and released while another bot remains `RUNNING` and
+  executable.
+
+## Critical Finding Verification
+
+- Focused tests: `python3 -m pytest tests/test_supervisor.py -q` -> 17 passed.
+- Full tests: `python3 -m pytest -q` -> 117 passed.
+- Ruff: `python3 -m ruff check .` -> passed.
+- Mypy: `python3 -m mypy backend` -> passed.
+- Diff check: `git diff --check` -> passed.
+
 ## Concerns
 
 - Live PostgreSQL lease concurrency remains a Codespace/Compose verification concern inherited

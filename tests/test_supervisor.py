@@ -404,7 +404,13 @@ async def test_heartbeat_renewal_failure_isolated_to_one_bot() -> None:
 
     repositories.fail_renewal = True
     await supervisor.heartbeat_once()
+    assert factory.pipelines[bots[0].id].execution_enabled is False
+    assert factory.pipelines[bots[0].id].stopped is True
+    failed = await repositories.get(bots[0].id)
+    assert failed is not None and failed.status == "error"
     assert factory.pipelines[bots[1].id].execution_enabled is True
     current = await repositories.get(bots[1].id)
     assert current is not None and current.status == "running"
+    repositories.fail_renewal = False
+    assert await repositories.renew(bots[0].id, str(supervisor.worker_id)) is False
     await supervisor.shutdown()
