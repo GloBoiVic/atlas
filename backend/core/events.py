@@ -1,6 +1,6 @@
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from inspect import isawaitable
 from typing import Protocol
 from uuid import UUID, uuid4
@@ -24,8 +24,8 @@ class DomainEvent:
     mode: AccountMode | None = None
 
     def __post_init__(self) -> None:
-        if self.occurred_at.tzinfo is None or self.occurred_at.utcoffset() is None:
-            raise ValueError("occurred_at must be timezone-aware")
+        if self.occurred_at.tzinfo is None or self.occurred_at.utcoffset() != timedelta(0):
+            raise ValueError("occurred_at must be UTC")
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,7 +136,7 @@ class EventFailure:
 
 
 class FailureRecorder(Protocol):
-    async def record(self, failure: EventFailure) -> None:
+    def record(self, failure: EventFailure) -> Awaitable[None] | None:
         """Record a failed event handler."""
 
 
@@ -151,7 +151,8 @@ class InMemoryFailureRecorder:
 
 
 EventHandler = Callable[[DomainEvent], Awaitable[None]]
-BotPauseCallback = Callable[[UUID], Awaitable[None]]
+CallbackResult = Awaitable[None] | None
+BotPauseCallback = Callable[[UUID], CallbackResult]
 
 
 class Subscription:
@@ -240,6 +241,5 @@ class EventBus:
     def stats(self) -> dict[str, int]:
         """Return subscription counts without exposing mutable handler state."""
         return {
-            "queue_size": 0,
             "subscribed_events": sum(bool(handlers) for handlers in self._handlers.values()),
         }

@@ -32,3 +32,30 @@ Complete.
 
 - The repository requires the Codespace/Compose development environment for the full
   dependency and test toolchain; verification should be rerun there.
+
+## Reviewer Fix Report
+
+### Files
+
+- `backend/core/events.py`: require UTC-offset `occurred_at` values, type synchronous and
+  asynchronous failure recorder and bot pause callbacks, and remove the stale `queue_size`
+  stats field.
+- `tests/test_events.py`: cover every required event class, sequential awaiting with a blocked
+  handler, duplicate publishing, duplicate-registration unsubscribe, UTC rejection, and callback
+  failure isolation.
+- `.dispatch/task-2-report.md`: record this reviewer fix and verification.
+
+### Verification
+
+- `python3 -m pytest tests/test_events.py`: passed, 32 tests.
+- `python3 -m pytest`: passed, 43 tests.
+- `python3 -m ruff check .`: passed.
+- `python3 -m mypy backend/core/events.py tests/test_events.py`: passed.
+- `python3 -m mypy backend tests`: blocked by three pre-existing `AccountMode` versus string
+  comparison errors in `tests/test_models.py`.
+- `git diff --check`: passed.
+
+### Concerns
+
+- Full strict mypy remains non-green because of unrelated existing model tests; no event-related
+  mypy errors remain.
