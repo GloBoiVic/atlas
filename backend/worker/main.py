@@ -1,4 +1,4 @@
-"""Atlas worker entrypoint — runs BotSupervisor and background tasks."""
+"""Atlas worker entrypoint for background tasks."""
 import asyncio
 import signal
 

@@ -1,0 +1,12 @@
+# Dispatch Progress Ledger
+
+Feature: 02 — Core Infrastructure
+Branch: feature/02-core-infrastructure
+
+Task 1: complete (commit 8527216, review clean)
+Task 2: complete (commits 9cae8d3..5f8fb43, review clean)
+Task 3: complete (commits 39bc354..0789915, review clean)
+Task 4: complete (commit 5db857a, review clean)
+Task 5: complete (commits 3cc6b0e..502040f, review clean)
+Task 6: complete (commits c269bf1..411ceaf, review clean)
+Final review: conditional pass; five-slice scope ready, Docker/Compose validation pending in Codespaces
