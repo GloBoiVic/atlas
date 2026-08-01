@@ -52,13 +52,28 @@ Stopping the Compose services before stopping the Codespace reduces resource usa
 PostgreSQL volume belongs to the Codespace and should be treated as disposable development
 data. Do not use a Codespace as the production trading runtime.
 
-## Validation
+## Local Validation Checks
 
-Backend checks can be run locally in a larger Codespace after installing the optional
-development dependencies:
+The application dependency trees are not installed during Codespace creation. For local
+backend checks, create and activate a repository-local virtual environment, then install the
+development extras:
 
 ```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
+```
+
+Install the frontend from the committed lockfile:
+
+```bash
+npm --prefix frontend ci
+```
+
+Run the non-Docker checks:
+
+```bash
 python -m ruff check .
 python -m mypy backend/
 python -m pytest
@@ -66,7 +81,17 @@ npm --prefix frontend run lint
 npm --prefix frontend run typecheck
 ```
 
-The dependency install is intentionally manual. It is not part of Codespace creation.
+These local checks validate source code and do not replace service validation. API, worker, and
+PostgreSQL integration validation must use the Docker Compose workflow above:
+
+```bash
+docker compose up --build -d
+docker compose exec api alembic upgrade head
+docker compose ps
+curl http://localhost:8000/health
+```
+
+The dependency installs are intentionally manual. They are not part of Codespace creation.
 
 The production deployment remains a Docker Compose application on a Linux VPS behind
 Cloudflare Access. Codespaces changes development setup only.

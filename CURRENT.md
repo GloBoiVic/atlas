@@ -98,3 +98,7 @@ after moving `AccountMode`, then again after all Feature 02 slices. Docker/Compo
 must run inside the Codespace because Docker is unavailable on the Mac host.
 Live Alembic checks and PostgreSQL lease concurrency remain Codespace checks; offline migration
 upgrade/downgrade SQL generation passes locally.
+
+TODO: `Dockerfile.api` and `Dockerfile.worker` currently install development dependencies into
+runtime images. A future development/production image split is separate work and is not
+implemented here.
