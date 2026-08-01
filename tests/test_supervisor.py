@@ -45,6 +45,7 @@ class FakePipeline:
         start_gate: asyncio.Event | None = None,
         fail_start: bool = False,
         stop_gate: asyncio.Event | None = None,
+        fail_stop: bool = False,
     ) -> None:
         self.started = False
         self.stopped = False
@@ -52,6 +53,7 @@ class FakePipeline:
         self.start_gate = start_gate
         self.fail_start = fail_start
         self.stop_gate = stop_gate
+        self.fail_stop = fail_stop
 
     async def start(self) -> None:
         if self.start_gate is not None:
@@ -63,6 +65,8 @@ class FakePipeline:
     async def stop(self) -> None:
         if self.stop_gate is not None:
             await self.stop_gate.wait()
+        if self.fail_stop:
+            raise RuntimeError("stop failed")
         self.stopped = True
 
     def set_execution_enabled(self, enabled: bool) -> None:
@@ -75,14 +79,16 @@ class FakeFactory:
         start_gate: asyncio.Event | None = None,
         fail_start: bool = False,
         stop_gate: asyncio.Event | None = None,
+        fail_stop: bool = False,
     ) -> None:
         self.pipelines: dict[str, FakePipeline] = {}
         self.start_gate = start_gate
         self.fail_start = fail_start
         self.stop_gate = stop_gate
+        self.fail_stop = fail_stop
 
     def create_pipeline(self, bot: BotSnapshot) -> FakePipeline:
-        pipeline = FakePipeline(self.start_gate, self.fail_start, self.stop_gate)
+        pipeline = FakePipeline(self.start_gate, self.fail_start, self.stop_gate, self.fail_stop)
         self.pipelines[bot.id] = pipeline
         return pipeline
 
@@ -207,9 +213,16 @@ def make_supervisor(
     start_gate: asyncio.Event | None = None,
     fail_start: bool = False,
     stop_gate: asyncio.Event | None = None,
-) -> tuple[BotSupervisor, InMemorySupervisorRepositories, FakeFactory, FakeReconciler, FakeClock]:
+    fail_stop: bool = False,
+) -> tuple[
+    BotSupervisor,
+    InMemorySupervisorRepositories,
+    FakeFactory,
+    FakeReconciler,
+    FakeClock,
+]:
     repositories = InMemorySupervisorRepositories(bots=bots)
-    factory = FakeFactory(start_gate, fail_start, stop_gate)
+    factory = FakeFactory(start_gate, fail_start, stop_gate, fail_stop)
     reconciler = FakeReconciler(status)
     clock = FakeClock()
     supervisor = BotSupervisor(repositories, factory, reconciler, clock, EventBus())
@@ -252,7 +265,10 @@ def awaitable_lease_check(
 async def test_concurrent_same_bot_start_is_idempotent() -> None:
     bot = make_bot()
     supervisor, _, factory, _, _ = make_supervisor([bot])
-    assert await asyncio.gather(supervisor.start(bot.id), supervisor.start(bot.id)) == [True, True]
+    assert await asyncio.gather(supervisor.start(bot.id), supervisor.start(bot.id)) == [
+        True,
+        True,
+    ]
     assert len(factory.pipelines) == 1
     await supervisor.shutdown()
 
@@ -261,7 +277,10 @@ async def test_concurrent_same_bot_start_is_idempotent() -> None:
 async def test_different_bots_start_independently() -> None:
     bots = [make_bot(), make_bot()]
     supervisor, _, factory, _, _ = make_supervisor(bots)
-    assert await asyncio.gather(*(supervisor.start(bot.id) for bot in bots)) == [True, True]
+    assert await asyncio.gather(*(supervisor.start(bot.id) for bot in bots)) == [
+        True,
+        True,
+    ]
     assert all(pipeline.started for pipeline in factory.pipelines.values())
     await supervisor.shutdown()
 
@@ -425,8 +444,9 @@ async def test_ownership_loss_during_startup_never_enables_or_persists_running()
 
 
 @pytest.mark.asyncio
-async def test_shutdown_waits_for_inflight_start_and_stops_pipeline_started_during_shutdown(
-) -> None:
+async def test_shutdown_waits_for_inflight_start_and_stops_pipeline_started_during_shutdown() -> (
+    None
+):
     bot = make_bot()
     gate = asyncio.Event()
     supervisor, repositories, factory, _, _ = make_supervisor([bot], start_gate=gate)
@@ -463,23 +483,66 @@ async def test_cancelled_start_disables_stops_and_releases_created_pipeline() ->
 
 
 @pytest.mark.asyncio
-async def test_cancelled_stop_persists_stopped_and_releases_lease() -> None:
+async def test_cancelled_stop_waits_for_pipeline_before_stopped_and_release() -> None:
     bot = make_bot()
     stop_gate = asyncio.Event()
     supervisor, repositories, factory, _, _ = make_supervisor([bot], stop_gate=stop_gate)
     assert await supervisor.start(bot.id) is True
+    stopped_at_events: list[bool] = []
+
+    async def observe_transition(event: BotStatusChanged) -> None:
+        del event
+        stopped_at_events.append(factory.pipelines[bot.id].stopped)
+
+    supervisor.event_bus.subscribe(BotStatusChanged, observe_transition)
 
     stopping = asyncio.create_task(supervisor.stop(bot.id))
     await asyncio.sleep(0)
     stopping.cancel()
+    await asyncio.sleep(0)
+
+    assert factory.pipelines[bot.id].stopped is False
+    current = await repositories.get(bot.id)
+    assert current is not None and current.status == "stopping"
+    assert await repositories.renew(bot.id, str(supervisor.worker_id)) is True
+
+    stop_gate.set()
     with pytest.raises(asyncio.CancelledError):
         await stopping
 
     current = await repositories.get(bot.id)
     assert current is not None and current.status == "stopped"
+    assert stopped_at_events[-1] is True
     assert factory.pipelines[bot.id].execution_enabled is False
     assert await repositories.renew(bot.id, str(supervisor.worker_id)) is False
     await supervisor.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_failed_pipeline_stop_persists_error_and_retains_ownership() -> None:
+    bot = make_bot()
+    supervisor, repositories, factory, _, _ = make_supervisor([bot], fail_stop=True)
+    assert await supervisor.start(bot.id) is True
+
+    assert await supervisor.stop(bot.id) is False
+    current = await repositories.get(bot.id)
+    assert current is not None and current.status == "error"
+    assert bot.id in supervisor._claimed
+    assert bot.id in supervisor._pipelines
+    assert await repositories.renew(bot.id, str(supervisor.worker_id)) is True
+
+    remote = BotSupervisor(
+        repositories,
+        FakeFactory(),
+        FakeReconciler(),
+        supervisor.clock,
+        EventBus(),
+    )
+    assert await remote.start(bot.id) is False
+    await remote.shutdown()
+
+    with pytest.raises(RuntimeError, match="could not be stopped"):
+        await supervisor.shutdown()
 
 
 @pytest.mark.asyncio
@@ -516,7 +579,10 @@ async def test_heartbeat_renewal_failure_isolated_to_one_bot() -> None:
     repositories = FailingRenewalRepositories(bots[0].id, bots)
     factory = FakeFactory()
     supervisor = BotSupervisor(repositories, factory, FakeReconciler(), FakeClock(), EventBus())
-    assert await asyncio.gather(*(supervisor.start(bot.id) for bot in bots)) == [True, True]
+    assert await asyncio.gather(*(supervisor.start(bot.id) for bot in bots)) == [
+        True,
+        True,
+    ]
 
     repositories.fail_renewal = True
     await supervisor.heartbeat_once()
@@ -651,8 +717,7 @@ async def test_stale_heartbeat_failure_after_stop_cannot_affect_reclaimed_runtim
 
 
 @pytest.mark.asyncio
-async def test_stale_heartbeat_failure_after_cross_worker_reclaim_cannot_mutate_new_owner(
-) -> None:
+async def test_stale_heartbeat_failure_after_cross_worker_reclaim_cannot_mutate_new_owner() -> None:
     bot = make_bot()
     repositories = GatedRenewalRepositories([bot])
     clock = FakeClock()

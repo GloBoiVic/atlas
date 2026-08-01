@@ -68,6 +68,10 @@ Last updated: 2026-08-01
   and environment-gap documentation are current.
 - Final Task 4 verification: focused supervisor/repository tests pass (39), full pytest passes
   (127), Ruff, mypy, and `git diff --check` pass.
+- Final important supervisor findings are fixed: cancellation-safe stop finalization waits for
+  pipeline cleanup before STOPPED/release, failed stops persist ERROR and retain ownership, and
+  shutdown reports unresolved cleanup failures. Focused supervisor tests pass (29) and full pytest
+  passes (138).
 
 ## What comes next
 
@@ -80,3 +84,5 @@ are complete.
 Branch from `main` because no `develop` branch exists. Run the full test suite immediately
 after moving `AccountMode`, then again after all Feature 02 slices. Docker/Compose verification
 must run inside the Codespace because Docker is unavailable on the Mac host.
+Live Alembic checks and PostgreSQL lease concurrency remain Codespace checks; offline migration
+upgrade/downgrade SQL generation passes locally.

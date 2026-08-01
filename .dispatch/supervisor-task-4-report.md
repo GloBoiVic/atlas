@@ -218,3 +218,31 @@ The current branch fixes them as follows:
 - Live PostgreSQL concurrency and migration execution remain Codespace/Compose checks because
   PostgreSQL is unavailable on the Mac host; executable SQLite coverage and PostgreSQL SQL builders
   pass locally.
+
+## Remaining Important Findings
+
+- Cancellation during `pipeline.stop()` waits for cleanup before `STOPPED` persistence and
+  owner-conditional release; cancellation is then re-raised. The regression verifies the pipeline
+  is stopped before the final transition event and release are observable.
+- A failed stop disables execution, persists owner-conditional `ERROR`, retains pipeline and lease
+  bookkeeping, and blocks duplicate starts. Shutdown retries cleanup and raises unresolved failure
+  instead of silently releasing ownership.
+- Cleanup failures remain structured-log failures with bot and worker context. `supervisor.py`
+  remains above 300 lines because its lifecycle, ownership, heartbeat, and lock invariants are
+  tightly coupled; extracting individual methods would create a weaker boundary. The reusable
+  cancellation helper is isolated in `backend/worker/cleanup.py`.
+
+## Remaining Important Finding Verification
+
+- Focused supervisor tests: `python3 -m pytest -q tests/test_supervisor.py` -> 29 passed.
+- Full tests: `python3 -m pytest -q` -> 138 passed.
+- Ruff: `python3 -m ruff check .` -> passed.
+- Mypy: `python3 -m mypy backend/` -> passed.
+- Offline migrations: `python3 -m alembic upgrade head --sql` and
+  `python3 -m alembic downgrade head:base --sql` -> passed.
+- Diff check: `git diff --check` -> passed.
+
+## Remaining Important Finding Concerns
+
+- `python3 -m alembic check` could not connect to PostgreSQL on the Mac host; live migration
+  execution and PostgreSQL lease concurrency remain Codespace/Compose verification steps.

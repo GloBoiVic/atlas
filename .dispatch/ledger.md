@@ -16,6 +16,6 @@ Final review: conditional pass; five-slice scope ready, Docker/Compose validatio
 Task 1: complete (commits 1c7f6be..7ce8a44, review clean)
 Task 2: complete (commits f0c7ec3..640849d, review clean)
 Task 3: complete (commit d6fe996, review clean)
-Task 4: pending — implement BotSupervisor and tests
-Task 5: pending — wire worker/docs and run integration checks
-Final review: pending
+Task 4: complete (commits 980a005..28311c8, review clean)
+Task 5: complete (commits 0dc4ac8..0755a99, review clean)
+Final review: complete with remaining live PostgreSQL/Codespace verification concern
