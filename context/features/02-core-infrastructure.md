@@ -10,9 +10,9 @@ EventBus, Clock abstraction, error handling, configuration system, and structure
 
 ## Deliverables
 
-- [ ] EventBus: In-process pub/sub with typed, bot-scoped domain events
-- [ ] Event types defined: CandleClosed, TickReceived, SignalGenerated, RiskApproved, RiskRejected, OrderSubmitted, OrderFilled, PositionOpened, PositionUpdated, PositionClosed, TradeClosed
-- [ ] Error events defined: ApiError, DataFeedError, OrderRejected, OrderFailed, StrategyError, ConnectionLost, ConnectionRestored, CircuitBreakerOpen, CircuitBreakerClosed
+- [x] EventBus: In-process pub/sub with typed, bot-scoped domain events
+- [x] Event types defined: CandleClosed, TickReceived, SignalGenerated, RiskApproved, RiskRejected, OrderSubmitted, OrderFilled, PositionOpened, PositionUpdated, PositionClosed, TradeClosed
+- [x] Error events defined: ApiError, DataFeedError, OrderRejected, OrderFailed, StrategyError, ConnectionLost, ConnectionRestored, CircuitBreakerOpen, CircuitBreakerClosed
 - [ ] Clock abstraction: LiveClock, SimulationClock
 - [ ] Configuration system: Pydantic Settings, YAML strategy config, deployment mode validation
 - [ ] Structured logging: structlog setup
