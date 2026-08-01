@@ -275,3 +275,29 @@ The current branch fixes them as follows:
 - `supervisor.py` remains above 300 lines. Further extraction would move tightly coupled methods
   sharing per-bot lock, ownership generation, pipeline, and repository state; the reusable
   cancellation helper remains isolated without changing those ownership boundaries.
+
+## Start-Abort Cleanup Finding Follow-up
+
+- `_abort_start()` now reports whether pipeline cleanup completed. The start transaction releases
+  ownership only after `pipeline.stop()` succeeds; failed cleanup retains the pipeline and local
+  lease bookkeeping, with execution disabled and `_stop_failures` blocking duplicate starts.
+- Start failure and cancellation cleanup failures persist owner-conditional `ERROR` state with an
+  explicit `pipeline cleanup unresolved` diagnostic. The existing cancellation-safe cleanup waiter
+  ensures cancellation cannot interrupt this cleanup or cause an unsafe lease release.
+- Added deterministic regressions for start failure and cancelled start with failing pipeline stop,
+  asserting disabled/live pipeline state, retained lease, unresolved ERROR state, and start blocking.
+
+## Start-Abort Verification
+
+- Focused supervisor tests: `python3 -m pytest -q tests/test_supervisor.py` -> 35 passed.
+- Full tests: `python3 -m pytest -q` -> 144 passed.
+- Ruff: `python3 -m ruff check .` -> passed.
+- Mypy: `python3 -m mypy backend` -> passed.
+- Offline migrations: `python3 -m alembic upgrade head --sql` and
+  `python3 -m alembic downgrade head:base --sql` -> passed.
+- Diff check: `git diff --check` -> passed.
+
+## Start-Abort Concerns
+
+- Live PostgreSQL migration execution and lease concurrency remain Codespace/Compose checks;
+  local offline SQL generation and SQLite repository coverage pass.

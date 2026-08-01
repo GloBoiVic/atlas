@@ -351,6 +351,62 @@ async def test_pipeline_failure_persists_error_without_retrying() -> None:
 
 
 @pytest.mark.asyncio
+async def test_start_failure_with_stop_failure_retains_unresolved_pipeline_and_lease() -> None:
+    bot = make_bot()
+    supervisor, repositories, factory, _, _ = make_supervisor(
+        [bot],
+        fail_start=True,
+        fail_stop=True,
+    )
+
+    assert await supervisor.start(bot.id) is False
+
+    pipeline = factory.pipelines[bot.id]
+    current = await repositories.get(bot.id)
+    assert current is not None and current.status == "error"
+    assert current.last_error is not None and "cleanup unresolved" in current.last_error
+    assert pipeline.execution_enabled is False
+    assert pipeline.stopped is False
+    assert bot.id in supervisor._pipelines
+    assert await repositories.renew(bot.id, str(supervisor.worker_id)) is True
+    assert await supervisor.start(bot.id) is False
+
+    pipeline.fail_stop = False
+    await supervisor.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_start_with_stop_failure_retains_unresolved_pipeline_and_lease() -> None:
+    bot = make_bot()
+    start_gate = asyncio.Event()
+    supervisor, repositories, factory, _, _ = make_supervisor(
+        [bot],
+        start_gate=start_gate,
+        fail_stop=True,
+    )
+    starting = asyncio.create_task(supervisor.start(bot.id))
+    while bot.id not in factory.pipelines:
+        await asyncio.sleep(0)
+
+    starting.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await starting
+
+    pipeline = factory.pipelines[bot.id]
+    current = await repositories.get(bot.id)
+    assert current is not None and current.status == "error"
+    assert current.last_error is not None and "cleanup unresolved" in current.last_error
+    assert pipeline.execution_enabled is False
+    assert pipeline.stopped is False
+    assert bot.id in supervisor._pipelines
+    assert await repositories.renew(bot.id, str(supervisor.worker_id)) is True
+    assert await supervisor.start(bot.id) is False
+
+    pipeline.fail_stop = False
+    await supervisor.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_pause_preserves_pipeline_and_disables_only_execution() -> None:
     bot = make_bot()
     supervisor, repositories, factory, _, _ = make_supervisor([bot])

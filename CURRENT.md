@@ -77,6 +77,11 @@ Last updated: 2026-08-01
   shutdown diagnostics include affected bot IDs.
 - Final follow-up verification: focused supervisor tests pass (33), full pytest passes (142),
   Ruff, mypy, offline migration SQL generation, and `git diff --check` pass.
+- Remaining start-abort cleanup finding is complete: failed pipeline stops during start failure or
+  cancellation now persist owner-conditional ERROR/unresolved state, retain the live disabled
+  pipeline and lease, and block duplicate starts until cleanup succeeds.
+- Final start-abort verification: focused supervisor tests pass (35), full pytest passes (144),
+  Ruff, mypy, offline migration SQL generation, and `git diff --check` pass.
 
 ## What comes next
 

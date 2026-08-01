@@ -168,6 +168,7 @@ class BotSupervisor:
         pipeline: BotPipeline | None = None
         claimed = False
         success = False
+        abort_cleanup_succeeded = False
         try:
             if self._shutting_down:
                 return False
@@ -246,7 +247,9 @@ class BotSupervisor:
                 return True
         except asyncio.CancelledError:
             if claimed:
-                await await_cleanup(self._abort_start(bot_id, pipeline))
+                abort_cleanup_succeeded = await await_cleanup(
+                    self._abort_start(bot_id, pipeline)
+                )
             raise
         except Exception as exception:
             logger.exception(
@@ -256,10 +259,14 @@ class BotSupervisor:
                 error=str(exception),
             )
             if claimed:
-                await self._abort_start(bot_id, pipeline, str(exception))
+                abort_cleanup_succeeded = await self._abort_start(
+                    bot_id,
+                    pipeline,
+                    str(exception),
+                )
             return False
         finally:
-            if claimed and not success:
+            if claimed and not success and abort_cleanup_succeeded:
                 await await_cleanup(self._release_claim(bot_id))
             self._operations.discard(operation)
 
@@ -386,23 +393,31 @@ class BotSupervisor:
         bot_id: str,
         pipeline: BotPipeline | None,
         error: str | None = None,
-    ) -> None:
+    ) -> bool:
         async with self._bot_lock(bot_id):
             if pipeline is not None:
                 pipeline.set_execution_enabled(False)
                 try:
                     await pipeline.stop()
-                except Exception:
+                except Exception as exception:
                     logger.exception("bot_pipeline_cleanup_failed", bot_id=bot_id)
                     self._stop_failures.add(bot_id)
-                    return
+                    cleanup_error = error or "bot start cancelled"
+                    try:
+                        await self._persist_error(
+                            bot_id,
+                            f"{cleanup_error}; pipeline cleanup unresolved: {exception}",
+                        )
+                    except Exception:
+                        logger.exception("bot_start_cleanup_error_persist_failed", bot_id=bot_id)
+                    return False
                 self._pipelines.pop(bot_id, None)
             if error is not None:
                 try:
                     await self._persist_error(bot_id, error)
                 except Exception:
                     logger.exception("bot_start_error_persist_failed", bot_id=bot_id)
-            await self._release_claim(bot_id)
+            return True
 
     async def _finalize_stop(
         self,
