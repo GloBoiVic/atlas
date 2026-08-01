@@ -3,10 +3,12 @@ from logging.config import fileConfig
 from sqlalchemy import engine_from_config, pool
 
 from alembic import context
+from backend.config import settings
 from backend.persistence.database import Base
 from backend.persistence.models import Account  # noqa: F401
 
 config = context.config
+config.set_main_option("sqlalchemy.url", settings.DATABASE_URL_SYNC.replace("%", "%%"))
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 

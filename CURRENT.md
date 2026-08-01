@@ -11,12 +11,12 @@ Last updated: 2026-07-31
 ## Feature
 
 - **Number:** 01
-- **Name:** Project Foundation
+- **Name:** Project Foundation — Codespaces hardening
 - **File:** context/features/01-project-foundation.md
 
 ## Branch
 
-- **Name:** feature/01-project-foundation
+- **Name:** feature/01-codespaces-hardening
 - **Created:** 2026-07-31
 
 ## What was built
@@ -30,6 +30,9 @@ Last updated: 2026-07-31
 - 19 passing tests (API health, config, errors, events, models)
 - ruff check and mypy pass clean
 - Deployment documentation, .env.example, .gitignore, .dockerignore
+- GitHub Codespaces devcontainer with Python, Node.js, Docker, forwarded ports, and setup commands
+- Container package discovery and Alembic configuration fixed for Compose service networking
+- Frontend API URL made configurable at image build time for Codespaces/browser access
 
 ## What comes next
 
@@ -37,4 +40,5 @@ Feature 02 — Core Infrastructure: EventBus persistence, config validation, str
 
 ## Notes
 
-Pushed to `origin/feature/01-project-foundation`. Ready to merge to `develop`.
+Codespaces hardening is complete on `feature/01-codespaces-hardening`. Docker/Compose
+verification must run inside the Codespace because Docker is unavailable on the Mac host.

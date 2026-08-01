@@ -206,14 +206,17 @@ Native browser WebSocket API — no library needed for basic WebSocket communica
 
 ### Containerization: Docker Compose
 
-For local development and the single-user remote deployment. The frontend, API, worker, and PostgreSQL run as separate containers.
+For GitHub Codespaces development and the single-user remote deployment. The frontend, API,
+worker, and PostgreSQL run as separate containers. Codespaces supplies the Linux container
+runtime; Docker Desktop is not required for Atlas development.
 
 | Requirement | Version | Rationale |
 |-------------|---------|-----------|
-| Docker | 24+ | Container runtime |
+| Docker Engine | 24+ | Container runtime supplied by Codespaces or Linux VPS |
 | Docker Compose | 2.24+ | Multi-container orchestration |
 
-**Note:** Docker works on Intel Macs (x86_64). No special configuration needed.
+Development setup is documented in `docs/codespaces.md`. Local macOS Docker Desktop is not
+required and may be unavailable on older macOS versions.
 
 ### Remote Access: Cloudflare
 

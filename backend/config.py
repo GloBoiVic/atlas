@@ -1,6 +1,6 @@
 from enum import StrEnum
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Environment(StrEnum):
@@ -10,7 +10,11 @@ class Environment(StrEnum):
 
 
 class Settings(BaseSettings):
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     # Environment
     ATLAS_ENVIRONMENT: Environment = Environment.PAPER

@@ -1,8 +1,11 @@
 # Atlas — Remote VPS Deployment
 
+For development in GitHub Codespaces, see `docs/codespaces.md`. This document covers the
+production-style Linux VPS deployment only.
+
 ## Prerequisites
 
-- Docker and Docker Compose installed on the VPS
+- Linux VPS with Docker Engine and Docker Compose installed
 - Cloudflare DNS configured for your domain
 - Cloudflare Access with Google authentication enabled
 

@@ -8,10 +8,14 @@ Read these files in order:
 
 1. `context/project-brief.md` — product scope and MVP boundary
 2. `context/architecture.md` — component boundaries and runtime invariants
-3. `context/tech-stack.md` — exact dependency versions
+3. `context/tech-stack.md` — dependency declarations and supported versions
 4. `context/coding-standards.md` — Python and TypeScript conventions
 5. `context/library-docs.md` — project-specific library patterns
 6. `context/features/<current-feature>.md` — deliverables and acceptance criteria
+
+Development environment: use GitHub Codespaces as documented in `docs/codespaces.md`.
+Do not assume Docker Desktop or a local Docker daemon is available on the developer's Mac.
+Atlas still uses Docker Compose for the API, worker, frontend, and PostgreSQL services.
 
 When the work touches a covered library, also read the relevant local skill under
 `.agents/skills/`:
