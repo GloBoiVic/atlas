@@ -93,6 +93,9 @@ are complete.
 
 ## Notes
 
+Next.js 16 Task 1 is implemented on `chore/next16-upgrade`; Task 2 owns the follow-up
+documentation and Node.js runtime guidance.
+
 Branch from `main` because no `develop` branch exists. Run the full test suite immediately
 after moving `AccountMode`, then again after all Feature 02 slices. Docker/Compose verification
 must run inside the Codespace because Docker is unavailable on the Mac host.
