@@ -19,3 +19,10 @@ Task 3: complete (commit d6fe996, review clean)
 Task 4: complete (commits 980a005..3f862cb, review clean)
 Task 5: complete (commits 0dc4ac8..0755a99, review clean)
 Final review: conditional pass at 3f862cb; live PostgreSQL/Codespaces verification pending
+
+## Reproducible Development Dependencies — chore/reproducible-dev-dependencies
+
+Task 1: complete (commits 0c3f9e4..78bbc82, review clean)
+Task 2: complete (report-only task, review clean)
+Task 3: complete (commit 9e25484, review clean with pre-existing lint-config concern)
+Final review: conditional pass; Docker/Codespaces validation and frontend lint configuration remain environment/tooling gaps

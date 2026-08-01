@@ -307,10 +307,10 @@ For strategy exploration, data analysis, and indicator development. Uses the sam
 ## Principles
 
 Version values in this document are declaration ranges from the project manifests, not
-installed versions. Atlas currently has no committed Python or frontend lockfile. When a
-dependency is added or upgraded, update the manifest, generate the appropriate lockfile,
-and verify version-sensitive API guidance against the official documentation for the
-resolved version.
+installed versions. Atlas commits `uv.lock` for Python and `frontend/package-lock.json`
+for frontend dependency resolution. When a dependency is added or upgraded, update the
+manifest, regenerate the appropriate lockfile, and verify version-sensitive API guidance
+against the official documentation for the resolved version.
 
 1. **No dependency lock-in.** Prefer libraries that are open-source, well-maintained, and don't lock you into a specific ecosystem.
 2. **Minimal dependencies.** Don't add a library if the standard library or existing dependency already solves the problem.
