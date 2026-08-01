@@ -2,7 +2,7 @@
 
 import asyncio
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from typing import Final
 from uuid import uuid4
 
@@ -132,29 +132,75 @@ class BotSupervisor:
     async def shutdown(self) -> None:
         """Gate new starts, finish operations, and stop owned pipelines."""
         self._shutting_down = True
+        cancelled = False
+        shutdown_operation = asyncio.current_task()
+        assert shutdown_operation is not None
+        cancellation_count = shutdown_operation.cancelling()
         while self._operations:
-            await asyncio.gather(*tuple(self._operations), return_exceptions=True)
+            try:
+                async def wait_for_operations() -> None:
+                    await asyncio.gather(*tuple(self._operations), return_exceptions=True)
+
+                await await_cleanup(wait_for_operations())
+            except asyncio.CancelledError:
+                cancelled = True
+                logger.error(
+                    "bot_shutdown_wait_cancelled",
+                    bot_ids=sorted(self._claimed | set(self._pipelines)),
+                    worker_id=str(self.worker_id),
+                )
 
         if self._heartbeat_task is not None:
             self._heartbeat_task.cancel()
-            with suppress(asyncio.CancelledError):
+            try:
                 await self._heartbeat_task
+            except asyncio.CancelledError:
+                logger.info(
+                    "bot_shutdown_heartbeat_cancelled",
+                    bot_ids=sorted(self._claimed),
+                    worker_id=str(self.worker_id),
+                )
+                cancelled = shutdown_operation.cancelling() > cancellation_count
             self._heartbeat_task = None
 
         bot_ids = tuple(self._claimed | set(self._pipelines))
-        results = await asyncio.gather(
-            *(self._stop(bot_id) for bot_id in bot_ids),
-            return_exceptions=True,
-        )
+        async def stop_all() -> list[object]:
+            return list(
+                await asyncio.gather(
+                    *(self._stop(bot_id) for bot_id in bot_ids),
+                    return_exceptions=True,
+                )
+            )
+
+        try:
+            results = await await_cleanup(stop_all())
+        except asyncio.CancelledError:
+            cancelled = True
+            results = [False] * len(bot_ids)
+            logger.error(
+                "bot_shutdown_cleanup_cancelled",
+                bot_ids=list(bot_ids),
+                worker_id=str(self.worker_id),
+            )
         failures = [
             bot_id
             for bot_id, result in zip(bot_ids, results, strict=True)
-            if isinstance(result, Exception) or result is False
+            if isinstance(result, BaseException) or result is False
         ]
+        unresolved = sorted(set(failures) | self._claimed | set(self._pipelines))
+        if cancelled:
+            logger.error(
+                "bot_shutdown_cancelled",
+                bot_ids=list(bot_ids),
+                unresolved_bot_ids=unresolved,
+                worker_id=str(self.worker_id),
+            )
+            raise asyncio.CancelledError
         if failures:
             logger.error(
                 "bot_shutdown_cleanup_unresolved",
-                bot_ids=list(failures),
+                bot_ids=failures,
+                unresolved_bot_ids=unresolved,
                 worker_id=str(self.worker_id),
             )
             raise RuntimeError(
@@ -167,8 +213,6 @@ class BotSupervisor:
         self._operations.add(operation)
         pipeline: BotPipeline | None = None
         claimed = False
-        success = False
-        abort_cleanup_succeeded = False
         try:
             if self._shutting_down:
                 return False
@@ -243,13 +287,16 @@ class BotSupervisor:
                     ),
                 )
                 await self._assert_owned(bot_id)
-                success = True
                 return True
         except asyncio.CancelledError:
+            logger.error(
+                "bot_pipeline_start_cancelled",
+                bot_id=bot_id,
+                state="starting",
+                worker_id=str(self.worker_id),
+            )
             if claimed:
-                abort_cleanup_succeeded = await await_cleanup(
-                    self._abort_start(bot_id, pipeline)
-                )
+                await await_cleanup(self._abort_start(bot_id, pipeline, "bot start cancelled"))
             raise
         except Exception as exception:
             logger.exception(
@@ -259,15 +306,9 @@ class BotSupervisor:
                 error=str(exception),
             )
             if claimed:
-                abort_cleanup_succeeded = await self._abort_start(
-                    bot_id,
-                    pipeline,
-                    str(exception),
-                )
+                await self._abort_start(bot_id, pipeline, str(exception))
             return False
         finally:
-            if claimed and not success and abort_cleanup_succeeded:
-                await await_cleanup(self._release_claim(bot_id))
             self._operations.discard(operation)
 
     async def _stop(self, bot_id: str) -> bool:
@@ -399,6 +440,23 @@ class BotSupervisor:
                 pipeline.set_execution_enabled(False)
                 try:
                     await pipeline.stop()
+                except asyncio.CancelledError:
+                    logger.error(
+                        "bot_pipeline_cleanup_cancelled",
+                        bot_id=bot_id,
+                        state="starting",
+                        worker_id=str(self.worker_id),
+                    )
+                    self._stop_failures.add(bot_id)
+                    cleanup_error = error or "bot start cancelled"
+                    try:
+                        await self._persist_error(
+                            bot_id,
+                            f"{cleanup_error}; pipeline cleanup unresolved: cancellation",
+                        )
+                    except Exception:
+                        logger.exception("bot_start_cleanup_error_persist_failed", bot_id=bot_id)
+                    return False
                 except Exception as exception:
                     logger.exception("bot_pipeline_cleanup_failed", bot_id=bot_id)
                     self._stop_failures.add(bot_id)
@@ -417,7 +475,7 @@ class BotSupervisor:
                     await self._persist_error(bot_id, error)
                 except Exception:
                     logger.exception("bot_start_error_persist_failed", bot_id=bot_id)
-            return True
+            return await self._release_claim(bot_id)
 
     async def _finalize_stop(
         self,
@@ -466,6 +524,16 @@ class BotSupervisor:
             self._stop_failures.add(bot_id)
             await self._persist_stop_error(bot_id, exception)
             return False
+        except asyncio.CancelledError:
+            logger.error(
+                "bot_stop_cleanup_cancelled",
+                bot_id=bot_id,
+                state="stopping",
+                worker_id=str(self.worker_id),
+            )
+            self._stop_failures.add(bot_id)
+            await self._persist_stop_error(bot_id, RuntimeError("stop cleanup cancelled"))
+            return False
 
     async def _release_claim(self, bot_id: str) -> bool:
         if bot_id not in self._claimed:
@@ -510,9 +578,14 @@ class BotSupervisor:
             lock.release()
 
     async def _persist(self, bot_id: str, state: LifecycleUpdate) -> None:
-        record = await self.repositories.persist_lifecycle(bot_id, state)
+        record = await self.repositories.persist_lifecycle_if_owned(
+            bot_id,
+            str(self.worker_id),
+            state,
+            self.clock.now(),
+        )
         if record is None:
-            return
+            raise LeaseOwnershipLost("bot lease ownership lost")
         await publish_persisted_transition(self.event_bus, str(self.worker_id), record)
 
     async def _persist_error(self, bot_id: str, error: str) -> bool:

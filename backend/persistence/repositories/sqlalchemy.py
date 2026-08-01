@@ -21,6 +21,17 @@ if TYPE_CHECKING:
 LEASE_TIMEOUT = timedelta(seconds=30)
 
 
+def _lease_is_current(lease: BotRun, worker_id: str, current_time: datetime) -> bool:
+    locked_at = lease.locked_at
+    if locked_at is None:
+        return False
+    if locked_at.tzinfo is None:
+        locked_at = locked_at.replace(tzinfo=UTC)
+    if current_time.tzinfo is None:
+        current_time = current_time.replace(tzinfo=UTC)
+    return lease.worker_id == worker_id and locked_at > current_time - LEASE_TIMEOUT
+
+
 def _insert_for_dialect(dialect_name: str) -> Any:
     if dialect_name == "sqlite":
         return cast("Insert", sqlite_insert(BotRun))
@@ -180,12 +191,7 @@ class SqlAlchemySupervisorRepositories:
                     .with_for_update()
                 )
             ).scalar_one_or_none()
-            if (
-                lease is None
-                or lease.worker_id != worker_id
-                or lease.locked_at is None
-                or lease.locked_at <= current_time - LEASE_TIMEOUT
-            ):
+            if lease is None or not _lease_is_current(lease, worker_id, current_time):
                 return None
 
             bot = await session.get(Bot, bot_id)
@@ -215,12 +221,7 @@ class SqlAlchemySupervisorRepositories:
                     .with_for_update()
                 )
             ).scalar_one_or_none()
-            if (
-                lease is None
-                or lease.worker_id != worker_id
-                or lease.locked_at is None
-                or lease.locked_at <= current_time - LEASE_TIMEOUT
-            ):
+            if lease is None or not _lease_is_current(lease, worker_id, current_time):
                 return None
 
             bot = (

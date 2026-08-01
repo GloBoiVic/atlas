@@ -301,3 +301,34 @@ The current branch fixes them as follows:
 
 - Live PostgreSQL migration execution and lease concurrency remain Codespace/Compose checks;
   local offline SQL generation and SQLite repository coverage pass.
+
+## Final Whole-Branch Review Fixes
+
+- Startup `STARTING` and `RUNNING` persistence now uses the owner-conditional repository boundary;
+  stale workers fail closed instead of overwriting a reclaimed owner's lifecycle state.
+- Start-abort cleanup releases the lease while still holding the per-bot lifecycle lock, preventing
+  an old operation from releasing a claim reused by a concurrent start.
+- Start cancellation is logged with bot/state context, persists an owner-conditional `ERROR`, and
+  preserves ownership when pipeline cleanup is unresolved.
+- Shutdown and cleanup handle `asyncio.CancelledError` explicitly. Shutdown waits for shielded
+  cleanup, logs affected and unresolved bot IDs, re-raises cancellation, and retains unresolved
+  pipeline/lease ownership for retry.
+- Added deterministic stale-start, abort serialization, shutdown cancellation, and expired-lease
+  repository regressions. SQL lease freshness also normalizes SQLite's naive timestamps.
+
+## Final Whole-Branch Verification
+
+- Focused supervisor/repository tests: `python3 -m pytest -q tests/test_supervisor.py
+  tests/test_repositories.py tests/test_sql_repositories.py` -> 57 passed.
+- Full tests: `python3 -m pytest -q` -> 150 passed.
+- Ruff: `python3 -m ruff check .` -> passed.
+- Mypy: `python3 -m mypy backend` -> passed.
+- Offline migrations: `python3 -m alembic upgrade head --sql` and
+  `python3 -m alembic downgrade head:base --sql` -> passed.
+- Diff check: `git diff --check` -> passed.
+
+## Final Whole-Branch Concerns
+
+- Live PostgreSQL migration execution and concurrent lease behavior remain Codespace/Compose
+  checks because PostgreSQL is unavailable on the Mac host; SQL builders and executable SQLite
+  repository coverage pass locally.

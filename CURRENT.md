@@ -82,6 +82,8 @@ Last updated: 2026-08-01
   pipeline and lease, and block duplicate starts until cleanup succeeds.
 - Final start-abort verification: focused supervisor tests pass (35), full pytest passes (144),
   Ruff, mypy, offline migration SQL generation, and `git diff --check` pass.
+- Final whole-branch review fixes are complete and verified: full pytest passes (150), focused
+  supervisor/repository tests pass (57), Ruff, mypy, offline migrations, and diff check pass.
 
 ## What comes next
 
