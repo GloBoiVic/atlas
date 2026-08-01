@@ -273,6 +273,7 @@ CREATE TABLE bots (
     mode VARCHAR(20) NOT NULL,  -- "paper", "testnet"
     instrument VARCHAR(50) NOT NULL,
     timeframe VARCHAR(10) NOT NULL,
+    desired_status VARCHAR(20) NOT NULL DEFAULT 'stopped', -- requested lifecycle state
     status VARCHAR(20) NOT NULL DEFAULT 'stopped',  -- "stopped", "starting", "running", "pausing", "paused", "stopping", "error"
     pnl DECIMAL(20, 8) DEFAULT 0,
     started_at TIMESTAMP WITH TIME ZONE,
@@ -292,6 +293,8 @@ CREATE TABLE bot_runs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     bot_id UUID NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
     process_id VARCHAR(255),
+    worker_id UUID,
+    locked_at TIMESTAMP WITH TIME ZONE,
     status VARCHAR(20) NOT NULL,  -- "starting", "running", "stopped", "failed"
     started_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     stopped_at TIMESTAMP WITH TIME ZONE,
