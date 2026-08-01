@@ -3,6 +3,7 @@ import pytest
 from backend.core.errors import (
     AtlasError,
     BrokerError,
+    CircuitBreakerOpenError,
     ConfigError,
     DataError,
     OrderError,
@@ -18,6 +19,7 @@ def test_atlas_error_is_base():
     assert issubclass(StrategyError, AtlasError)
     assert issubclass(DataError, AtlasError)
     assert issubclass(ConfigError, AtlasError)
+    assert issubclass(CircuitBreakerOpenError, AtlasError)
 
 
 def test_errors_can_be_raised():

@@ -24,3 +24,7 @@ class DataError(AtlasError):
 
 class ConfigError(AtlasError):
     """Configuration validation error."""
+
+
+class CircuitBreakerOpenError(AtlasError):
+    """Raised when an operation is rejected by an open circuit breaker."""
