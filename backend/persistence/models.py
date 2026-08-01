@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Numeric, String, Text
+from sqlalchemy import DateTime, ForeignKey, Numeric, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -26,6 +26,48 @@ class Account(Base):
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),
         onupdate=lambda: datetime.now(UTC),
+    )
+
+
+class Strategy(Base):
+    __tablename__ = "strategies"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid4())
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    entrypoint: Mapped[str] = mapped_column(String(500), nullable=False)
+    repository: Mapped[str] = mapped_column(String(500), nullable=False)
+    version: Mapped[str] = mapped_column(String(50), nullable=False, default="1.0.0")
+    commit_sha: Mapped[str] = mapped_column(String(64), nullable=False)
+    parameters: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, default=dict)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(nullable=True, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+
+
+class StrategyVersion(Base):
+    __tablename__ = "strategy_versions"
+    __table_args__ = (UniqueConstraint("strategy_id", "commit_sha"),)
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid4())
+    )
+    strategy_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("strategies.id"), nullable=False
+    )
+    repository: Mapped[str] = mapped_column(String(500), nullable=False)
+    commit_sha: Mapped[str] = mapped_column(String(64), nullable=False)
+    parameters: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, default=dict)
+    deployed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
     )
 
 
@@ -53,8 +95,8 @@ class Bot(Base):
         String(20), nullable=False, default="stopped"
     )
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="stopped")
-    pnl: Mapped[Decimal] = mapped_column(
-        Numeric(20, 8), nullable=False, default=Decimal("0")
+    pnl: Mapped[Decimal | None] = mapped_column(
+        Numeric(20, 8), nullable=True, default=Decimal("0"), server_default=text("0")
     )
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     stopped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

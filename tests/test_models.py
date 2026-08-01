@@ -1,5 +1,13 @@
 from backend.core.account_mode import AccountMode
-from backend.persistence.models import Account, Bot, BotRun, ReconciliationRun
+from backend.persistence.database import Base
+from backend.persistence.models import (
+    Account,
+    Bot,
+    BotRun,
+    ReconciliationRun,
+    Strategy,
+    StrategyVersion,
+)
 
 
 def test_account_mode_values():
@@ -52,6 +60,26 @@ def test_bot_run_has_worker_lease_fields():
     assert BotRun.__table__.c.worker_id.nullable is True
     assert BotRun.__table__.c.locked_at.nullable is True
     assert BotRun.__table__.c.bot_id.foreign_keys.pop().ondelete == "CASCADE"
+
+
+def test_metadata_registers_all_bot_foreign_key_targets():
+    assert {table.name for table in Base.metadata.sorted_tables} == {
+        "accounts",
+        "bots",
+        "bot_runs",
+        "reconciliation_runs",
+        "strategies",
+        "strategy_versions",
+    }
+    assert Strategy.__table__.c.name.unique is True
+    assert StrategyVersion.__table__.c.strategy_id.foreign_keys
+
+
+def test_bot_pnl_matches_documented_schema():
+    pnl = Bot.__table__.c.pnl
+    assert pnl.nullable is True
+    assert str(pnl.type) == "NUMERIC(20, 8)"
+    assert str(pnl.server_default.arg) == "0"
 
 
 def test_reconciliation_run_has_json_snapshots():

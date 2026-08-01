@@ -36,3 +36,29 @@ Complete.
 ## Commit
 
 The task implementation and this report are included in the task commit.
+
+## Review Fixes
+
+- Added the documented `strategies` and `strategy_versions` ORM models so all declared bot
+  foreign keys resolve during `Base.metadata.sorted_tables` and Alembic metadata discovery.
+- Updated migration `002` to create the reference tables before `bots`, add the canonical
+  strategy foreign keys, and drop the tables in dependent-first order during downgrade.
+- Made `bots.pnl` nullable with `NUMERIC(20, 8) DEFAULT 0` in the ORM and migration, matching
+  `context/database.md`.
+- Expanded migration tests to render PostgreSQL offline upgrade and downgrade SQL and verify
+  table order, foreign keys, nullability, numeric default, and rollback order.
+
+## Review Verification
+
+- Focused tests: `python3 -m pytest tests/test_models.py tests/test_migrations.py` -> 11 passed.
+- Full tests: `python3 -m pytest` -> 79 passed.
+- Offline upgrade: `python3 -m alembic upgrade 002 --sql` -> passed.
+- Offline downgrade: `python3 -m alembic downgrade 002:001 --sql` -> passed.
+- Ruff: `python3 -m ruff check .` -> passed.
+- Mypy: `python3 -m mypy backend` -> passed.
+- Diff check: `git diff --check` -> passed.
+
+## Review Concerns
+
+- Live PostgreSQL migration execution remains unverified because PostgreSQL is unavailable on
+  the Mac host. Offline Alembic rendering and structural tests cover the migration locally.
