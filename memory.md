@@ -1,60 +1,51 @@
-# Memory — Atlas Documentation Alignment
+# Memory — Atlas Codespaces Development Setup
 
-Last updated: 2026-07-31
+Last updated: 2026-08-01
 
 ## What was built
 
-- Initialized the Git repository and created branch `feature/01-project-foundation`.
-- Updated `context/project-brief.md` to define Atlas as a single-user, remotely deployed trading operations platform.
-- Reworked `context/architecture.md` into a focused source of truth for runtime topology, component boundaries, EventBus semantics, bot supervision, trading state contracts, backtesting invariants, and safety rules.
-- Updated `context/roadmap.md` with the corrected delivery order: foundation, infrastructure, data, strategy, risk, execution, backtesting, bot runtime/paper trading, journal/analytics, UI, Binance testnet, and hardening.
-- Expanded and aligned `context/database.md` with accounts, strategy versions, fills, bot runs, reconciliation runs, scoped orders/positions/journal entries, idempotency fields, and paper/testnet modes.
-- Updated feature files `01` through `13` to match the agreed MVP scope and removed duplicated schema/UI/code examples where appropriate.
-- Updated `context/design.md`, `context/tech-stack.md`, `context/coding-standards.md`, `context/library-docs.md`, `context/features/README.md`, `AGENTS.md`, and `CURRENT.md` for consistent ownership and terminology.
+- Added `.devcontainer/devcontainer.json` and `.devcontainer/Dockerfile` for GitHub Codespaces with Python 3.12, Node 20, Docker-outside-of-Docker, forwarded ports, and VS Code extensions.
+- Removed the Codespaces `postCreateCommand` that installed the full Python and frontend dependency trees.
+- Updated `Dockerfile.api` and `Dockerfile.worker` so the `backend` package is copied before editable installation.
+- Added setuptools package discovery to `pyproject.toml`.
+- Updated Alembic to read the configured synchronous database URL instead of relying on `localhost` in `alembic.ini`.
+- Made `NEXT_PUBLIC_API_URL` configurable for Codespaces/browser access.
+- Added `docs/codespaces.md` and updated `AGENTS.md`, `CURRENT.md`, `context/tech-stack.md`, `context/features/01-project-foundation.md`, and `docs/deployment.md` to document Codespaces as the supported development environment.
 
 ## Decisions made
 
-- MVP is single-user but remotely deployed on one VPS using Docker Compose with frontend, API, worker, and PostgreSQL.
-- Cloudflare provides HTTPS and Access with Google authentication; Atlas does not implement passwords.
-- Broker interfaces remain broker-agnostic, but Binance Spot is the first concrete integration.
-- First complete trading slice is Binance public market data plus paper execution; Binance Spot testnet execution follows later.
-- Strategies are version-pinned Python packages from a private Git repository. Bots record the selected commit SHA.
-- Multiple bots run as isolated pipelines in one worker process.
-- MVP supports one net position per account and instrument.
-- Backtest signals confirmed at candle close fill at the next candle open.
-- Initial risk controls are position sizing, stop-loss/take-profit, and maximum open net positions. Daily loss, drawdown, and session controls are deferred.
-- PostgreSQL is the durable source of truth. The EventBus is in-process coordination only.
-- Unknown broker order state requires reconciliation before retrying.
+- GitHub Codespaces is the supported development environment; Docker Desktop on the Mac is not required.
+- Docker Compose remains the runtime topology for API, worker, frontend, and PostgreSQL in Codespaces and Linux VPS deployment.
+- Codespace creation must stay lightweight. Heavy packages such as Pandas and NumPy are installed during application image builds, not automatically in `postCreateCommand`.
+- The Codespaces devcontainer uses a custom base Dockerfile to remove a stale Yarn apt source before Docker feature installation.
+- Use `docker-outside-of-docker` instead of `docker-in-docker` for Codespaces — mounts host Docker socket instead of running a nested daemon.
+- FastAPI remains the canonical trading API and the existing Atlas architecture boundaries remain unchanged.
+- Alembic runs synchronous migrations requiring `psycopg2-binary` alongside the async `asyncpg` driver.
 
 ## Problems solved
 
-- Corrected the roadmap dependency error where backtesting preceded risk and execution.
-- Defined EventBus delivery ordering, failure handling, bot scoping, idempotency, and event metadata.
-- Added durable runtime recovery and broker reconciliation requirements.
-- Resolved schema gaps around accounts, fills, strategy commits, bot runs, and journal identity.
-- Removed stale Oanda implementation examples and old frontend/file-tree examples from MVP documentation.
-- Resolved circular feature dependencies and made `roadmap.md` the canonical delivery sequence.
-- Removed duplicate architecture diagrams, schema definitions, UI route/code examples, feature-order tables, and agent documentation.
-- Clarified Decimal boundaries for backend money and controlled numeric conversion for Pandas/frontend display.
+- Fixed `ModuleNotFoundError: No module named 'backend'` during Alembic execution by correcting Python package installation order and package discovery.
+- Fixed the container database hostname problem by making Alembic use settings instead of the `localhost` URL in `alembic.ini`.
+- Fixed the initial Codespaces creation failure caused by the Docker feature encountering an invalid Yarn repository signing key.
+- Fixed Codespaces post-create failure with exit code 137 by removing automatic installation of the full dependency tree.
+- Fixed Codespaces recovery mode by replacing `docker-in-docker` with `docker-outside-of-docker`.
+- Fixed Codespace recovery mode caused by `overrideCommand: false` — container exited because no long-running command was specified; default `overrideCommand: true` lets Codespaces inject a keep-alive command.
+- Fixed `ModuleNotFoundError: No module named 'psycopg2'` by adding `psycopg2-binary` to `pyproject.toml` dependencies for Alembic sync migrations.
 
 ## Current state
 
-- Documentation cleanup and consistency verification are complete.
-- No application code, Docker setup, migrations, or tests have been implemented yet.
-- `CURRENT.md` identifies Feature 01 as in progress.
-- The working tree is uncommitted and contains the initialized repository plus existing project files.
+- All changes committed and pushed to `main` at commit `3517dfc`.
+- Local backend validation passes: Ruff, mypy, and 19 tests.
+- Codespace is operational: all 4 containers (API, worker, frontend, postgres) run successfully.
+- API health check returns `{"status":"ok"}`.
+- Alembic migration has not yet been verified after the psycopg2 fix — user needs to run `docker compose build api && docker compose exec api alembic upgrade head` in the Codespace.
 
 ## Next session starts with
 
-Implement Feature 01 from `context/features/01-project-foundation.md`:
-
-1. Create the backend, frontend, worker, and persistence structure.
-2. Add Docker Compose for the four services and PostgreSQL volume.
-3. Configure FastAPI health, worker liveness, Next.js app, Alembic, and environment settings.
-4. Add tests and run backend/frontend linting and type checks.
+1. Verify Alembic migration works: `docker compose build api && docker compose exec api alembic upgrade head`
+2. Check `https://github.com/codespaces` and determine whether the Atlas Codespace is Running, Stopped, or Unavailable.
+3. If unavailable, rebuild the container using the VS Code command palette "Rebuild Container".
 
 ## Open questions
 
-- Exact VPS provider and Cloudflare deployment mechanism remain implementation details for Feature 01.
-- The private strategy repository location and deployment procedure need to be configured without committing credentials.
-- The final Binance Spot data/testnet adapter details should be verified against the selected library versions during implementation.
+- Whether `feature/01-codespaces-hardening` branch should be deleted after Codespaces is verified; `main` already contains the same commit.
