@@ -40,6 +40,9 @@ Last updated: 2026-08-01
 - Supervisor Task 4 remaining race fix is complete: lease-failure cleanup now holds a task-aware
   per-bot lock through ERROR persistence, pipeline cleanup, and lease release; deterministic
   failure-versus-start and failure-versus-stop tests pass.
+- Supervisor Task 4 final review fixes are complete: explicit stop/shutdown now converge ordinary
+  ERROR bots to STOPPED, false lease releases clear local ownership, and cancellation cleanup is
+  covered by regression tests.
 - Task 1 ORM models and migration are complete and verified.
 - Task 1 review fixes are complete: strategy reference tables now resolve ORM metadata and
   migration constraints, and bot P&L nullability/default matches the canonical schema.

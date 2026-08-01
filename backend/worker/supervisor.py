@@ -250,7 +250,6 @@ class BotSupervisor:
                 if bot is None:
                     return False
                 pipeline = self._pipelines.get(bot_id)
-                failure_owned = bot_id in self._ownership_lost or bot.status == "error"
                 if bot.status == "stopped" and pipeline is None:
                     await self._release_claim(bot_id)
                     return True
@@ -258,16 +257,15 @@ class BotSupervisor:
                     pipeline.set_execution_enabled(False)
                 failure: BaseException | None = None
                 try:
-                    if not failure_owned:
-                        await self._persist(
-                            bot_id,
-                            LifecycleUpdate(
-                                desired_status="stopped",
-                                status="stopping",
-                                started_at=bot.started_at,
-                                stopped_at=None,
-                            ),
-                        )
+                    await self._persist(
+                        bot_id,
+                        LifecycleUpdate(
+                            desired_status="stopped",
+                            status="stopping",
+                            started_at=bot.started_at,
+                            stopped_at=None,
+                        ),
+                    )
                     if pipeline is not None:
                         await pipeline.stop()
                 except asyncio.CancelledError as exception:
@@ -278,15 +276,14 @@ class BotSupervisor:
                 finally:
                     self._pipelines.pop(bot_id, None)
                     try:
-                        if not failure_owned:
-                            await self._persist(
-                                bot_id,
-                                LifecycleUpdate(
-                                    desired_status="stopped",
-                                    status="stopped",
-                                    stopped_at=self.clock.now(),
-                                ),
-                            )
+                        await self._persist(
+                            bot_id,
+                            LifecycleUpdate(
+                                desired_status="stopped",
+                                status="stopped",
+                                stopped_at=self.clock.now(),
+                            ),
+                        )
                     except asyncio.CancelledError as exception:
                         failure = failure or exception
                     except Exception as exception:
@@ -392,8 +389,9 @@ class BotSupervisor:
         except Exception:
             logger.exception("bot_lease_release_failed", bot_id=bot_id)
             return
+        # A false result means the repository no longer considers this worker the owner.
+        self._claimed.discard(bot_id)
         if released:
-            self._claimed.discard(bot_id)
             self._ownership_lost.discard(bot_id)
 
     def _ensure_heartbeat_task(self) -> None:

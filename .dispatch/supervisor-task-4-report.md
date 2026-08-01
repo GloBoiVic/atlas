@@ -108,3 +108,27 @@ The current branch fixes them as follows:
 - Live PostgreSQL lease concurrency remains a Codespace/Compose verification concern inherited
   from Task 2; the regression tests use the deterministic in-memory repository.
 - Worker entrypoint wiring remains Task 5 scope.
+
+## Final Review Fixes
+
+- Explicit `stop()` and graceful shutdown now persist `STOPPING` and `STOPPED` for ordinary
+  `ERROR` records. Lease-loss cleanup remains a separate fail-closed path and does not rely on
+  treating every `ERROR` record as lease-failure-owned.
+- `_release_claim()` now clears local claimed bookkeeping whenever repository release returns,
+  including `False`, because a false result confirms this worker no longer owns the lease.
+- Added coverage for stopping pre-existing errors, shutdown of an errored owned pipeline,
+  cancelled stop cleanup, and false-release heartbeat cleanup without repeated release attempts.
+
+## Final Review Verification
+
+- Focused tests: `python3 -m pytest tests/test_supervisor.py -q` -> 23 passed.
+- Full tests: `python3 -m pytest -q` -> 123 passed.
+- Ruff: `python3 -m ruff check .` -> passed.
+- Mypy: `python3 -m mypy backend` -> passed.
+- Diff check: `git diff --check` -> passed.
+
+## Final Review Concerns
+
+- Live PostgreSQL lease concurrency remains a Codespace/Compose verification concern inherited
+  from Task 2; the supervisor tests use the deterministic in-memory repository.
+- Worker entrypoint wiring remains Task 5 scope.

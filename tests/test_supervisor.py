@@ -44,12 +44,14 @@ class FakePipeline:
         self,
         start_gate: asyncio.Event | None = None,
         fail_start: bool = False,
+        stop_gate: asyncio.Event | None = None,
     ) -> None:
         self.started = False
         self.stopped = False
         self.execution_enabled = False
         self.start_gate = start_gate
         self.fail_start = fail_start
+        self.stop_gate = stop_gate
 
     async def start(self) -> None:
         if self.start_gate is not None:
@@ -59,6 +61,8 @@ class FakePipeline:
         self.started = True
 
     async def stop(self) -> None:
+        if self.stop_gate is not None:
+            await self.stop_gate.wait()
         self.stopped = True
 
     def set_execution_enabled(self, enabled: bool) -> None:
@@ -70,13 +74,15 @@ class FakeFactory:
         self,
         start_gate: asyncio.Event | None = None,
         fail_start: bool = False,
+        stop_gate: asyncio.Event | None = None,
     ) -> None:
         self.pipelines: dict[str, FakePipeline] = {}
         self.start_gate = start_gate
         self.fail_start = fail_start
+        self.stop_gate = stop_gate
 
     def create_pipeline(self, bot: BotSnapshot) -> FakePipeline:
-        pipeline = FakePipeline(self.start_gate, self.fail_start)
+        pipeline = FakePipeline(self.start_gate, self.fail_start, self.stop_gate)
         self.pipelines[bot.id] = pipeline
         return pipeline
 
@@ -141,6 +147,21 @@ class GatedErrorRepositories(InMemorySupervisorRepositories):
         return await super().claim(bot_id, worker_id, now)
 
 
+class CountingReleaseRepositories(InMemorySupervisorRepositories):
+    def __init__(self, bots: list[BotRecord]) -> None:
+        super().__init__(bots=bots)
+        self.release_calls = 0
+
+    async def release(
+        self,
+        bot_id: str,
+        worker_id: str,
+        now: datetime | None = None,
+    ) -> bool:
+        self.release_calls += 1
+        return await super().release(bot_id, worker_id, now)
+
+
 def make_bot(
     *,
     status: str = "stopped",
@@ -168,9 +189,10 @@ def make_supervisor(
     status: ReconciliationStatus = ReconciliationStatus.MATCHED,
     start_gate: asyncio.Event | None = None,
     fail_start: bool = False,
+    stop_gate: asyncio.Event | None = None,
 ) -> tuple[BotSupervisor, InMemorySupervisorRepositories, FakeFactory, FakeReconciler, FakeClock]:
     repositories = InMemorySupervisorRepositories(bots=bots)
-    factory = FakeFactory(start_gate, fail_start)
+    factory = FakeFactory(start_gate, fail_start, stop_gate)
     reconciler = FakeReconciler(status)
     clock = FakeClock()
     supervisor = BotSupervisor(repositories, factory, reconciler, clock, EventBus())
@@ -320,6 +342,34 @@ async def test_lifecycle_events_follow_persisted_transitions_and_shutdown_releas
 
 
 @pytest.mark.asyncio
+async def test_stop_persists_stopped_for_pre_existing_error() -> None:
+    bot = make_bot(status="error")
+    supervisor, repositories, _, _, _ = make_supervisor([bot])
+
+    assert await supervisor.stop(bot.id) is True
+    current = await repositories.get(bot.id)
+    assert current is not None and current.status == "stopped"
+
+    await supervisor.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_persists_stopped_for_owned_error_pipeline() -> None:
+    bot = make_bot()
+    supervisor, repositories, factory, _, _ = make_supervisor([bot])
+    assert await supervisor.start(bot.id) is True
+    await repositories.persist_lifecycle(
+        bot.id,
+        LifecycleUpdate(desired_status="running", status="error", last_error="test failure"),
+    )
+
+    await supervisor.shutdown()
+    current = await repositories.get(bot.id)
+    assert current is not None and current.status == "stopped"
+    assert factory.pipelines[bot.id].stopped is True
+
+
+@pytest.mark.asyncio
 async def test_startup_renews_claimed_lease_while_pipeline_is_starting() -> None:
     bot = make_bot()
     gate = asyncio.Event()
@@ -396,6 +446,26 @@ async def test_cancelled_start_disables_stops_and_releases_created_pipeline() ->
 
 
 @pytest.mark.asyncio
+async def test_cancelled_stop_persists_stopped_and_releases_lease() -> None:
+    bot = make_bot()
+    stop_gate = asyncio.Event()
+    supervisor, repositories, factory, _, _ = make_supervisor([bot], stop_gate=stop_gate)
+    assert await supervisor.start(bot.id) is True
+
+    stopping = asyncio.create_task(supervisor.stop(bot.id))
+    await asyncio.sleep(0)
+    stopping.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await stopping
+
+    current = await repositories.get(bot.id)
+    assert current is not None and current.status == "stopped"
+    assert factory.pipelines[bot.id].execution_enabled is False
+    assert await repositories.renew(bot.id, str(supervisor.worker_id)) is False
+    await supervisor.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_pause_without_pipeline_is_idempotent() -> None:
     bot = make_bot(status="paused", desired_status="paused")
     supervisor, repositories, _, _, _ = make_supervisor([bot])
@@ -446,6 +516,30 @@ async def test_heartbeat_renewal_failure_isolated_to_one_bot() -> None:
 
 
 @pytest.mark.asyncio
+async def test_false_release_clears_claimed_bookkeeping() -> None:
+    bot = make_bot()
+    repositories = CountingReleaseRepositories([bot])
+    supervisor = BotSupervisor(
+        repositories,
+        FakeFactory(),
+        FakeReconciler(),
+        FakeClock(),
+        EventBus(),
+    )
+    assert await supervisor.start(bot.id) is True
+
+    await repositories.release(bot.id, str(supervisor.worker_id))
+    release_calls = repositories.release_calls
+    await supervisor.heartbeat_once()
+    assert bot.id not in supervisor._claimed
+    assert repositories.release_calls == release_calls + 1
+
+    await supervisor.heartbeat_once()
+    assert repositories.release_calls == release_calls + 1
+    await supervisor.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_lease_failure_holds_bot_lock_before_concurrent_start_can_reclaim() -> None:
     bot = make_bot()
     repositories = GatedErrorRepositories([bot])
@@ -491,5 +585,5 @@ async def test_concurrent_stop_cannot_overwrite_lease_failure_error() -> None:
     await failure
     assert await stopping is True
     current = await repositories.get(bot.id)
-    assert current is not None and current.status == "error"
+    assert current is not None and current.status == "stopped"
     await supervisor.shutdown()
