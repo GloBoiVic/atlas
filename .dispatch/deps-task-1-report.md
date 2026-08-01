@@ -9,8 +9,8 @@ Completed. Only the requested lockfiles and this report are intended for the tas
 - Python manifest: `pyproject.toml`
 - Frontend manifest: `frontend/package.json`
 - Original manifest SHA-1 values:
-  - `pyproject.toml`: `034812285d0c1d9472b6caabd95476731eecbb7f`
-  - `frontend/package.json`: `378471a3fd1b5b1b998169f790500a1f55e9b8c1`
+  - `pyproject.toml`: `74ac571074f5ffc4a286f545e181eaf881e401be`
+  - `frontend/package.json`: `86fede638a3adc6661a2e9fbafea274f97e5b81f`
 
 ## Generation
 
@@ -41,3 +41,7 @@ Completed. Only the requested lockfiles and this report are intended for the tas
 - `npm install` reported 3 high-severity audit findings in the resolved frontend tree, involving Next.js and transitive PostCSS/sharp packages. Resolving them would require dependency or manifest changes, which are outside this task.
 - npm blocked install scripts for `unrs-resolver` and `sharp` under its current install-script policy. This did not prevent lockfile generation or the dry-run consistency check.
 - The worktree contained unrelated pre-existing changes in `.dispatch/ledger.md` and untracked dependency brief files. They were not included in the task changes.
+
+## Correction Note
+
+- Corrected the original manifest SHA-1 values using the exact manifest contents from the parent commit of the lockfile-generation commit. No manifest or lockfile was modified.
