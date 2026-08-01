@@ -11,6 +11,7 @@ import structlog
 from backend.core.clock import Clock
 from backend.core.events import EventBus
 from backend.persistence.repositories.protocols import (
+    BotRecord,
     LifecycleUpdate,
     SupervisorRepositories,
 )
@@ -146,13 +147,19 @@ class BotSupervisor:
             return_exceptions=True,
         )
         failures = [
-            result for result in results if isinstance(result, Exception) or result is False
+            bot_id
+            for bot_id, result in zip(bot_ids, results, strict=True)
+            if isinstance(result, Exception) or result is False
         ]
         if failures:
-            failure = failures[0]
-            if isinstance(failure, Exception):
-                raise failure
-            raise RuntimeError("one or more bot pipelines could not be stopped")
+            logger.error(
+                "bot_shutdown_cleanup_unresolved",
+                bot_ids=list(failures),
+                worker_id=str(self.worker_id),
+            )
+            raise RuntimeError(
+                "one or more bot pipelines could not be stopped: " + ", ".join(failures)
+            )
 
     async def _start(self, bot_id: str) -> bool:
         operation = asyncio.current_task()
@@ -171,7 +178,7 @@ class BotSupervisor:
                 if bot_record is None:
                     return False
                 existing_pipeline = self._pipelines.get(bot_id)
-                if existing_pipeline is not None and bot_id in self._stop_failures:
+                if bot_id in self._stop_failures:
                     return False
                 if (
                     existing_pipeline is not None
@@ -239,7 +246,7 @@ class BotSupervisor:
                 return True
         except asyncio.CancelledError:
             if claimed:
-                await asyncio.shield(self._abort_start(bot_id, pipeline))
+                await await_cleanup(self._abort_start(bot_id, pipeline))
             raise
         except Exception as exception:
             logger.exception(
@@ -253,7 +260,7 @@ class BotSupervisor:
             return False
         finally:
             if claimed and not success:
-                await asyncio.shield(self._release_claim(bot_id))
+                await await_cleanup(self._release_claim(bot_id))
             self._operations.discard(operation)
 
     async def _stop(self, bot_id: str) -> bool:
@@ -267,8 +274,7 @@ class BotSupervisor:
                     return False
                 pipeline = self._pipelines.get(bot_id)
                 if bot.status == "stopped" and pipeline is None:
-                    await self._release_claim(bot_id)
-                    return True
+                    return await await_cleanup(self._release_claim(bot_id))
                 if bot_id not in self._claimed:
                     lease = await self.repositories.claim(
                         bot_id, str(self.worker_id), self.clock.now()
@@ -280,58 +286,7 @@ class BotSupervisor:
                     self._ensure_heartbeat_task()
                 if pipeline is not None:
                     pipeline.set_execution_enabled(False)
-                try:
-                    record = await self.repositories.persist_lifecycle_if_owned(
-                        bot_id,
-                        str(self.worker_id),
-                        LifecycleUpdate(
-                            desired_status="stopped",
-                            status="stopping",
-                            started_at=bot.started_at,
-                            stopped_at=None,
-                        ),
-                        self.clock.now(),
-                    )
-                    if record is None:
-                        return False
-                    await publish_persisted_transition(self.event_bus, str(self.worker_id), record)
-                    cancelled = False
-                    if pipeline is not None:
-                        try:
-                            await await_cleanup(pipeline.stop())
-                        except asyncio.CancelledError:
-                            # Cleanup has completed; finish durable cleanup before
-                            # propagating cancellation to the caller.
-                            cancelled = True
-                except Exception as exception:
-                    logger.exception("bot_stop_failed", bot_id=bot_id, error=str(exception))
-                    self._stop_failures.add(bot_id)
-                    await self._persist_stop_error(bot_id, exception)
-                    return False
-                self._pipelines.pop(bot_id, None)
-                self._stop_failures.discard(bot_id)
-                record = await self.repositories.persist_lifecycle_if_owned(
-                    bot_id,
-                    str(self.worker_id),
-                    LifecycleUpdate(
-                        desired_status="stopped",
-                        status="stopped",
-                        stopped_at=self.clock.now(),
-                    ),
-                    self.clock.now(),
-                )
-                if record is None:
-                    logger.error(
-                        "bot_stop_persist_lost_ownership",
-                        bot_id=bot_id,
-                        worker_id=str(self.worker_id),
-                    )
-                    return False
-                await publish_persisted_transition(self.event_bus, str(self.worker_id), record)
-                await asyncio.shield(self._release_claim(bot_id))
-                if cancelled:
-                    raise asyncio.CancelledError
-                return True
+                return await await_cleanup(self._finalize_stop(bot_id, bot, pipeline))
         finally:
             self._operations.discard(operation)
 
@@ -372,31 +327,44 @@ class BotSupervisor:
             pipeline = self._pipelines.get(bot_id)
             if pipeline is not None:
                 pipeline.set_execution_enabled(False)
-            if bot.status not in {"paused", "stopped"} and bot.desired_status not in {
-                "paused",
-                "stopped",
-            }:
-                try:
-                    await self._persist_error(bot_id, error)
-                except Exception:
-                    logger.exception("bot_lease_loss_persist_failed", bot_id=bot_id)
-            if pipeline is not None:
-                try:
-                    await pipeline.stop()
-                except Exception:
-                    logger.exception(
-                        "bot_lease_loss_cleanup_failed",
-                        bot_id=bot_id,
-                        worker_id=str(self.worker_id),
-                    )
-                    self._stop_failures.add(bot_id)
-                    return
-                self._pipelines.pop(bot_id, None)
-                self._stop_failures.discard(bot_id)
-            # Release is owner-conditional, so this clears local bookkeeping without
-            # touching a lease that may now belong to another worker.
-            await self._release_claim(bot_id)
+            await await_cleanup(self._finalize_lease_failure(bot_id, pipeline, bot, error))
         logger.error("bot_lease_ownership_lost", bot_id=bot_id, worker_id=str(self.worker_id))
+
+    async def _finalize_lease_failure(
+        self,
+        bot_id: str,
+        pipeline: BotPipeline | None,
+        bot: BotRecord,
+        error: str,
+    ) -> None:
+        """Fail closed and finish local cleanup without an interruptible await."""
+        if bot.status not in {"paused", "stopped"} and bot.desired_status not in {
+            "paused",
+            "stopped",
+        }:
+            try:
+                await self._persist_error(bot_id, error)
+            except Exception:
+                logger.exception("bot_lease_loss_persist_failed", bot_id=bot_id)
+        if pipeline is not None:
+            try:
+                await pipeline.stop()
+            except Exception:
+                logger.exception(
+                    "bot_lease_loss_cleanup_failed",
+                    bot_id=bot_id,
+                    worker_id=str(self.worker_id),
+                )
+                self._stop_failures.add(bot_id)
+                return
+        # Release is owner-conditional, so a false result clears local ownership without
+        # touching a lease that may now belong to another worker.
+        if not await self._release_claim(bot_id):
+            self._stop_failures.add(bot_id)
+            return
+        if pipeline is not None:
+            self._pipelines.pop(bot_id, None)
+        self._stop_failures.discard(bot_id)
 
     async def _heartbeat_loop(self) -> None:
         try:
@@ -422,11 +390,13 @@ class BotSupervisor:
         async with self._bot_lock(bot_id):
             if pipeline is not None:
                 pipeline.set_execution_enabled(False)
-                self._pipelines.pop(bot_id, None)
                 try:
                     await pipeline.stop()
                 except Exception:
                     logger.exception("bot_pipeline_cleanup_failed", bot_id=bot_id)
+                    self._stop_failures.add(bot_id)
+                    return
+                self._pipelines.pop(bot_id, None)
             if error is not None:
                 try:
                     await self._persist_error(bot_id, error)
@@ -434,9 +404,57 @@ class BotSupervisor:
                     logger.exception("bot_start_error_persist_failed", bot_id=bot_id)
             await self._release_claim(bot_id)
 
-    async def _release_claim(self, bot_id: str) -> None:
+    async def _finalize_stop(
+        self,
+        bot_id: str,
+        bot: BotRecord,
+        pipeline: BotPipeline | None,
+    ) -> bool:
+        """Complete stop persistence, pipeline cleanup, and lease release atomically to cancel."""
+        try:
+            record = await self.repositories.persist_lifecycle_if_owned(
+                bot_id,
+                str(self.worker_id),
+                LifecycleUpdate(
+                    desired_status="stopped",
+                    status="stopping",
+                    started_at=bot.started_at,
+                    stopped_at=None,
+                ),
+                self.clock.now(),
+            )
+            if record is None:
+                return False
+            await publish_persisted_transition(self.event_bus, str(self.worker_id), record)
+            if pipeline is not None:
+                await pipeline.stop()
+            record = await self.repositories.persist_lifecycle_if_owned(
+                bot_id,
+                str(self.worker_id),
+                LifecycleUpdate(
+                    desired_status="stopped",
+                    status="stopped",
+                    stopped_at=self.clock.now(),
+                ),
+                self.clock.now(),
+            )
+            if record is None:
+                raise RuntimeError("stop completion lost lease ownership")
+            await publish_persisted_transition(self.event_bus, str(self.worker_id), record)
+            if not await self._release_claim(bot_id):
+                raise RuntimeError("stop completion could not release lease")
+            self._pipelines.pop(bot_id, None)
+            self._stop_failures.discard(bot_id)
+            return True
+        except Exception as exception:
+            logger.exception("bot_stop_failed", bot_id=bot_id, error=str(exception))
+            self._stop_failures.add(bot_id)
+            await self._persist_stop_error(bot_id, exception)
+            return False
+
+    async def _release_claim(self, bot_id: str) -> bool:
         if bot_id not in self._claimed:
-            return
+            return True
         try:
             released = await self.repositories.release(
                 bot_id,
@@ -445,11 +463,12 @@ class BotSupervisor:
             )
         except Exception:
             logger.exception("bot_lease_release_failed", bot_id=bot_id)
-            return
+            return False
         # A false result means the repository no longer considers this worker the owner.
         self._claimed.discard(bot_id)
         if released:
             self._ownership_lost.discard(bot_id)
+        return True
 
     def _ensure_heartbeat_task(self) -> None:
         if self._heartbeat_task is None or self._heartbeat_task.done():

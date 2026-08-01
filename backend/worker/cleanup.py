@@ -5,7 +5,7 @@ from collections.abc import Coroutine
 
 
 async def await_cleanup[ResultT](coroutine: Coroutine[object, object, ResultT]) -> ResultT:
-    """Finish cleanup before propagating cancellation from the caller."""
+    """Finish the complete cleanup operation before propagating cancellation."""
     task = asyncio.create_task(coroutine)
     cancelled = False
     while not task.done():

@@ -246,3 +246,32 @@ The current branch fixes them as follows:
 
 - `python3 -m alembic check` could not connect to PostgreSQL on the Mac host; live migration
   execution and PostgreSQL lease concurrency remain Codespace/Compose verification steps.
+
+## Remaining Cancellation Finding Follow-up
+
+- Stop finalization now runs as one cancellation-safe cleanup operation: STOPPING persistence and
+  event publication, pipeline stop, STOPPED persistence and event publication, and owner-conditional
+  lease release all complete before caller cancellation is re-raised.
+- A failure at any point after ownership is established persists owner-conditional ERROR where
+  possible, retains local pipeline/lease bookkeeping, and blocks starts until cleanup can be retried.
+  STOPPED is never the successful result while pipeline cleanup may still be running.
+- Lease-loss cleanup and start-abort cleanup use the same cancellation-safe operation waiter, so
+  cancellation cannot interrupt pipeline shutdown or local lease bookkeeping.
+- Shutdown failure diagnostics now include unresolved bot IDs in structured logs and the raised
+  error.
+- Added deterministic regressions for cancellation during STOPPING persistence, STOPPED
+  persistence, lease release, and lease-loss pipeline cleanup. They assert lifecycle state,
+  pipeline termination, lease ownership, and start blocking while cleanup is unresolved.
+
+## Follow-up Verification
+
+- Focused supervisor tests: `python3 -m pytest -q tests/test_supervisor.py` -> 33 passed.
+- Full tests: `python3 -m pytest -q` -> 142 passed.
+- Mypy: `python3 -m mypy backend` -> passed.
+- Offline migrations: `python3 -m alembic upgrade head --sql` and
+  `python3 -m alembic downgrade head:base --sql` -> passed.
+- Ruff: `python3 -m ruff check .` -> passed.
+- Diff check: `git diff --check` -> passed.
+- `supervisor.py` remains above 300 lines. Further extraction would move tightly coupled methods
+  sharing per-bot lock, ownership generation, pipeline, and repository state; the reusable
+  cancellation helper remains isolated without changing those ownership boundaries.

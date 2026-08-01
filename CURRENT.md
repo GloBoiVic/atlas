@@ -72,6 +72,11 @@ Last updated: 2026-08-01
   pipeline cleanup before STOPPED/release, failed stops persist ERROR and retain ownership, and
   shutdown reports unresolved cleanup failures. Focused supervisor tests pass (29) and full pytest
   passes (138).
+- Remaining cancellation findings are fixed: the entire stop transaction is shielded through
+  lifecycle events and lease release, lease-loss cleanup uses the same boundary, and unresolved
+  shutdown diagnostics include affected bot IDs.
+- Final follow-up verification: focused supervisor tests pass (33), full pytest passes (142),
+  Ruff, mypy, offline migration SQL generation, and `git diff --check` pass.
 
 ## What comes next
 
