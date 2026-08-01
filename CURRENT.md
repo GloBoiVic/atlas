@@ -25,7 +25,7 @@ Last updated: 2026-08-01
 - Task 6 reviewer fix is complete: CircuitBreaker logs now filter arbitrary context keys.
 - Five requested Feature 02 slices are complete and verified: EventBus, Clock abstraction,
   configuration, retry/circuit breaker error handling, and structured logging.
-- BotSupervisor slice is now in progress on `feature/02-bot-supervisor`.
+- BotSupervisor slice is complete on `feature/02-bot-supervisor`.
 - Supervisor Task 3 runtime protocols and contract tests are complete.
 - Error handling remains partial because the health monitor is deferred.
 - Task 2 reviewer fixes complete: UTC event validation, callback typing, stats contract cleanup,
@@ -50,6 +50,9 @@ Last updated: 2026-08-01
 - Supervisor Task 4 cross-worker ownership race is complete: heartbeat ERROR persistence is now
   atomic and owner-conditional in both repositories, and stale cleanup cannot release a reclaimed
   worker's lease.
+- Supervisor Task 5 worker integration is complete: `run_worker()` accepts an injected
+  `BotSupervisor`, restores active bots, and owns supervisor shutdown without constructing
+  unavailable runtime dependencies.
 - Task 1 ORM models and migration are complete and verified.
 - Task 1 review fixes are complete: strategy reference tables now resolve ORM metadata and
   migration constraints, and bot P&L nullability/default matches the canonical schema.
@@ -67,8 +70,9 @@ Last updated: 2026-08-01
 
 ## What comes next
 
-Do not claim Feature 02 complete. Health monitor, BotSupervisor runtime integration, and the
-remaining Feature 02 acceptance criteria are still deferred to later slices.
+Do not claim Feature 02 complete. Health monitor and any remaining Feature 02 criteria remain
+deferred; BotSupervisor implementation, worker-boundary integration, and its acceptance criterion
+are complete.
 
 ## Notes
 

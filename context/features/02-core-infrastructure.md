@@ -82,6 +82,11 @@ broker:
 
 `BotSupervisor` is responsible for starting, stopping, pausing, restoring, and reconciling multiple independent bot pipelines inside one worker process. It persists lifecycle state and guarantees that only one runtime instance controls a bot.
 
+The worker entrypoint accepts an injected `BotSupervisor`, restores active bots before entering its
+loop, and owns supervisor shutdown. The default entrypoint does not construct a supervisor because
+the concrete repositories, pipeline factory, reconciler, clock, and event bus are not yet composed;
+health monitoring and the remaining runtime composition stay deferred.
+
 ### Error Handling
 
 ```python
