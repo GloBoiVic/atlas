@@ -1,17 +1,11 @@
 from datetime import UTC, datetime
-from enum import StrEnum
 from uuid import uuid4
 
 from sqlalchemy import DateTime, String
 from sqlalchemy.orm import Mapped, mapped_column
 
+from backend.core.account_mode import AccountMode
 from backend.persistence.database import Base
-
-
-class AccountMode(StrEnum):
-    PAPER = "paper"
-    TESTNET = "testnet"
-    PRODUCTION = "production"
 
 
 class Account(Base):

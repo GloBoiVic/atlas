@@ -1,4 +1,5 @@
-from backend.persistence.models import Account, AccountMode
+from backend.core.account_mode import AccountMode
+from backend.persistence.models import Account
 
 
 def test_account_mode_values():
