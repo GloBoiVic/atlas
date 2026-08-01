@@ -54,6 +54,7 @@ class BotSupervisor:
         self._locks: dict[str, asyncio.Lock] = {}
         self._lock_holders: dict[str, asyncio.Task[object]] = {}
         self._claimed: set[str] = set()
+        self._lease_generations: dict[str, int] = {}
         self._ownership_lost: set[str] = set()
         self._operations: set[asyncio.Task[object]] = set()
         self._heartbeat_task: asyncio.Task[None] | None = None
@@ -111,7 +112,10 @@ class BotSupervisor:
     async def heartbeat_once(self) -> None:
         """Renew all claimed leases without allowing one bot to stop the loop."""
         await asyncio.gather(
-            *(self._heartbeat_bot(bot_id) for bot_id in tuple(self._claimed)),
+            *(
+                self._heartbeat_bot(bot_id, self._lease_generations[bot_id])
+                for bot_id in tuple(self._claimed)
+            ),
             return_exceptions=True,
         )
 
@@ -170,6 +174,7 @@ class BotSupervisor:
                     return False
                 claimed = True
                 self._claimed.add(bot_id)
+                self._lease_generations[bot_id] = self._lease_generations.get(bot_id, 0) + 1
                 self._ownership_lost.discard(bot_id)
                 self._ensure_heartbeat_task()
                 await self._assert_owned(bot_id)
@@ -300,7 +305,7 @@ class BotSupervisor:
         finally:
             self._operations.discard(operation)
 
-    async def _heartbeat_bot(self, bot_id: str) -> None:
+    async def _heartbeat_bot(self, bot_id: str, generation: int) -> None:
         try:
             owned = await self.repositories.renew(bot_id, str(self.worker_id), self.clock.now())
         except Exception as exception:
@@ -311,15 +316,23 @@ class BotSupervisor:
                 error=str(exception),
                 error_type=type(exception).__name__,
             )
-            await self._handle_lease_failure(bot_id, str(exception))
+            await self._handle_lease_failure(bot_id, generation, str(exception))
             return
         if owned:
             return
-        await self._handle_lease_failure(bot_id, "bot lease ownership lost")
+        await self._handle_lease_failure(bot_id, generation, "bot lease ownership lost")
 
-    async def _handle_lease_failure(self, bot_id: str, error: str) -> None:
-        self._ownership_lost.add(bot_id)
+    async def _handle_lease_failure(self, bot_id: str, generation: int, error: str) -> None:
         async with self._bot_lock(bot_id):
+            bot = await self.repositories.get(bot_id)
+            if (
+                generation != self._lease_generations.get(bot_id)
+                or bot_id not in self._claimed
+                or bot is None
+                or bot.status == "stopped"
+            ):
+                return
+            self._ownership_lost.add(bot_id)
             pipeline = self._pipelines.get(bot_id)
             if pipeline is not None:
                 pipeline.set_execution_enabled(False)

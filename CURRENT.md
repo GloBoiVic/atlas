@@ -43,6 +43,10 @@ Last updated: 2026-08-01
 - Supervisor Task 4 final review fixes are complete: explicit stop/shutdown now converge ordinary
   ERROR bots to STOPPED, false lease releases clear local ownership, and cancellation cleanup is
   covered by regression tests.
+- Supervisor Task 4 remaining heartbeat race is being fixed: delayed renewal failures must not
+  mutate a stopped or newly reclaimed runtime.
+- Supervisor Task 4 remaining heartbeat race is complete: lease generations and ownership/status
+  checks now ignore stale delayed failures, with deterministic stop/reclaim coverage verified.
 - Task 1 ORM models and migration are complete and verified.
 - Task 1 review fixes are complete: strategy reference tables now resolve ORM metadata and
   migration constraints, and bot P&L nullability/default matches the canonical schema.

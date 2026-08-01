@@ -132,3 +132,28 @@ The current branch fixes them as follows:
 - Live PostgreSQL lease concurrency remains a Codespace/Compose verification concern inherited
   from Task 2; the supervisor tests use the deterministic in-memory repository.
 - Worker entrypoint wiring remains Task 5 scope.
+
+## Remaining Heartbeat Race Fix
+
+- Heartbeat renewals now capture a monotonically increasing local lease generation. Failure
+  handling validates that generation, local claimed ownership, and persisted bot status under the
+  per-bot lock before disabling, persisting `ERROR`, stopping, or releasing anything.
+- Delayed failures from a renewal that completed after explicit stop and lease release are ignored,
+  including when the bot has already been reclaimed by a new runtime. Current ownership failures
+  still fail closed, and heartbeat handling remains isolated per bot.
+- Added deterministic coverage for an in-flight failed renewal racing with stop and a subsequent
+  reclaim; the old pipeline is stopped while the reclaimed pipeline remains `RUNNING` and enabled.
+
+## Remaining Heartbeat Race Verification
+
+- Focused tests: `python3 -m pytest tests/test_supervisor.py -q` -> 24 passed.
+- Full tests: `python3 -m pytest -q` -> 124 passed.
+- Ruff: `python3 -m ruff check .` -> passed.
+- Mypy: `python3 -m mypy backend` -> passed.
+- Diff check: `git diff --check` -> passed.
+
+## Remaining Heartbeat Race Concerns
+
+- Live PostgreSQL lease concurrency remains a Codespace/Compose verification concern inherited
+  from Task 2; the regression tests use the deterministic in-memory repository.
+- Worker entrypoint wiring remains Task 5 scope.
