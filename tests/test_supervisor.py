@@ -9,7 +9,11 @@ import structlog
 
 from backend.core.clock import Clock
 from backend.core.events import BotStatusChanged, EventBus
-from backend.persistence.repositories import BotRecord, InMemorySupervisorRepositories
+from backend.persistence.repositories import (
+    BotRecord,
+    InMemorySupervisorRepositories,
+    LifecycleUpdate,
+)
 from backend.worker.protocols import (
     BotSnapshot,
     ReconciliationResult,
@@ -84,6 +88,29 @@ class FakeReconciler:
     async def reconcile(self, bot: BotSnapshot) -> ReconciliationResult:
         self.calls.append(bot.id)
         return ReconciliationResult(status=self.status)
+
+
+class FailingLifecycleRepositories(InMemorySupervisorRepositories):
+    async def persist_lifecycle(
+        self,
+        bot_id: str,
+        state: LifecycleUpdate,
+    ) -> BotRecord | None:
+        if state.status == "starting":
+            raise RuntimeError("persistence failed")
+        return await super().persist_lifecycle(bot_id, state)
+
+
+class FailingRenewalRepositories(InMemorySupervisorRepositories):
+    def __init__(self, failing_bot_id: str, bots: list[BotRecord]) -> None:
+        super().__init__(bots=bots)
+        self.failing_bot_id = failing_bot_id
+        self.fail_renewal = False
+
+    async def renew(self, bot_id: str, worker_id: str, now: datetime | None = None) -> bool:
+        if self.fail_renewal and bot_id == self.failing_bot_id:
+            raise RuntimeError("renewal failed")
+        return await super().renew(bot_id, worker_id, now)
 
 
 def make_bot(
@@ -262,3 +289,122 @@ async def test_lifecycle_events_follow_persisted_transitions_and_shutdown_releas
     current = await repositories.get(bot.id)
     assert current is not None and current.status == "stopped"
     assert await repositories.renew(bot.id, str(supervisor.worker_id)) is False
+
+
+@pytest.mark.asyncio
+async def test_startup_renews_claimed_lease_while_pipeline_is_starting() -> None:
+    bot = make_bot()
+    gate = asyncio.Event()
+    supervisor, repositories, factory, _, _ = make_supervisor([bot], start_gate=gate)
+    starting = asyncio.create_task(supervisor.start(bot.id))
+    while bot.id not in factory.pipelines:
+        await asyncio.sleep(0)
+
+    await supervisor.heartbeat_once()
+    lease = repositories._leases[bot.id]  # type: ignore[attr-defined]
+    assert lease.last_heartbeat_at is not None
+    gate.set()
+    assert await starting is True
+    await supervisor.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_ownership_loss_during_startup_never_enables_or_persists_running() -> None:
+    bot = make_bot()
+    gate = asyncio.Event()
+    supervisor, repositories, factory, _, _ = make_supervisor([bot], start_gate=gate)
+    starting = asyncio.create_task(supervisor.start(bot.id))
+    while bot.id not in factory.pipelines:
+        await asyncio.sleep(0)
+
+    await repositories.release(bot.id, str(supervisor.worker_id))
+    await supervisor.heartbeat_once()
+    gate.set()
+    assert await starting is False
+    current = await repositories.get(bot.id)
+    assert current is not None and current.status == "error"
+    assert factory.pipelines[bot.id].execution_enabled is False
+    assert factory.pipelines[bot.id].stopped is True
+    await supervisor.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_waits_for_inflight_start_and_stops_pipeline_started_during_shutdown(
+) -> None:
+    bot = make_bot()
+    gate = asyncio.Event()
+    supervisor, repositories, factory, _, _ = make_supervisor([bot], start_gate=gate)
+    starting = asyncio.create_task(supervisor.start(bot.id))
+    while bot.id not in factory.pipelines:
+        await asyncio.sleep(0)
+
+    shutting_down = asyncio.create_task(supervisor.shutdown())
+    await asyncio.sleep(0)
+    gate.set()
+    assert await starting is False
+    await shutting_down
+    assert factory.pipelines[bot.id].stopped is True
+    assert await repositories.renew(bot.id, str(supervisor.worker_id)) is False
+
+
+@pytest.mark.asyncio
+async def test_cancelled_start_disables_stops_and_releases_created_pipeline() -> None:
+    bot = make_bot()
+    gate = asyncio.Event()
+    supervisor, repositories, factory, _, _ = make_supervisor([bot], start_gate=gate)
+    starting = asyncio.create_task(supervisor.start(bot.id))
+    while bot.id not in factory.pipelines:
+        await asyncio.sleep(0)
+
+    starting.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await starting
+    pipeline = factory.pipelines[bot.id]
+    assert pipeline.execution_enabled is False
+    assert pipeline.stopped is True
+    assert await repositories.renew(bot.id, str(supervisor.worker_id)) is False
+    await supervisor.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_pause_without_pipeline_is_idempotent() -> None:
+    bot = make_bot(status="paused", desired_status="paused")
+    supervisor, repositories, _, _, _ = make_supervisor([bot])
+    events: list[BotStatusChanged] = []
+
+    async def collect(event: BotStatusChanged) -> None:
+        events.append(event)
+
+    supervisor.event_bus.subscribe(BotStatusChanged, collect)
+    assert await supervisor.pause(bot.id) is True
+    assert await supervisor.pause(bot.id) is True
+    assert events == []
+    await supervisor.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_start_releases_claim_when_starting_persistence_fails() -> None:
+    bot = make_bot()
+    repositories = FailingLifecycleRepositories(bots=[bot])
+    factory = FakeFactory()
+    supervisor = BotSupervisor(repositories, factory, FakeReconciler(), FakeClock(), EventBus())
+
+    assert await supervisor.start(bot.id) is False
+    assert await repositories.renew(bot.id, str(supervisor.worker_id)) is False
+    await supervisor.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_renewal_failure_isolated_to_one_bot() -> None:
+    bots = [make_bot(), make_bot()]
+    repositories = FailingRenewalRepositories(bots[0].id, bots)
+    factory = FakeFactory()
+    supervisor = BotSupervisor(repositories, factory, FakeReconciler(), FakeClock(), EventBus())
+    assert await asyncio.gather(*(supervisor.start(bot.id) for bot in bots)) == [True, True]
+
+    repositories.fail_renewal = True
+    await supervisor.heartbeat_once()
+    assert factory.pipelines[bots[1].id].execution_enabled is True
+    current = await repositories.get(bots[1].id)
+    assert current is not None and current.status == "running"
+    await supervisor.shutdown()

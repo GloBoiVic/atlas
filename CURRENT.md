@@ -32,6 +32,8 @@ Last updated: 2026-08-01
   expanded EventBus coverage, and the lifecycle event re-review fix.
 - Supervisor Task 3 runtime protocol slice is complete; BotSupervisor implementation remains next.
 - Supervisor Task 4 BotSupervisor implementation and runtime tests are complete.
+- Supervisor Task 4 review fixes are complete: lease renewal, shutdown gating, cancellation-safe
+  cleanup, heartbeat isolation, pause idempotency, and race/failure regression coverage.
 - Task 1 ORM models and migration are complete and verified.
 - Task 1 review fixes are complete: strategy reference tables now resolve ORM metadata and
   migration constraints, and bot P&L nullability/default matches the canonical schema.
