@@ -45,10 +45,18 @@ Complete.
   failure isolation.
 - `.dispatch/task-2-report.md`: record this reviewer fix and verification.
 
+### Re-review Fix
+
+- `backend/core/events.py`: added the architecture-defined metadata-only `BotStatusChanged`
+  and `HealthStatusChanged` event classes.
+- `tests/test_events.py`: included both lifecycle event classes in the metadata-only event-class
+  coverage.
+- EventBus dispatch and existing behavior were not changed.
+
 ### Verification
 
-- `python3 -m pytest tests/test_events.py`: passed, 32 tests.
-- `python3 -m pytest`: passed, 43 tests.
+- `python3 -m pytest tests/test_events.py`: passed, 34 tests.
+- `python3 -m pytest`: passed, 45 tests.
 - `python3 -m ruff check .`: passed.
 - `python3 -m mypy backend/core/events.py tests/test_events.py`: passed.
 - `python3 -m mypy backend tests`: blocked by three pre-existing `AccountMode` versus string

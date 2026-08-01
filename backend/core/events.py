@@ -129,6 +129,16 @@ class CircuitBreakerClosed(DomainEvent):
 
 
 @dataclass(frozen=True, slots=True)
+class BotStatusChanged(DomainEvent):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class HealthStatusChanged(DomainEvent):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
 class EventFailure:
     event: DomainEvent
     handler: str

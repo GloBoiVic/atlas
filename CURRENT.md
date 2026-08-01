@@ -1,45 +1,36 @@
 # Current Feature
 
-Last updated: 2026-07-31
+Last updated: 2026-08-01
 
 ## Status
 
 - [ ] Not started
-- [ ] In progress
-- [x] Complete
+- [x] In progress
+- [ ] Complete
 
 ## Feature
 
-- **Number:** 01
-- **Name:** Project Foundation — Codespaces hardening
-- **File:** context/features/01-project-foundation.md
+- **Number:** 02
+- **Name:** Core Infrastructure
+- **File:** context/features/02-core-infrastructure.md
 
 ## Branch
 
-- **Name:** feature/01-codespaces-hardening
-- **Created:** 2026-07-31
+- **Name:** feature/02-core-infrastructure
+- **Created:** 2026-08-01
 
 ## What was built
 
-- Backend directory structure with FastAPI app, health check, config, EventBus, error types, structured logging, SQLAlchemy + PostgreSQL, and Alembic migrations
-- Worker entrypoint with graceful shutdown
-- Frontend Next.js app with landing page, dashboard placeholder, Tailwind CSS, and API client
-- Docker Compose: PostgreSQL, API, worker, and frontend services
-- pyproject.toml with all Python dependencies (FastAPI, SQLAlchemy, ccxt, pandas, structlog, ruff, mypy)
-- package.json with frontend dependencies (Next.js, React, TanStack Query, Axios, Sonner, Tailwind)
-- 19 passing tests (API health, config, errors, events, models)
-- ruff check and mypy pass clean
-- Deployment documentation, .env.example, .gitignore, .dockerignore
-- GitHub Codespaces devcontainer with Python, Node.js, Docker, forwarded ports, and setup commands
-- Codespace creation avoids heavy dependency installation; Compose builds install service dependencies
-- Container package discovery and Alembic configuration fixed for Compose service networking
-- Frontend API URL made configurable at image build time for Codespaces/browser access
+- Feature 02 implementation in progress. Existing Feature 01 foundation remains complete.
+- Task 2 reviewer fixes complete: UTC event validation, callback typing, stats contract cleanup,
+  expanded EventBus coverage, and the lifecycle event re-review fix.
 
 ## What comes next
 
-Feature 02 — Core Infrastructure: EventBus persistence, config validation, structured logging verification.
+Continue Feature 02 in slices: Clock, configuration, Circuit Breaker/retry, and structured logging.
 
 ## Notes
 
-Codespaces hardening is complete on `feature/01-codespaces-hardening`. Docker/Compose
-verification must run inside the Codespace because Docker is unavailable on the Mac host.
+Branch from `main` because no `develop` branch exists. Run the full test suite immediately
+after moving `AccountMode`, then again after all Feature 02 slices. Docker/Compose verification
+must run inside the Codespace because Docker is unavailable on the Mac host.

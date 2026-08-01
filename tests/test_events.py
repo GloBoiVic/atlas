@@ -7,6 +7,7 @@ import pytest
 from backend.core.account_mode import AccountMode
 from backend.core.events import (
     ApiError,
+    BotStatusChanged,
     CandleClosed,
     CircuitBreakerClosed,
     CircuitBreakerOpen,
@@ -16,6 +17,7 @@ from backend.core.events import (
     DomainEvent,
     EventBus,
     EventFailure,
+    HealthStatusChanged,
     InMemoryFailureRecorder,
     OrderFailed,
     OrderFilled,
@@ -53,6 +55,8 @@ EVENT_TYPES: tuple[type[DomainEvent], ...] = (
     ConnectionRestored,
     CircuitBreakerOpen,
     CircuitBreakerClosed,
+    BotStatusChanged,
+    HealthStatusChanged,
 )
 
 
