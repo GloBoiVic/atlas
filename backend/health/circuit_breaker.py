@@ -50,6 +50,7 @@ class CircuitBreaker:
         self._state = CircuitBreakerState.CLOSED
         self._failure_count = 0
         self._last_failure_at: datetime | None = None
+        self._generation = 0
 
     @property
     def state(self) -> CircuitBreakerState:
@@ -87,19 +88,21 @@ class CircuitBreaker:
                 if not self._recovery_elapsed():
                     raise CircuitBreakerOpenError("circuit breaker is open")
                 self._state = CircuitBreakerState.HALF_OPEN
+                self._generation += 1
             elif self._state is CircuitBreakerState.HALF_OPEN:
                 raise CircuitBreakerOpenError("circuit breaker probe is in progress")
+            generation = self._generation
 
         await self._publish(transition)
 
         try:
             result = await operation(*args, **kwargs)
         except Exception:
-            transition = await self._record_failure()
+            transition = await self._record_failure(generation)
             await self._publish(transition)
             raise
         else:
-            transition = await self._record_success()
+            transition = await self._record_success(generation)
             await self._publish(transition)
             return result
 
@@ -108,24 +111,31 @@ class CircuitBreaker:
             return True
         return self._now() - self._last_failure_at >= timedelta(seconds=self.recovery_timeout)
 
-    async def _record_failure(self) -> CircuitBreakerOpen | None:
+    async def _record_failure(self, generation: int) -> CircuitBreakerOpen | None:
         async with self._lock:
+            if generation != self._generation:
+                return None
             self._last_failure_at = self._now()
             if self._state is CircuitBreakerState.HALF_OPEN:
                 self._state = CircuitBreakerState.OPEN
+                self._generation += 1
                 return cast("CircuitBreakerOpen", self._event(CircuitBreakerOpen))
             self._failure_count += 1
             if self._failure_count >= self.failure_threshold:
                 self._state = CircuitBreakerState.OPEN
+                self._generation += 1
                 return cast("CircuitBreakerOpen", self._event(CircuitBreakerOpen))
         return None
 
-    async def _record_success(self) -> CircuitBreakerClosed | None:
+    async def _record_success(self, generation: int) -> CircuitBreakerClosed | None:
         async with self._lock:
+            if generation != self._generation:
+                return None
             if self._state is CircuitBreakerState.HALF_OPEN:
                 self._state = CircuitBreakerState.CLOSED
                 self._failure_count = 0
                 self._last_failure_at = None
+                self._generation += 1
                 return cast("CircuitBreakerClosed", self._event(CircuitBreakerClosed))
             self._failure_count = 0
         return None
@@ -136,6 +146,7 @@ class CircuitBreaker:
     ) -> CircuitBreakerOpen | CircuitBreakerClosed:
         allowed = {"event_id", "occurred_at", "correlation_id", "account_id", "bot_id", "mode"}
         event_context = {key: value for key, value in self.context.items() if key in allowed}
+        event_context["occurred_at"] = self._now()
         return event_type(**cast("dict[str, Any]", event_context))
 
     async def _publish(self, event: CircuitBreakerOpen | CircuitBreakerClosed | None) -> None:

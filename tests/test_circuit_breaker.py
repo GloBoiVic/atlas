@@ -73,6 +73,137 @@ async def test_half_open_allows_only_one_concurrent_probe() -> None:
 
 
 @pytest.mark.asyncio
+async def test_stale_closed_success_cannot_close_later_half_open_probe() -> None:
+    clock = SimulationClock(datetime(2026, 8, 1, tzinfo=UTC))
+    events: list[object] = []
+    bus = EventBus()
+    bus.subscribe(CircuitBreakerOpen, events.append)
+    bus.subscribe(CircuitBreakerClosed, events.append)
+    breaker = CircuitBreaker(1, 1, bus, clock=clock)
+    stale_started = asyncio.Event()
+    stale_release = asyncio.Event()
+    probe_started = asyncio.Event()
+    probe_release = asyncio.Event()
+    calls = 0
+
+    async def stale_operation() -> str:
+        nonlocal calls
+        calls += 1
+        stale_started.set()
+        await stale_release.wait()
+        return "stale"
+
+    stale = asyncio.create_task(breaker.call(stale_operation))
+    await stale_started.wait()
+
+    async def fail() -> None:
+        nonlocal calls
+        calls += 1
+        raise RuntimeError
+
+    with pytest.raises(RuntimeError):
+        await breaker.call(fail)
+    clock.advance(clock.now() + timedelta(seconds=1))
+
+    async def probe() -> str:
+        nonlocal calls
+        calls += 1
+        probe_started.set()
+        await probe_release.wait()
+        return "probe"
+
+    probe_task = asyncio.create_task(breaker.call(probe))
+    await probe_started.wait()
+    stale_release.set()
+    assert await stale == "stale"
+
+    assert breaker.state is CircuitBreakerState.HALF_OPEN
+    assert len(events) == 1
+    with pytest.raises(CircuitBreakerOpenError):
+        await breaker.call(probe)
+    assert calls == 3
+
+    probe_release.set()
+    assert await probe_task == "probe"
+
+
+@pytest.mark.asyncio
+async def test_stale_closed_failure_cannot_open_later_half_open_probe() -> None:
+    clock = SimulationClock(datetime(2026, 8, 1, tzinfo=UTC))
+    events: list[object] = []
+    bus = EventBus()
+    bus.subscribe(CircuitBreakerOpen, events.append)
+    bus.subscribe(CircuitBreakerClosed, events.append)
+    breaker = CircuitBreaker(1, 1, bus, clock=clock)
+    stale_started = asyncio.Event()
+    stale_release = asyncio.Event()
+    probe_started = asyncio.Event()
+    probe_release = asyncio.Event()
+    calls = 0
+
+    async def stale_operation() -> None:
+        nonlocal calls
+        calls += 1
+        stale_started.set()
+        await stale_release.wait()
+        raise TimeoutError
+
+    stale = asyncio.create_task(breaker.call(stale_operation))
+    await stale_started.wait()
+
+    async def fail() -> None:
+        nonlocal calls
+        calls += 1
+        raise RuntimeError
+
+    with pytest.raises(RuntimeError):
+        await breaker.call(fail)
+    clock.advance(clock.now() + timedelta(seconds=1))
+
+    async def probe() -> str:
+        nonlocal calls
+        calls += 1
+        probe_started.set()
+        await probe_release.wait()
+        return "probe"
+
+    probe_task = asyncio.create_task(breaker.call(probe))
+    await probe_started.wait()
+    stale_release.set()
+    with pytest.raises(TimeoutError):
+        await stale
+
+    assert breaker.state is CircuitBreakerState.HALF_OPEN
+    assert len(events) == 1
+    with pytest.raises(CircuitBreakerOpenError):
+        await breaker.call(probe)
+    assert calls == 3
+
+    probe_release.set()
+    assert await probe_task == "probe"
+
+
+@pytest.mark.asyncio
+async def test_half_open_failure_reopens_breaker() -> None:
+    clock = SimulationClock(datetime(2026, 8, 1, tzinfo=UTC))
+    breaker = CircuitBreaker(1, 1, clock=clock)
+
+    async def fail() -> None:
+        raise ConnectionError
+
+    with pytest.raises(ConnectionError):
+        await breaker.call(fail)
+    clock.advance(clock.now() + timedelta(seconds=1))
+
+    with pytest.raises(ConnectionError):
+        await breaker.call(fail)
+
+    assert breaker.state is CircuitBreakerState.OPEN
+    with pytest.raises(CircuitBreakerOpenError):
+        await breaker.call(fail)
+
+
+@pytest.mark.asyncio
 async def test_breaker_publishes_only_open_and_closed_transitions_with_context() -> None:
     bus = EventBus()
     events: list[object] = []
@@ -99,10 +230,12 @@ async def test_breaker_publishes_only_open_and_closed_transitions_with_context()
     assert len(events) == 1
     assert isinstance(events[0], CircuitBreakerOpen)
     assert events[0].bot_id == context["bot_id"]
+    assert events[0].occurred_at == clock.now()
     clock.advance(clock.now() + timedelta(seconds=1))
     assert await breaker.call(lambda: _value(1)) == 1
     assert len(events) == 2
     assert isinstance(events[1], CircuitBreakerClosed)
+    assert events[1].occurred_at == clock.now()
 
 
 @pytest.mark.asyncio
