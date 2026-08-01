@@ -221,7 +221,10 @@ class EventBus:
                     "event_handler_failed",
                     event_type=type(event).__name__,
                     event_id=str(event.event_id),
+                    correlation_id=str(event.correlation_id),
+                    account_id=str(event.account_id) if event.account_id else None,
                     bot_id=str(event.bot_id) if event.bot_id else None,
+                    mode=event.mode.value if event.mode else None,
                     handler=failure.handler,
                 )
                 await self._record_failure(failure)
@@ -237,6 +240,10 @@ class EventBus:
             logger.exception(
                 "event_failure_recording_failed",
                 event_id=str(failure.event.event_id),
+                correlation_id=str(failure.event.correlation_id),
+                account_id=str(failure.event.account_id) if failure.event.account_id else None,
+                bot_id=str(failure.event.bot_id) if failure.event.bot_id else None,
+                handler=failure.handler,
             )
 
     async def _pause_bot(self, bot_id: UUID) -> None:
@@ -245,7 +252,10 @@ class EventBus:
             if isawaitable(result):
                 await result
         except Exception:
-            logger.exception("bot_pause_failed", bot_id=str(bot_id))
+            logger.exception(
+                "bot_pause_failed",
+                bot_id=str(bot_id),
+            )
 
     @property
     def stats(self) -> dict[str, int]:

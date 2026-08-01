@@ -21,6 +21,7 @@ Last updated: 2026-08-01
 
 ## What was built
 
+- Task 6 structured logging implementation is complete and verified.
 - Feature 02 implementation in progress. Clock abstraction and deterministic tests are complete.
 - Task 5 circuit breaker and retry implementation is complete and verified after reviewer fixes.
 - Task 4 configuration system is implemented and verified.
@@ -29,7 +30,7 @@ Last updated: 2026-08-01
 
 ## What comes next
 
-Continue Feature 02 in slices: structured logging.
+Continue Feature 02 in slices: error handling and runtime supervisor deliverables remain.
 
 ## Notes
 

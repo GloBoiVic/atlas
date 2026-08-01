@@ -1,9 +1,12 @@
 from collections.abc import AsyncGenerator
 
+import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
 from backend.config import settings
+
+logger = structlog.get_logger(__name__)
 
 
 class Base(DeclarativeBase):
@@ -26,4 +29,5 @@ async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
             await session.commit()
         except Exception:
             await session.rollback()
+            logger.exception("database_session_transaction_failed")
             raise

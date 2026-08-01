@@ -4,6 +4,8 @@ from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any, cast
 
+import structlog
+
 from backend.core.clock import Clock, LiveClock
 from backend.core.errors import CircuitBreakerOpenError
 from backend.core.events import CircuitBreakerClosed, CircuitBreakerOpen, EventBus
@@ -11,6 +13,8 @@ from backend.core.events import CircuitBreakerClosed, CircuitBreakerOpen, EventB
 type AsyncOperation[T] = Callable[..., Awaitable[T]]
 AsyncSleep = Callable[[float], Awaitable[None]]
 EventContext = Mapping[str, object]
+
+logger = structlog.get_logger(__name__)
 
 
 class CircuitBreakerState(StrEnum):
@@ -86,10 +90,12 @@ class CircuitBreaker:
         async with self._lock:
             if self._state is CircuitBreakerState.OPEN:
                 if not self._recovery_elapsed():
+                    logger.bind(**self.context).warning("circuit_breaker_call_rejected")
                     raise CircuitBreakerOpenError("circuit breaker is open")
                 self._state = CircuitBreakerState.HALF_OPEN
                 self._generation += 1
             elif self._state is CircuitBreakerState.HALF_OPEN:
+                logger.bind(**self.context).warning("circuit_breaker_probe_rejected")
                 raise CircuitBreakerOpenError("circuit breaker probe is in progress")
             generation = self._generation
 
@@ -99,6 +105,12 @@ class CircuitBreaker:
             result = await operation(*args, **kwargs)
         except Exception:
             transition = await self._record_failure(generation)
+            logger.bind(**self.context).exception(
+                "circuit_breaker_operation_failed",
+                state=self._state.value,
+                failure_count=self._failure_count,
+                operation=getattr(operation, "__qualname__", repr(operation)),
+            )
             await self._publish(transition)
             raise
         else:
@@ -199,10 +211,24 @@ async def retry_async[T](
     for attempt in range(max_attempts):
         try:
             return await operation(*args, **kwargs)
-        except retry_on:
+        except retry_on as error:
             if attempt == max_attempts - 1:
+                logger.exception(
+                    "operation_retry_exhausted",
+                    attempt=attempt + 1,
+                    max_attempts=max_attempts,
+                    operation=getattr(operation, "__qualname__", repr(operation)),
+                )
                 raise
             delay = min(backoff_base * (2**attempt), backoff_max)
+            logger.warning(
+                "operation_retrying",
+                error=str(error),
+                attempt=attempt + 1,
+                max_attempts=max_attempts,
+                delay=delay,
+                operation=getattr(operation, "__qualname__", repr(operation)),
+            )
             await sleep(delay)
 
     raise RuntimeError("retry loop completed without a result")
