@@ -47,3 +47,20 @@ Complete.
   plus ORM and migration constraint assertions. Live PostgreSQL concurrency and `alembic check`
   remain unavailable on the Mac host because PostgreSQL is not running; the existing migration
   rendering tests and full test suite pass.
+
+## Follow-up Review Fixes
+
+- Moved `uq_bot_runs_bot_id` into migration `003`, which upgrades both fresh `001` databases and
+  databases already at `002`; the migration detects an existing constraint and its downgrade is
+  safe when the constraint is absent.
+- Added SQLite async repository integration tests that execute lease ownership, expiry, and
+  reconciliation idempotency against a real database, while selecting the PostgreSQL upsert
+  builder in production and retaining its atomic conflict predicate.
+- Current verification counts: full pytest: 94 passed; Ruff, mypy, and diff checks passed.
+- Offline Alembic upgrade `001 -> 003` and downgrade `003 -> base` both render successfully.
+
+## Remaining Environment Gap
+
+- Live PostgreSQL concurrency and migration checks against a running PostgreSQL instance remain a
+  Codespace/Compose concern. SQLite verifies repository behavior and transaction execution, but it
+  does not replace PostgreSQL's production concurrency validation.

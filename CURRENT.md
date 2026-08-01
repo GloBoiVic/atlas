@@ -38,6 +38,9 @@ Last updated: 2026-08-01
   in-memory bot, lease, lifecycle, and reconciliation repositories are implemented and tested.
 - Supervisor Task 2 review fixes are complete: database-enforced one-run-per-bot, atomic first
   lease claims, concurrent-safe reconciliation idempotency, and SQL dialect coverage.
+- Supervisor Task 2 follow-up review fixes are complete: the unique constraint has a safe `003`
+  migration path, SQL repositories have executable async SQLite coverage, and verification counts
+  and environment-gap documentation are current.
 
 ## What comes next
 

@@ -1,8 +1,9 @@
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import or_, select, update
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.dialects.postgresql import insert as postgres_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.sql.dml import Insert
 
@@ -20,11 +21,23 @@ if TYPE_CHECKING:
 LEASE_TIMEOUT = timedelta(seconds=30)
 
 
-def _claim_statement(bot_id: str, worker_id: str, claim_time: datetime) -> Insert:
+def _insert_for_dialect(dialect_name: str) -> Any:
+    if dialect_name == "sqlite":
+        return cast("Insert", sqlite_insert(BotRun))
+    return cast("Insert", postgres_insert(BotRun))
+
+
+def _claim_statement(
+    bot_id: str,
+    worker_id: str,
+    claim_time: datetime,
+    dialect_name: str = "postgresql",
+) -> Insert:
     expiry = claim_time - LEASE_TIMEOUT
-    return (
-        insert(BotRun)
-        .values(
+    insert_statement: Any = _insert_for_dialect(dialect_name)
+    return cast(
+        "Insert",
+        insert_statement.values(
             bot_id=bot_id,
             worker_id=worker_id,
             locked_at=claim_time,
@@ -50,9 +63,17 @@ def _claim_statement(bot_id: str, worker_id: str, claim_time: datetime) -> Inser
     )
 
 
-def _reconciliation_insert_statement(result: ReconciliationRecord) -> Insert:
+def _reconciliation_insert_statement(
+    result: ReconciliationRecord,
+    dialect_name: str = "postgresql",
+) -> Insert:
+    insert_statement = (
+        sqlite_insert(ReconciliationRun)
+        if dialect_name == "sqlite"
+        else postgres_insert(ReconciliationRun)
+    )
     return (
-        insert(ReconciliationRun)
+        insert_statement
         .values(
             id=result.id,
             account_id=result.account_id,
@@ -151,7 +172,10 @@ class SqlAlchemySupervisorRepositories:
     ) -> LeaseRecord | None:
         claim_time = now or datetime.now(UTC)
         async with self._session_factory.begin() as session:
-            result = await session.execute(_claim_statement(bot_id, worker_id, claim_time))
+            dialect_name = session.get_bind().dialect.name
+            result = await session.execute(
+                _claim_statement(bot_id, worker_id, claim_time, dialect_name)
+            )
             run = result.scalar_one_or_none()
             return _lease_record(run) if run is not None else None
 
@@ -183,7 +207,10 @@ class SqlAlchemySupervisorRepositories:
 
     async def record(self, result: ReconciliationRecord) -> ReconciliationRecord:
         async with self._session_factory.begin() as session:
-            inserted = await session.execute(_reconciliation_insert_statement(result))
+            dialect_name = session.get_bind().dialect.name
+            inserted = await session.execute(
+                _reconciliation_insert_statement(result, dialect_name)
+            )
             run = inserted.scalar_one_or_none()
             if run is None:
                 run = await session.get(ReconciliationRun, result.id)
