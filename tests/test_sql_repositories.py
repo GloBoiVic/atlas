@@ -135,6 +135,23 @@ async def test_sqlite_error_persistence_requires_current_lease_owner(sqlite_repo
 
 
 @pytest.mark.asyncio
+async def test_sqlite_lifecycle_persistence_requires_current_lease_owner(sqlite_repository):
+    now = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
+    await sqlite_repository.claim("bot-1", "worker-a", now)
+
+    result = await sqlite_repository.persist_lifecycle_if_owned(
+        "bot-1",
+        "worker-b",
+        LifecycleUpdate(desired_status="paused", status="paused"),
+        now,
+    )
+
+    assert result is None
+    current = await sqlite_repository.get("bot-1")
+    assert current is not None and current.status == "stopped"
+
+
+@pytest.mark.asyncio
 async def test_sqlite_reconciliation_record_is_idempotent(sqlite_repository):
     result = ReconciliationRecord(
         id="reconciliation-1",

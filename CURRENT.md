@@ -49,6 +49,8 @@ Last updated: 2026-08-01
 - Supervisor Task 4 cross-worker ownership race is complete: heartbeat ERROR persistence is now
   atomic and owner-conditional in both repositories, and stale cleanup cannot release a reclaimed
   worker's lease.
+- Supervisor Task 4 final critical lifecycle fix is complete: pause/stop persistence is now
+  owner-conditional, and heartbeat cleanup handles externally persisted PAUSED/STOPPED state.
 - Supervisor Task 5 worker integration is complete: `run_worker()` accepts an injected
   `BotSupervisor`, restores active bots, and owns supervisor shutdown without constructing
   unavailable runtime dependencies.

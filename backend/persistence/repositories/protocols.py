@@ -72,6 +72,15 @@ class BotRepository(Protocol):
     async def persist_lifecycle(self, bot_id: str, state: LifecycleUpdate) -> BotRecord | None:
         """Persist lifecycle state and return the resulting bot."""
 
+    async def persist_lifecycle_if_owned(
+        self,
+        bot_id: str,
+        worker_id: str,
+        state: LifecycleUpdate,
+        now: datetime | None = None,
+    ) -> BotRecord | None:
+        """Persist lifecycle state only while this worker owns a current lease."""
+
     async def persist_error_if_owned(
         self,
         bot_id: str,

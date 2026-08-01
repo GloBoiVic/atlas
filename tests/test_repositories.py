@@ -106,6 +106,24 @@ async def test_error_persistence_requires_current_lease_owner() -> None:
 
 
 @pytest.mark.asyncio
+async def test_lifecycle_persistence_requires_current_lease_owner() -> None:
+    repository = InMemorySupervisorRepositories(bots=[make_bot()])
+    now = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
+    await repository.claim("bot-1", "worker-a", now)
+
+    result = await repository.persist_lifecycle_if_owned(
+        "bot-1",
+        "worker-b",
+        LifecycleUpdate(desired_status="paused", status="paused"),
+        now,
+    )
+
+    assert result is None
+    current = await repository.get("bot-1")
+    assert current is not None and current.status == "stopped"
+
+
+@pytest.mark.asyncio
 async def test_renew_and_release_require_current_owner() -> None:
     repository = InMemorySupervisorRepositories()
     now = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)

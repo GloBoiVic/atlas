@@ -187,3 +187,34 @@ The current branch fixes them as follows:
 - Live PostgreSQL lease concurrency remains a Codespace/Compose verification concern inherited
   from Task 2; the regression tests use the deterministic in-memory repository.
 - Worker entrypoint wiring remains Task 5 scope.
+
+## Final Critical Lifecycle Fix
+
+- Added `persist_lifecycle_if_owned()` to the repository protocol, SQLAlchemy implementation, and
+  in-memory implementation. The operation checks the current, unexpired durable lease atomically
+  before changing lifecycle state.
+- `pause()` and `stop()` now use the owner-conditional operation, so a cross-worker caller cannot
+  mark another worker's bot PAUSED or STOPPED. An unowned ERROR bot can still be explicitly stopped
+  by first acquiring an available lease; an actively leased bot is left unchanged.
+- Heartbeat renewal now checks persisted lifecycle state. External PAUSED or STOPPED changes fail
+  the old supervisor closed, disable and stop its local pipeline, and release only its own lease.
+  PAUSED remains resumable and explicit local pause still preserves its pipeline.
+- Extracted lifecycle event/error/reconciliation helpers and the lease-loss exception; the focused
+  `supervisor.py` remains within the 517-line review limit at 514 lines.
+
+## Final Critical Verification
+
+- Focused supervisor/repository tests: `python3 -m pytest tests/test_supervisor.py
+  tests/test_repositories.py tests/test_sql_repositories.py -q` -> 44 passed.
+- Full tests: `python3 -m pytest -q` -> 137 passed.
+- Ruff: `python3 -m ruff check .` -> passed.
+- Mypy: `python3 -m mypy backend` -> passed.
+- Offline migrations: `python3 -m alembic upgrade head --sql` and
+  `python3 -m alembic downgrade head:base --sql` -> passed.
+- Diff check: `git diff --check` -> passed.
+
+## Final Critical Concerns
+
+- Live PostgreSQL concurrency and migration execution remain Codespace/Compose checks because
+  PostgreSQL is unavailable on the Mac host; executable SQLite coverage and PostgreSQL SQL builders
+  pass locally.

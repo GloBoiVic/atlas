@@ -695,3 +695,44 @@ async def test_stale_heartbeat_failure_after_cross_worker_reclaim_cannot_mutate_
     assert await repositories.renew(bot.id, str(new_supervisor.worker_id), clock.now()) is True
     await old_supervisor.shutdown()
     await new_supervisor.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_remote_pause_and_stop_cannot_mutate_owner_lifecycle() -> None:
+    bot = make_bot()
+    owner, repositories, owner_factory, _, clock = make_supervisor([bot])
+    remote = BotSupervisor(repositories, FakeFactory(), FakeReconciler(), clock, EventBus())
+    assert await owner.start(bot.id) is True
+
+    assert await remote.pause(bot.id) is False
+    assert await remote.stop(bot.id) is False
+    current = await repositories.get(bot.id)
+    assert current is not None and current.status == "running"
+    assert owner_factory.pipelines[bot.id].execution_enabled is True
+
+    await owner.shutdown()
+    await remote.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("external_status", ["paused", "stopped"])
+async def test_heartbeat_stops_pipeline_after_external_lifecycle_change(
+    external_status: str,
+) -> None:
+    bot = make_bot()
+    owner, repositories, factory, _, clock = make_supervisor([bot])
+    assert await owner.start(bot.id) is True
+    pipeline = factory.pipelines[bot.id]
+
+    await repositories.persist_lifecycle(
+        bot.id,
+        LifecycleUpdate(desired_status=external_status, status=external_status),
+    )
+    await owner.heartbeat_once()
+
+    current = await repositories.get(bot.id)
+    assert current is not None and current.status == external_status
+    assert pipeline.execution_enabled is False
+    assert pipeline.stopped is True
+    assert await repositories.renew(bot.id, str(owner.worker_id), clock.now()) is False
+    await owner.shutdown()
