@@ -130,7 +130,7 @@ structlog.configure(
 - [x] Circuit breaker opens/closes based on failure counts
 - [x] Retry logic retries transient failures with exponential backoff
 - [x] Event delivery order, failure handling, bot scoping, and idempotency are tested
-- [ ] Bot supervisor starts and stops isolated pipelines idempotently
+- [x] Bot supervisor starts and stops isolated pipelines idempotently
 
 ## Done when
 
