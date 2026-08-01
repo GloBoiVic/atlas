@@ -15,7 +15,7 @@ from backend.persistence.models import (
     Strategy,
     StrategyVersion,
 )
-from backend.persistence.repositories.protocols import ReconciliationRecord
+from backend.persistence.repositories.protocols import LifecycleUpdate, ReconciliationRecord
 from backend.persistence.repositories.sqlalchemy import (
     SqlAlchemySupervisorRepositories,
     _claim_statement,
@@ -114,6 +114,24 @@ async def test_sqlite_claim_replaces_expired_lease(sqlite_repository):
 
     assert replacement is not None
     assert replacement.worker_id == "worker-b"
+
+
+@pytest.mark.asyncio
+async def test_sqlite_error_persistence_requires_current_lease_owner(sqlite_repository):
+    now = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
+    await sqlite_repository.claim("bot-1", "worker-a", now)
+    await sqlite_repository.claim("bot-1", "worker-b", now + timedelta(seconds=30))
+
+    result = await sqlite_repository.persist_error_if_owned(
+        "bot-1",
+        "worker-a",
+        LifecycleUpdate(desired_status="running", status="error", last_error="stale"),
+        now + timedelta(seconds=30),
+    )
+
+    assert result is None
+    current = await sqlite_repository.get("bot-1")
+    assert current is not None and current.status == "stopped"
 
 
 @pytest.mark.asyncio

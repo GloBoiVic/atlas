@@ -1,7 +1,7 @@
 """Runtime ownership and lifecycle supervision for isolated bot pipelines."""
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager, suppress
 from typing import Final
 from uuid import UUID, uuid4
@@ -12,6 +12,7 @@ from backend.core.account_mode import AccountMode
 from backend.core.clock import Clock
 from backend.core.events import BotStatusChanged, EventBus
 from backend.persistence.repositories.protocols import (
+    BotRecord,
     LifecycleUpdate,
     ReconciliationRecord,
     SupervisorRepositories,
@@ -73,7 +74,9 @@ class BotSupervisor:
         if self._shutting_down:
             return []
         candidates = await self.repositories.get_restore_candidates()
-        bot_ids = [bot.id for bot in candidates if bot.status in {"running", "starting"}]
+        bot_ids = [
+            bot.id for bot in candidates if bot.status in {"running", "starting"}
+        ]
         await asyncio.gather(*(self.restore(bot_id) for bot_id in bot_ids))
         return bot_ids
 
@@ -169,12 +172,16 @@ class BotSupervisor:
                     and bot_id not in self._ownership_lost
                 ):
                     return True
-                lease = await self.repositories.claim(bot_id, str(self.worker_id), self.clock.now())
+                lease = await self.repositories.claim(
+                    bot_id, str(self.worker_id), self.clock.now()
+                )
                 if lease is None:
                     return False
                 claimed = True
                 self._claimed.add(bot_id)
-                self._lease_generations[bot_id] = self._lease_generations.get(bot_id, 0) + 1
+                self._lease_generations[bot_id] = (
+                    self._lease_generations.get(bot_id, 0) + 1
+                )
                 self._ownership_lost.discard(bot_id)
                 self._ensure_heartbeat_task()
                 await self._assert_owned(bot_id)
@@ -211,7 +218,9 @@ class BotSupervisor:
                 await self._record_reconciliation(bot, result)
                 await self._assert_owned(bot_id)
                 if not result.is_safe_to_execute:
-                    raise RuntimeError(result.error or f"reconciliation {result.status.value}")
+                    raise RuntimeError(
+                        result.error or f"reconciliation {result.status.value}"
+                    )
                 pipeline.set_execution_enabled(True)
                 await self._assert_owned(bot_id)
                 await self._persist(
@@ -277,7 +286,9 @@ class BotSupervisor:
                     failure = exception
                 except Exception as exception:
                     failure = exception
-                    logger.exception("bot_stop_failed", bot_id=bot_id, error=str(exception))
+                    logger.exception(
+                        "bot_stop_failed", bot_id=bot_id, error=str(exception)
+                    )
                 finally:
                     self._pipelines.pop(bot_id, None)
                     try:
@@ -307,7 +318,9 @@ class BotSupervisor:
 
     async def _heartbeat_bot(self, bot_id: str, generation: int) -> None:
         try:
-            owned = await self.repositories.renew(bot_id, str(self.worker_id), self.clock.now())
+            owned = await self.repositories.renew(
+                bot_id, str(self.worker_id), self.clock.now()
+            )
         except Exception as exception:
             logger.exception(
                 "bot_lease_renewal_failed",
@@ -322,7 +335,9 @@ class BotSupervisor:
             return
         await self._handle_lease_failure(bot_id, generation, "bot lease ownership lost")
 
-    async def _handle_lease_failure(self, bot_id: str, generation: int, error: str) -> None:
+    async def _handle_lease_failure(
+        self, bot_id: str, generation: int, error: str
+    ) -> None:
         async with self._bot_lock(bot_id):
             bot = await self.repositories.get(bot_id)
             if (
@@ -351,8 +366,12 @@ class BotSupervisor:
                     )
                 finally:
                     self._pipelines.pop(bot_id, None)
+            # Release is owner-conditional, so this clears local bookkeeping without
+            # touching a lease that may now belong to another worker.
             await self._release_claim(bot_id)
-        logger.error("bot_lease_ownership_lost", bot_id=bot_id, worker_id=str(self.worker_id))
+        logger.error(
+            "bot_lease_ownership_lost", bot_id=bot_id, worker_id=str(self.worker_id)
+        )
 
     async def _heartbeat_loop(self) -> None:
         try:
@@ -365,7 +384,9 @@ class BotSupervisor:
     async def _assert_owned(self, bot_id: str) -> None:
         if self._shutting_down or bot_id in self._ownership_lost:
             raise LeaseOwnershipLost("bot lease ownership lost")
-        if not await self.repositories.renew(bot_id, str(self.worker_id), self.clock.now()):
+        if not await self.repositories.renew(
+            bot_id, str(self.worker_id), self.clock.now()
+        ):
             self._ownership_lost.add(bot_id)
             raise LeaseOwnershipLost("bot lease ownership lost")
 
@@ -415,7 +436,7 @@ class BotSupervisor:
         return self._locks.setdefault(bot_id, asyncio.Lock())
 
     @asynccontextmanager
-    async def _bot_lock(self, bot_id: str) -> AsyncIterator[None]:
+    async def _bot_lock(self, bot_id: str) -> AsyncGenerator[None]:
         """Serialize bot operations while allowing failure handling to be reentrant."""
         operation = asyncio.current_task()
         assert operation is not None
@@ -435,9 +456,12 @@ class BotSupervisor:
         record = await self.repositories.persist_lifecycle(bot_id, state)
         if record is None:
             return
+        await self._publish_persisted_transition(record)
+
+    async def _publish_persisted_transition(self, record: BotRecord) -> None:
         logger.info(
             "bot_status_changed",
-            bot_id=bot_id,
+            bot_id=record.id,
             worker_id=str(self.worker_id),
             status=record.status,
             desired_status=record.desired_status,
@@ -450,12 +474,13 @@ class BotSupervisor:
             ),
         )
 
-    async def _persist_error(self, bot_id: str, error: str) -> None:
+    async def _persist_error(self, bot_id: str, error: str) -> bool:
         bot = await self.repositories.get(bot_id)
         if bot is None:
-            return
-        await self._persist(
+            return False
+        record = await self.repositories.persist_error_if_owned(
             bot_id,
+            str(self.worker_id),
             LifecycleUpdate(
                 desired_status=bot.desired_status,
                 status="error",
@@ -463,9 +488,16 @@ class BotSupervisor:
                 started_at=bot.started_at,
                 stopped_at=bot.stopped_at,
             ),
+            self.clock.now(),
         )
+        if record is None:
+            return False
+        await self._publish_persisted_transition(record)
+        return True
 
-    async def _record_reconciliation(self, bot: BotSnapshot, result: ReconciliationResult) -> None:
+    async def _record_reconciliation(
+        self, bot: BotSnapshot, result: ReconciliationResult
+    ) -> None:
         await self.repositories.record(
             ReconciliationRecord(
                 account_id=bot.account_id,

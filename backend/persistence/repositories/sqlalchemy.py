@@ -164,6 +164,43 @@ class SqlAlchemySupervisorRepositories:
             await session.flush()
             return _bot_record(bot)
 
+    async def persist_error_if_owned(
+        self,
+        bot_id: str,
+        worker_id: str,
+        state: LifecycleUpdate,
+        now: datetime | None = None,
+    ) -> BotRecord | None:
+        current_time = now or datetime.now(UTC)
+        async with self._session_factory.begin() as session:
+            lease = (
+                await session.execute(
+                    select(BotRun)
+                    .where(BotRun.bot_id == bot_id)
+                    .with_for_update()
+                )
+            ).scalar_one_or_none()
+            if (
+                lease is None
+                or lease.worker_id != worker_id
+                or lease.locked_at is None
+                or lease.locked_at <= current_time - LEASE_TIMEOUT
+            ):
+                return None
+
+            bot = (
+                await session.execute(select(Bot).where(Bot.id == bot_id))
+            ).scalar_one_or_none()
+            if bot is None:
+                return None
+            bot.desired_status = state.desired_status
+            bot.status = "error"
+            bot.last_error = state.last_error
+            bot.started_at = state.started_at
+            bot.stopped_at = state.stopped_at
+            await session.flush()
+            return _bot_record(bot)
+
     async def claim(
         self,
         bot_id: str,

@@ -52,6 +52,36 @@ Complete.
   from Task 2; the supervisor tests use the repository's deterministic in-memory implementation.
 - Worker entrypoint wiring remains Task 5 scope.
 
+## Cross-Worker Ownership Race Fix
+
+- Added an owner-conditional error transition to the repository contract and both repository
+  implementations. The SQL implementation locks the current `bot_runs` row, verifies the worker
+  and 30-second lease freshness, and updates the bot in the same transaction. The in-memory
+  implementation uses the lease lock for equivalent atomic behavior.
+- Heartbeat failure cleanup now cannot persist `ERROR` after another worker has reclaimed the
+  lease, even when the stale supervisor still has a valid local generation and `_claimed` entry.
+  It only disables and stops its own local pipeline in that case and never releases the new
+  owner's lease.
+- Added deterministic cross-worker reclaim coverage that keeps the old supervisor locally claimed
+  while the new worker owns and renews the durable lease before the stale failure completes.
+
+## Cross-Worker Ownership Race Verification
+
+- Focused supervisor and repository tests: `python3 -m pytest tests/test_supervisor.py
+  tests/test_repositories.py tests/test_sql_repositories.py -q` -> 39 passed.
+- Full tests: `python3 -m pytest -q` -> 127 passed.
+- Ruff: `python3 -m ruff check backend/persistence/repositories backend/worker/supervisor.py
+  tests/test_supervisor.py tests/test_repositories.py tests/test_sql_repositories.py` -> passed.
+- Mypy: `python3 -m mypy backend` -> passed.
+- Diff check: `git diff --check` -> passed.
+
+## Remaining Concerns
+
+- Live PostgreSQL concurrency remains a Codespace/Compose verification concern; the SQL
+  owner-conditional operation uses `SELECT ... FOR UPDATE` on the lease row, while executable
+  SQLite coverage verifies the repository contract.
+- Worker entrypoint wiring remains Task 5 scope.
+
 ## Review Fixes
 
 The follow-up review identified lifecycle races and cleanup gaps in the original implementation.

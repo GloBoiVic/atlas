@@ -47,6 +47,9 @@ Last updated: 2026-08-01
   mutate a stopped or newly reclaimed runtime.
 - Supervisor Task 4 remaining heartbeat race is complete: lease generations and ownership/status
   checks now ignore stale delayed failures, with deterministic stop/reclaim coverage verified.
+- Supervisor Task 4 cross-worker ownership race is complete: heartbeat ERROR persistence is now
+  atomic and owner-conditional in both repositories, and stale cleanup cannot release a reclaimed
+  worker's lease.
 - Task 1 ORM models and migration are complete and verified.
 - Task 1 review fixes are complete: strategy reference tables now resolve ORM metadata and
   migration constraints, and bot P&L nullability/default matches the canonical schema.
@@ -59,6 +62,8 @@ Last updated: 2026-08-01
 - Supervisor Task 2 follow-up review fixes are complete: the unique constraint has a safe `003`
   migration path, SQL repositories have executable async SQLite coverage, and verification counts
   and environment-gap documentation are current.
+- Final Task 4 verification: focused supervisor/repository tests pass (39), full pytest passes
+  (127), Ruff, mypy, and `git diff --check` pass.
 
 ## What comes next
 

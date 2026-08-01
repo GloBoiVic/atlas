@@ -143,15 +143,16 @@ class GatedErrorRepositories(InMemorySupervisorRepositories):
         self.allow_error = asyncio.Event()
         self.claim_count = 0
 
-    async def persist_lifecycle(
+    async def persist_error_if_owned(
         self,
         bot_id: str,
+        worker_id: str,
         state: LifecycleUpdate,
+        now: datetime | None = None,
     ) -> BotRecord | None:
-        if state.status == "error":
-            self.error_started.set()
-            await self.allow_error.wait()
-        return await super().persist_lifecycle(bot_id, state)
+        self.error_started.set()
+        await self.allow_error.wait()
+        return await super().persist_error_if_owned(bot_id, worker_id, state, now)
 
     async def claim(
         self,
@@ -332,7 +333,7 @@ async def test_heartbeat_ownership_loss_fails_closed() -> None:
     await repositories.release(bot.id, str(supervisor.worker_id))
     await supervisor.heartbeat_once()
     current = await repositories.get(bot.id)
-    assert current is not None and current.status == "error"
+    assert current is not None and current.status == "running"
     assert factory.pipelines[bot.id].execution_enabled is False
     await supervisor.shutdown()
 
@@ -417,7 +418,7 @@ async def test_ownership_loss_during_startup_never_enables_or_persists_running()
     assert await starting is False
     await heartbeat
     current = await repositories.get(bot.id)
-    assert current is not None and current.status == "error"
+    assert current is not None and current.status == "starting"
     assert factory.pipelines[bot.id].execution_enabled is False
     assert factory.pipelines[bot.id].stopped is True
     await supervisor.shutdown()
@@ -647,3 +648,50 @@ async def test_stale_heartbeat_failure_after_stop_cannot_affect_reclaimed_runtim
     assert old_pipeline.stopped is True
     assert new_pipeline.execution_enabled is True
     await supervisor.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_stale_heartbeat_failure_after_cross_worker_reclaim_cannot_mutate_new_owner(
+) -> None:
+    bot = make_bot()
+    repositories = GatedRenewalRepositories([bot])
+    clock = FakeClock()
+    old_factory = FakeFactory()
+    old_supervisor = BotSupervisor(
+        repositories,
+        old_factory,
+        FakeReconciler(),
+        clock,
+        EventBus(),
+    )
+    assert await old_supervisor.start(bot.id) is True
+    old_pipeline = old_factory.pipelines[bot.id]
+
+    repositories.gate_next_renewal = True
+    heartbeat = asyncio.create_task(old_supervisor.heartbeat_once())
+    await repositories.renewal_started.wait()
+
+    clock.advance(30)
+    new_factory = FakeFactory()
+    new_supervisor = BotSupervisor(
+        repositories,
+        new_factory,
+        FakeReconciler(),
+        clock,
+        EventBus(),
+    )
+    assert await new_supervisor.start(bot.id) is True
+    new_pipeline = new_factory.pipelines[bot.id]
+    assert bot.id in old_supervisor._claimed
+    assert await repositories.renew(bot.id, str(new_supervisor.worker_id), clock.now()) is True
+
+    repositories.allow_renewal.set()
+    await heartbeat
+
+    current = await repositories.get(bot.id)
+    assert current is not None and current.status == "running"
+    assert old_pipeline.stopped is True
+    assert new_pipeline.execution_enabled is True
+    assert await repositories.renew(bot.id, str(new_supervisor.worker_id), clock.now()) is True
+    await old_supervisor.shutdown()
+    await new_supervisor.shutdown()

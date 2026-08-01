@@ -57,6 +57,43 @@ class InMemorySupervisorRepositories:
             self._bots[bot_id] = updated
             return updated
 
+    async def persist_error_if_owned(
+        self,
+        bot_id: str,
+        worker_id: str,
+        state: LifecycleUpdate,
+        now: datetime | None = None,
+    ) -> BotRecord | None:
+        current_time = now or datetime.now(UTC)
+        async with self._lease_lock:
+            lease = self._leases.get(bot_id)
+            if (
+                lease is None
+                or lease.worker_id != worker_id
+                or lease.locked_at <= current_time - LEASE_TIMEOUT
+            ):
+                return None
+            async with self._bot_lock:
+                bot = self._bots.get(bot_id)
+                if bot is None:
+                    return None
+                updated = BotRecord(
+                    id=bot.id,
+                    name=bot.name,
+                    account_id=bot.account_id,
+                    broker=bot.broker,
+                    mode=bot.mode,
+                    instrument=bot.instrument,
+                    timeframe=bot.timeframe,
+                    desired_status=state.desired_status,
+                    status=state.status,
+                    last_error=state.last_error,
+                    started_at=state.started_at,
+                    stopped_at=state.stopped_at,
+                )
+                self._bots[bot_id] = updated
+                return updated
+
     async def claim(
         self,
         bot_id: str,
