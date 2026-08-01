@@ -22,12 +22,13 @@ Last updated: 2026-08-01
 ## What was built
 
 - Feature 02 implementation in progress. Clock abstraction and deterministic tests are complete.
+- Task 4 configuration system is implemented and verified.
 - Task 2 reviewer fixes complete: UTC event validation, callback typing, stats contract cleanup,
   expanded EventBus coverage, and the lifecycle event re-review fix.
 
 ## What comes next
 
-Continue Feature 02 in slices: Clock, configuration, Circuit Breaker/retry, and structured logging.
+Continue Feature 02 in slices: Circuit Breaker/retry and structured logging.
 
 ## Notes
 

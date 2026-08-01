@@ -1,0 +1,13 @@
+strategy:
+  name: "sma_crossover"
+  parameters:
+    fast_period: 10
+    slow_period: 50
+
+risk:
+  max_open_positions: 5
+  per_trade_risk: 0.01
+
+broker:
+  name: "paper"
+  mode: "paper"
