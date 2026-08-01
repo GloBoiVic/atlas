@@ -16,7 +16,7 @@ Last updated: 2026-08-01
 
 ## Branch
 
-- **Name:** feature/02-bot-supervisor
+- **Name:** chore/next16-upgrade
 - **Created:** 2026-08-01
 
 ## What was built
@@ -25,7 +25,8 @@ Last updated: 2026-08-01
 - Task 6 reviewer fix is complete: CircuitBreaker logs now filter arbitrary context keys.
 - Five requested Feature 02 slices are complete and verified: EventBus, Clock abstraction,
   configuration, retry/circuit breaker error handling, and structured logging.
-- BotSupervisor slice is complete on `feature/02-bot-supervisor`.
+- BotSupervisor slice is complete on `feature/02-bot-supervisor`; this branch tracks the
+  follow-up Next.js 16 upgrade review fixes.
 - Supervisor Task 3 runtime protocols and contract tests are complete.
 - Error handling remains partial because the health monitor is deferred.
 - Task 2 reviewer fixes complete: UTC event validation, callback typing, stats contract cleanup,
@@ -84,6 +85,10 @@ Last updated: 2026-08-01
   Ruff, mypy, offline migration SQL generation, and `git diff --check` pass.
 - Final whole-branch review fixes are complete and verified: full pytest passes (150), focused
   supervisor/repository tests pass (57), Ruff, mypy, offline migrations, and diff check pass.
+- Next.js 16 Task 1 and Task 2 are complete: the frontend resolves Next.js 16.2.12, uses the
+  ESLint CLI, and documents the Node.js 20.9+ and App Router runtime guidance.
+- Next.js 16 final review fixes are complete: the standalone frontend image copies its required
+  runtime assets, launches the standalone server with Node, and has a static Docker contract test.
 
 ## What comes next
 
@@ -93,8 +98,9 @@ are complete.
 
 ## Notes
 
-Next.js 16 Task 1 and Task 2 documentation/runtime guidance are implemented on
-`chore/next16-upgrade`.
+Next.js 16 Task 1, Task 2, and final review fixes are implemented on `chore/next16-upgrade`.
+The existing npm audit findings remain a documented residual dependency risk; no overrides or
+downgrades were added.
 
 Branch from `main` because no `develop` branch exists. Run the full test suite immediately
 after moving `AccountMode`, then again after all Feature 02 slices. Docker/Compose verification

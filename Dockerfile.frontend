@@ -1,17 +1,30 @@
-FROM node:20.9-slim
+FROM node:20.9-slim AS base
 
 WORKDIR /app
 
 ARG NEXT_PUBLIC_API_URL=http://localhost:8000
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 
+FROM base AS deps
+
 COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm ci
 
+FROM base AS builder
+
+COPY --from=deps /app/node_modules ./node_modules
 COPY frontend/ .
 
-RUN npm run build
+RUN mkdir -p public && npm run build
+
+FROM base AS runner
+
+ENV NODE_ENV=production
+
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/.next/standalone ./.next/standalone
+COPY --from=builder /app/.next/static ./.next/static
 
 EXPOSE 3000
 
-CMD ["npm", "start"]
+CMD ["node", ".next/standalone/server.js"]
