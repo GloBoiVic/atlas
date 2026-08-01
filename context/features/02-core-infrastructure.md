@@ -16,7 +16,7 @@ EventBus, Clock abstraction, error handling, configuration system, and structure
 - [x] Clock abstraction: LiveClock, SimulationClock
 - [x] Configuration system: Pydantic Settings, YAML strategy config, deployment mode validation
 - [x] Structured logging: structlog setup
-- [ ] Error handling: Retry logic, circuit breaker, health monitor
+- [ ] Error handling: Retry logic and circuit breaker are complete; health monitor remains deferred
 
 ## Technical Details
 
@@ -123,13 +123,13 @@ structlog.configure(
 
 ## Acceptance Criteria
 
-- [ ] EventBus publishes and subscribes to typed events
-- [ ] SimulationClock advances through timestamps deterministically
-- [ ] Configuration loads from YAML and environment variables
-- [ ] Errors are logged with structured context
-- [ ] Circuit breaker opens/closes based on failure counts
-- [ ] Retry logic retries transient failures with exponential backoff
-- [ ] Event delivery order, failure handling, bot scoping, and idempotency are tested
+- [x] EventBus publishes and subscribes to typed events
+- [x] SimulationClock advances through timestamps deterministically
+- [x] Configuration loads from YAML and environment variables
+- [x] Errors are logged with structured context
+- [x] Circuit breaker opens/closes based on failure counts
+- [x] Retry logic retries transient failures with exponential backoff
+- [x] Event delivery order, failure handling, bot scoping, and idempotency are tested
 - [ ] Bot supervisor starts and stops isolated pipelines idempotently
 
 ## Done when

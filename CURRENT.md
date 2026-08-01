@@ -5,8 +5,8 @@ Last updated: 2026-08-01
 ## Status
 
 - [ ] Not started
-- [ ] In progress
-- [x] Complete
+- [x] In progress
+- [ ] Complete
 
 ## Feature
 
@@ -23,15 +23,16 @@ Last updated: 2026-08-01
 
 - Task 6 structured logging implementation is complete and verified.
 - Task 6 reviewer fix is complete: CircuitBreaker logs now filter arbitrary context keys.
-- Feature 02 implementation in progress. Clock abstraction and deterministic tests are complete.
-- Task 5 circuit breaker and retry implementation is complete and verified after reviewer fixes.
-- Task 4 configuration system is implemented and verified.
+- Five requested Feature 02 slices are complete and verified: EventBus, Clock abstraction,
+  configuration, retry/circuit breaker error handling, and structured logging.
+- Error handling remains partial because the health monitor is deferred.
 - Task 2 reviewer fixes complete: UTC event validation, callback typing, stats contract cleanup,
   expanded EventBus coverage, and the lifecycle event re-review fix.
 
 ## What comes next
 
-Continue Feature 02 in slices: error handling and runtime supervisor deliverables remain.
+Do not claim Feature 02 complete. BotSupervisor, health monitor, and the remaining Feature 02
+acceptance criteria are deferred to a later slice.
 
 ## Notes
 

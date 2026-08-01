@@ -9,5 +9,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY pyproject.toml ./
 COPY backend/ backend/
 RUN pip install --no-cache-dir -e ".[dev]"
+COPY config/ config/
 
 CMD ["python", "-m", "backend.worker.main"]
