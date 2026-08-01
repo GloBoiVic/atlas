@@ -22,6 +22,7 @@ Last updated: 2026-08-01
 ## What was built
 
 - Task 6 structured logging implementation is complete and verified.
+- Task 6 reviewer fix is complete: CircuitBreaker logs now filter arbitrary context keys.
 - Feature 02 implementation in progress. Clock abstraction and deterministic tests are complete.
 - Task 5 circuit breaker and retry implementation is complete and verified after reviewer fixes.
 - Task 4 configuration system is implemented and verified.

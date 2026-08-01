@@ -13,6 +13,9 @@ from backend.core.events import CircuitBreakerClosed, CircuitBreakerOpen, EventB
 type AsyncOperation[T] = Callable[..., Awaitable[T]]
 AsyncSleep = Callable[[float], Awaitable[None]]
 EventContext = Mapping[str, object]
+LOG_CONTEXT_KEYS = frozenset(
+    {"account_id", "bot_id", "mode", "component", "operation", "correlation_id"}
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -90,12 +93,12 @@ class CircuitBreaker:
         async with self._lock:
             if self._state is CircuitBreakerState.OPEN:
                 if not self._recovery_elapsed():
-                    logger.bind(**self.context).warning("circuit_breaker_call_rejected")
+                    logger.bind(**self._logging_context()).warning("circuit_breaker_call_rejected")
                     raise CircuitBreakerOpenError("circuit breaker is open")
                 self._state = CircuitBreakerState.HALF_OPEN
                 self._generation += 1
             elif self._state is CircuitBreakerState.HALF_OPEN:
-                logger.bind(**self.context).warning("circuit_breaker_probe_rejected")
+                logger.bind(**self._logging_context()).warning("circuit_breaker_probe_rejected")
                 raise CircuitBreakerOpenError("circuit breaker probe is in progress")
             generation = self._generation
 
@@ -105,7 +108,7 @@ class CircuitBreaker:
             result = await operation(*args, **kwargs)
         except Exception:
             transition = await self._record_failure(generation)
-            logger.bind(**self.context).exception(
+            logger.bind(**self._logging_context()).exception(
                 "circuit_breaker_operation_failed",
                 state=self._state.value,
                 failure_count=self._failure_count,
@@ -160,6 +163,9 @@ class CircuitBreaker:
         event_context = {key: value for key, value in self.context.items() if key in allowed}
         event_context["occurred_at"] = self._now()
         return event_type(**cast("dict[str, Any]", event_context))
+
+    def _logging_context(self) -> dict[str, object]:
+        return {key: value for key, value in self.context.items() if key in LOG_CONTEXT_KEYS}
 
     async def _publish(self, event: CircuitBreakerOpen | CircuitBreakerClosed | None) -> None:
         if event is not None and self.event_bus is not None:
