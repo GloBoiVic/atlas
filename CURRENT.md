@@ -30,7 +30,8 @@ Last updated: 2026-08-01
 - Error handling remains partial because the health monitor is deferred.
 - Task 2 reviewer fixes complete: UTC event validation, callback typing, stats contract cleanup,
   expanded EventBus coverage, and the lifecycle event re-review fix.
-- Supervisor Task 3 runtime protocol slice is complete; BotSupervisor implementation remains next.
+- Supervisor Task 3 runtime protocol slice, BotSupervisor implementation, and worker-boundary
+  integration are complete.
 - Supervisor Task 4 BotSupervisor implementation and runtime tests are complete.
 - Supervisor Task 4 review fixes are complete: lease renewal, shutdown gating, cancellation-safe
   cleanup, heartbeat isolation, pause idempotency, and race/failure regression coverage.
@@ -43,8 +44,6 @@ Last updated: 2026-08-01
 - Supervisor Task 4 final review fixes are complete: explicit stop/shutdown now converge ordinary
   ERROR bots to STOPPED, false lease releases clear local ownership, and cancellation cleanup is
   covered by regression tests.
-- Supervisor Task 4 remaining heartbeat race is being fixed: delayed renewal failures must not
-  mutate a stopped or newly reclaimed runtime.
 - Supervisor Task 4 remaining heartbeat race is complete: lease generations and ownership/status
   checks now ignore stale delayed failures, with deterministic stop/reclaim coverage verified.
 - Supervisor Task 4 cross-worker ownership race is complete: heartbeat ERROR persistence is now

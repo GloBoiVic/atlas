@@ -59,3 +59,30 @@ async def test_worker_shuts_down_supervisor_when_runtime_loop_is_cancelled() -> 
         await task
 
     assert supervisor.shutdown_called is True
+
+
+@pytest.mark.parametrize(
+    "restore_error",
+    [RuntimeError("restore failed"), asyncio.CancelledError()],
+)
+@pytest.mark.asyncio
+async def test_worker_preserves_restore_failure_when_shutdown_also_fails(
+    restore_error: BaseException,
+) -> None:
+    shutdown_error = RuntimeError("shutdown failed")
+
+    class FailingSupervisor(FakeSupervisor):
+        async def restore_active(self) -> list[str]:
+            raise restore_error
+
+        async def shutdown(self) -> None:
+            self.shutdown_called = True
+            raise shutdown_error
+
+    supervisor = FailingSupervisor()
+
+    with pytest.raises(RuntimeError, match="shutdown failed") as raised:
+        await worker_main.run_worker(supervisor)  # type: ignore[arg-type]
+
+    assert supervisor.shutdown_called is True
+    assert raised.value.__context__ is restore_error

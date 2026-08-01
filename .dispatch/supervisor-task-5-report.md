@@ -33,3 +33,18 @@ Complete.
   can provide real repository, pipeline, reconciliation, clock, and event-bus dependencies.
 - Live PostgreSQL migration and lease-concurrency verification remain Codespace/Compose concerns.
 - Health monitoring and other deferred Feature 02 criteria are not implemented or claimed.
+
+## Review Fix
+
+- Removed stale `CURRENT.md` wording that placed BotSupervisor implementation in the next task.
+- Kept supervisor shutdown in the worker `finally` block.
+- Logged and re-raised shutdown failures so they are not silently swallowed.
+- Added regression coverage for restore failure and cancellation when shutdown also fails. The
+  shutdown error is intentionally propagated, with the restore error preserved as its context.
+
+## Review Fix Verification
+
+- Full tests: `python3 -m pytest` -> 132 passed.
+- Migration tests: `python3 -m pytest tests/test_migrations.py` -> 5 passed.
+- Docker/Compose verification was not available because Docker is not installed on the Mac host;
+  the project documents Codespaces as the supported Compose environment.

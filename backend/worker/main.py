@@ -35,7 +35,11 @@ async def run_worker(supervisor: BotSupervisor | None = None) -> None:
             await asyncio.sleep(1)
     finally:
         if supervisor is not None:
-            await supervisor.shutdown()
+            try:
+                await supervisor.shutdown()
+            except BaseException:
+                logger.exception("worker_supervisor_shutdown_failed")
+                raise
         logger.info("worker_stopped")
 
 
