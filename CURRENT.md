@@ -21,7 +21,7 @@ Last updated: 2026-08-01
 
 ## What was built
 
-### Lease / Worker-Ownership Removal (feature/02-lease-removal, uncommitted)
+### Lease / Worker-Ownership Removal (feature/02-lease-removal, commit 8b735ec)
 
 The cross-worker lease protocol was removed from the entire stack. Atlas MVP now
 explicitly supports one worker process. Specific changes:
@@ -80,5 +80,5 @@ explicitly supports one worker process. Specific changes:
 - **Full-suite verification:** Intentionally not run. Previous unbounded suites hung
   indefinitely in this workspace. Bounded targeted tests are the agreed check for this cycle.
   Docker/Compose validation is deferred until the branch is committed and pushed.
-- **State:** All 9 lease-removal tasks done. Uncommitted changes remain on
+- **State:** All 9 lease-removal tasks done. Changes committed as `8b735ec` on
   `chore/next16-upgrade`.

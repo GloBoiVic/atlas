@@ -33,7 +33,7 @@ Task 1: complete (commit de12636, review clean with residual audit/Node-runtime 
 Task 2: complete (commits 07debb5..cf9c624, review clean)
 Final review: pending
 
-## Lease/Worker-Ownership Removal — chore/next16-upgrade (uncommitted)
+## Lease/Worker-Ownership Removal — chore/next16-upgrade (commit 8b735ec)
 
 All 9 tasks complete. Summary of changes:
 - Task 1 — Inventory: complete (exploration scan across API, supervisor, repos, models)
