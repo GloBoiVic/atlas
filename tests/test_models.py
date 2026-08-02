@@ -3,7 +3,6 @@ from backend.persistence.database import Base
 from backend.persistence.models import (
     Account,
     Bot,
-    BotRun,
     ReconciliationRun,
     Strategy,
     StrategyVersion,
@@ -56,20 +55,10 @@ def test_bot_contains_requested_and_observed_lifecycle_state():
     assert "account_id" in Bot.__table__.c
 
 
-def test_bot_run_has_worker_lease_fields():
-    assert BotRun.__table__.c.worker_id.nullable is True
-    assert BotRun.__table__.c.locked_at.nullable is True
-    assert BotRun.__table__.c.bot_id.foreign_keys.pop().ondelete == "CASCADE"
-    assert {constraint.name for constraint in BotRun.__table__.constraints} >= {
-        "uq_bot_runs_bot_id"
-    }
-
-
 def test_metadata_registers_all_bot_foreign_key_targets():
     assert {table.name for table in Base.metadata.sorted_tables} == {
         "accounts",
         "bots",
-        "bot_runs",
         "reconciliation_runs",
         "strategies",
         "strategy_versions",

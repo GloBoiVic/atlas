@@ -35,19 +35,6 @@ class LifecycleUpdate:
 
 
 @dataclass(frozen=True, slots=True)
-class LeaseRecord:
-    """A bot run lease and its current owner."""
-
-    id: str
-    bot_id: str
-    worker_id: str
-    locked_at: datetime
-    status: str
-    started_at: datetime
-    last_heartbeat_at: datetime | None
-
-
-@dataclass(frozen=True, slots=True)
 class ReconciliationRecord:
     """A broker reconciliation result, represented without ORM objects."""
 
@@ -72,40 +59,6 @@ class BotRepository(Protocol):
     async def persist_lifecycle(self, bot_id: str, state: LifecycleUpdate) -> BotRecord | None:
         """Persist lifecycle state and return the resulting bot."""
 
-    async def persist_lifecycle_if_owned(
-        self,
-        bot_id: str,
-        worker_id: str,
-        state: LifecycleUpdate,
-        now: datetime | None = None,
-    ) -> BotRecord | None:
-        """Persist lifecycle state only while this worker owns a current lease."""
-
-    async def persist_error_if_owned(
-        self,
-        bot_id: str,
-        worker_id: str,
-        state: LifecycleUpdate,
-        now: datetime | None = None,
-    ) -> BotRecord | None:
-        """Persist an error only while this worker owns a current lease."""
-
-
-class LeaseRepository(Protocol):
-    async def claim(
-        self,
-        bot_id: str,
-        worker_id: str,
-        now: datetime | None = None,
-    ) -> LeaseRecord | None:
-        """Atomically claim an unowned or expired bot run."""
-
-    async def renew(self, bot_id: str, worker_id: str, now: datetime | None = None) -> bool:
-        """Renew a lease only when it is owned by ``worker_id``."""
-
-    async def release(self, bot_id: str, worker_id: str, now: datetime | None = None) -> bool:
-        """Release a lease only when it is owned by ``worker_id``."""
-
 
 class ReconciliationRepository(Protocol):
     async def record(self, result: ReconciliationRecord) -> ReconciliationRecord:
@@ -115,5 +68,5 @@ class ReconciliationRepository(Protocol):
         """Return one reconciliation result, if it exists."""
 
 
-class SupervisorRepositories(BotRepository, LeaseRepository, ReconciliationRepository, Protocol):
+class SupervisorRepositories(BotRepository, ReconciliationRepository, Protocol):
     """Combined dependency contract used by supervisor composition."""

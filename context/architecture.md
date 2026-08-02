@@ -163,23 +163,27 @@ An approved signal confirmed at candle close is eligible for a fill at the next 
 
 `BotSupervisor` is the only component allowed to start or stop bot pipelines. It runs multiple independent pipelines in one worker process.
 
+Atlas MVP explicitly supports **one** worker process. The supervisor coordinates concurrent operations within that process using in-process per-bot `asyncio.Lock` serialisation and durable PostgreSQL lifecycle state. There are **no cross-worker leases, heartbeats, or worker ownership** protocols; the single-worker deployment invariant replaces cross-worker mutual exclusion.
+
 ```text
 STOPPED → STARTING → RUNNING → PAUSING → PAUSED
                          ↓          ↓
                        ERROR ← STOPPING
 ```
 
-Each pipeline owns its subscriptions, strategy instance, risk context, feed tasks, and execution context. Database state records the desired and observed lifecycle state, heartbeat, and last error.
+Each pipeline owns its subscriptions, strategy instance, risk context, feed tasks, and execution context. Database state records the desired and observed lifecycle state and the last error. There is no `bot_runs` table; runtime ownership is implicit in the single-worker topology.
 
 On worker startup:
 
-1. Load bots persisted as active.
-2. Create isolated pipelines.
+1. Load bots persisted as active (`desired_status != "stopped"`).
+2. Create isolated pipelines for bots with `status` of `running` or `starting`.
 3. Query the broker/account for orders and positions.
 4. Persist a reconciliation result.
 5. Resume only after successful reconciliation.
 
 Failed reconciliation leaves the bot paused or errored and prevents new orders. Start, stop, pause, resume, and shutdown operations are idempotent.
+
+**Health monitoring and orphan-state handling are deferred.** A crashed worker may leave a bot persisted as `RUNNING` or `STARTING` until Docker restart recovery triggers startup restoration. The single-worker invariant is safe only while Docker Compose runs one worker and Atlas does not support horizontal scaling, overlapping deployments, or externally launched duplicate workers. If that boundary changes, durable ownership must be designed before enabling multiple workers.
 
 ## Trading State Contracts
 

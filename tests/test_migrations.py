@@ -9,6 +9,7 @@ from alembic.operations import Operations
 MIGRATIONS_PATH = Path(__file__).parents[1] / "alembic/versions"
 MIGRATION_PATH = MIGRATIONS_PATH / "002_bot_supervisor_schema.py"
 CONSTRAINT_MIGRATION_PATH = MIGRATIONS_PATH / "003_bot_run_unique_constraint.py"
+DROP_MIGRATION_PATH = MIGRATIONS_PATH / "004_drop_bot_runs.py"
 
 
 def load_migration(path: Path = MIGRATION_PATH):
@@ -57,6 +58,30 @@ def render_constraint_migration(operation: str) -> str:
     return output.getvalue()
 
 
+def render_drop_migration(operation: str) -> str:
+    output = StringIO()
+    context = MigrationContext.configure(
+        dialect_name="postgresql",
+        opts={"as_sql": True, "output_buffer": output},
+    )
+    operations = Operations(context)
+    migration = load_migration(DROP_MIGRATION_PATH)
+    original_op = migration.op
+    had_context = hasattr(migration, "context")
+    original_context = getattr(migration, "context", None)
+    migration.op = operations
+    migration.context = SimpleNamespace(is_offline_mode=lambda: True)
+    try:
+        getattr(migration, operation)()
+    finally:
+        migration.op = original_op
+        if had_context:
+            migration.context = original_context
+        else:
+            del migration.context
+    return output.getvalue()
+
+
 def test_bot_supervisor_migration_follows_initial_schema():
     migration = load_migration()
 
@@ -101,3 +126,26 @@ def test_downgrade_drops_dependents_before_reference_tables():
     assert sql.index('DROP TABLE bots') < sql.index('DROP TABLE strategy_versions')
     assert sql.index('DROP TABLE strategy_versions') < sql.index('DROP TABLE strategies')
     assert 'ALTER TABLE bot_runs DROP CONSTRAINT uq_bot_runs_bot_id' not in sql
+
+
+def test_drop_migration_follows_constraint():
+    migration = load_migration(DROP_MIGRATION_PATH)
+
+    assert migration.revision == "004"
+    assert migration.down_revision == "003"
+    assert callable(migration.upgrade)
+    assert callable(migration.downgrade)
+
+
+def test_drop_migration_upgrade_drops_bot_runs():
+    sql = render_drop_migration("upgrade")
+
+    assert "DROP TABLE bot_runs" in sql
+
+
+def test_drop_migration_downgrade_recreates_bot_runs():
+    sql = render_drop_migration("downgrade")
+
+    assert "CREATE TABLE bot_runs" in sql
+    assert 'FOREIGN KEY(bot_id) REFERENCES bots (id) ON DELETE CASCADE' in sql
+    assert "uq_bot_runs_bot_id" in sql

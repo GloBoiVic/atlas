@@ -284,25 +284,6 @@ CREATE TABLE bots (
 );
 ```
 
-### Bot Runs
-
-Records each runtime instance and supports restart/recovery diagnostics.
-
-```sql
-CREATE TABLE bot_runs (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    bot_id UUID NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
-    process_id VARCHAR(255),
-    worker_id UUID,
-    locked_at TIMESTAMP WITH TIME ZONE,
-    status VARCHAR(20) NOT NULL,  -- "starting", "running", "stopped", "failed"
-    started_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    stopped_at TIMESTAMP WITH TIME ZONE,
-    last_heartbeat_at TIMESTAMP WITH TIME ZONE,
-    error_message TEXT
-);
-```
-
 ### Reconciliation Runs
 
 Records broker synchronization before a bot resumes after startup or connection loss.
@@ -450,7 +431,6 @@ accounts ───────────┐    │
                     ▼    ▼
                   bots ───────────────> risk_configurations
                     │
-                    ├──> bot_runs
                     ├──> reconciliation_runs
                     ├──> positions ────> journal_entries
                     └──> orders ───────> fills
@@ -579,6 +559,10 @@ alembic upgrade head
 # Rollback
 alembic downgrade -1
 ```
+
+### Migration History: Bot Runs Table (Removed)
+
+The `bot_runs` table existed in migrations `002`—`003` for cross-worker lease ownership. It was removed in migration `004_drop_bot_runs` as part of the single-worker simplification. Alembic migration history is preserved; no migrations were rewritten or deleted. If runtime-history records are needed later, design a `run_history` table with `started_at`, `stopped_at`, `status`, and `error_message` — never lease ownership columns.
 
 ### Migration Example
 

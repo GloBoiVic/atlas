@@ -26,3 +26,25 @@ Task 1: complete (commits 0c3f9e4..78bbc82, review clean)
 Task 2: complete (report-only task, review clean)
 Task 3: complete (commit 9e25484, review clean with pre-existing lint-config concern)
 Final review: conditional pass; Docker/Codespaces validation and frontend lint configuration remain environment/tooling gaps
+
+## Next.js 16 Upgrade — chore/next16-upgrade
+
+Task 1: complete (commit de12636, review clean with residual audit/Node-runtime concerns)
+Task 2: complete (commits 07debb5..cf9c624, review clean)
+Final review: pending
+
+## Lease/Worker-Ownership Removal — chore/next16-upgrade (uncommitted)
+
+All 9 tasks complete. Summary of changes:
+- Task 1 — Inventory: complete (exploration scan across API, supervisor, repos, models)
+- Task 2 — Simplify: `LeaseRecord`, `LeaseRepository` protocol, all claim/renew/release
+  methods removed from SQLAlchemy and in-memory repositories; `BotRun` model dropped
+  (migration 004); supervisor heartbeat, `worker_id`, ownership tracking removed
+- Task 3 — Cancellation hang: `_bot_lock` changed from `@asynccontextmanager` to explicit
+  `acquire()`/`release()` to fix a deadlock
+- Task 4 — Assertion fix: test expectation updated for post-lease semantics
+- Task 5 — Verification: 47/47 targeted tests pass, Ruff clean, mypy clean
+- Task 6 — Static checks: Ruff + mypy clean
+- Tasks 7-9 — Docs, review, fix: 6 canonical files updated; Tier 2 review findings
+  (fixture isolation, migration downgrade UC, stale docstring) fixed; follow-up PASS.
+  Bounded verification 32/32 pass, Ruff clean. No unbounded suites run (previous hangs).

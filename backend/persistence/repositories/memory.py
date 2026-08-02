@@ -1,14 +1,10 @@
 import asyncio
-from datetime import UTC, datetime, timedelta
 
 from backend.persistence.repositories.protocols import (
     BotRecord,
-    LeaseRecord,
     LifecycleUpdate,
     ReconciliationRecord,
 )
-
-LEASE_TIMEOUT = timedelta(seconds=30)
 
 
 class InMemorySupervisorRepositories:
@@ -20,11 +16,9 @@ class InMemorySupervisorRepositories:
         reconciliations: list[ReconciliationRecord] | None = None,
     ) -> None:
         self._bots = {bot.id: bot for bot in bots or []}
-        self._leases: dict[str, LeaseRecord] = {}
         self._reconciliations = {
             result.id: result for result in reconciliations or []
         }
-        self._lease_lock = asyncio.Lock()
         self._bot_lock = asyncio.Lock()
 
     async def get_restore_candidates(self) -> list[BotRecord]:
@@ -38,44 +32,6 @@ class InMemorySupervisorRepositories:
     async def persist_lifecycle(self, bot_id: str, state: LifecycleUpdate) -> BotRecord | None:
         async with self._bot_lock:
             return self._update_bot(bot_id, state)
-
-    async def persist_lifecycle_if_owned(
-        self,
-        bot_id: str,
-        worker_id: str,
-        state: LifecycleUpdate,
-        now: datetime | None = None,
-    ) -> BotRecord | None:
-        current_time = now or datetime.now(UTC)
-        async with self._lease_lock:
-            lease = self._leases.get(bot_id)
-            if (
-                lease is None
-                or lease.worker_id != worker_id
-                or lease.locked_at <= current_time - LEASE_TIMEOUT
-            ):
-                return None
-            async with self._bot_lock:
-                return self._update_bot(bot_id, state)
-
-    async def persist_error_if_owned(
-        self,
-        bot_id: str,
-        worker_id: str,
-        state: LifecycleUpdate,
-        now: datetime | None = None,
-    ) -> BotRecord | None:
-        current_time = now or datetime.now(UTC)
-        async with self._lease_lock:
-            lease = self._leases.get(bot_id)
-            if (
-                lease is None
-                or lease.worker_id != worker_id
-                or lease.locked_at <= current_time - LEASE_TIMEOUT
-            ):
-                return None
-            async with self._bot_lock:
-                return self._update_bot(bot_id, state)
 
     def _update_bot(self, bot_id: str, state: LifecycleUpdate) -> BotRecord | None:
         bot = self._bots.get(bot_id)
@@ -97,70 +53,6 @@ class InMemorySupervisorRepositories:
         )
         self._bots[bot_id] = updated
         return updated
-
-    async def claim(
-        self,
-        bot_id: str,
-        worker_id: str,
-        now: datetime | None = None,
-    ) -> LeaseRecord | None:
-        claim_time = now or datetime.now(UTC)
-        async with self._lease_lock:
-            existing = self._leases.get(bot_id)
-            if (
-                existing is not None
-                and existing.worker_id != worker_id
-                and existing.locked_at > claim_time - LEASE_TIMEOUT
-            ):
-                return None
-            if existing is None:
-                existing = LeaseRecord(
-                    id=f"run-{bot_id}",
-                    bot_id=bot_id,
-                    worker_id=worker_id,
-                    locked_at=claim_time,
-                    status="starting",
-                    started_at=claim_time,
-                    last_heartbeat_at=claim_time,
-                )
-            else:
-                existing = LeaseRecord(
-                    id=existing.id,
-                    bot_id=bot_id,
-                    worker_id=worker_id,
-                    locked_at=claim_time,
-                    status="starting",
-                    started_at=existing.started_at,
-                    last_heartbeat_at=claim_time,
-                )
-            self._leases[bot_id] = existing
-            return existing
-
-    async def renew(self, bot_id: str, worker_id: str, now: datetime | None = None) -> bool:
-        heartbeat = now or datetime.now(UTC)
-        async with self._lease_lock:
-            lease = self._leases.get(bot_id)
-            if lease is None or lease.worker_id != worker_id:
-                return False
-            self._leases[bot_id] = LeaseRecord(
-                id=lease.id,
-                bot_id=lease.bot_id,
-                worker_id=lease.worker_id,
-                locked_at=heartbeat,
-                status=lease.status,
-                started_at=lease.started_at,
-                last_heartbeat_at=heartbeat,
-            )
-            return True
-
-    async def release(self, bot_id: str, worker_id: str, now: datetime | None = None) -> bool:
-        del now
-        async with self._lease_lock:
-            lease = self._leases.get(bot_id)
-            if lease is None or lease.worker_id != worker_id:
-                return False
-            del self._leases[bot_id]
-            return True
 
     async def record(self, result: ReconciliationRecord) -> ReconciliationRecord:
         async with self._bot_lock:

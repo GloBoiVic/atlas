@@ -80,7 +80,9 @@ broker:
 
 ### Runtime Supervisor
 
-`BotSupervisor` is responsible for starting, stopping, pausing, restoring, and reconciling multiple independent bot pipelines inside one worker process. It persists lifecycle state and guarantees that only one runtime instance controls a bot.
+`BotSupervisor` is responsible for starting, stopping, pausing, restoring, and reconciling multiple independent bot pipelines inside one worker process. It persists lifecycle state and uses in-process per-bot `asyncio.Lock` serialisation for concurrent operation safety. There is no cross-worker lease, heartbeat, or worker ownership protocol.
+
+Atlas MVP runs **one** worker process. The single-worker deployment invariant replaces cross-worker mutual exclusion. BotSupervisor uses durable PostgreSQL lifecycle state for startup restoration and reconciliation before execution.
 
 The worker entrypoint accepts an injected `BotSupervisor`, restores active bots before entering its
 loop, and owns supervisor shutdown. The default entrypoint does not construct a supervisor because

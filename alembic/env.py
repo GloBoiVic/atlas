@@ -8,7 +8,6 @@ from backend.persistence.database import Base
 from backend.persistence.models import (  # noqa: F401
     Account,
     Bot,
-    BotRun,
     ReconciliationRun,
     Strategy,
     StrategyVersion,

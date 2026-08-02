@@ -20,13 +20,11 @@ logger = structlog.get_logger(__name__)
 
 async def publish_persisted_transition(
     event_bus: EventBus,
-    worker_id: str,
     record: BotRecord,
 ) -> None:
     logger.info(
         "bot_status_changed",
         bot_id=record.id,
-        worker_id=worker_id,
         status=record.status,
         desired_status=record.desired_status,
     )
@@ -43,16 +41,14 @@ async def persist_error(
     repositories: SupervisorRepositories,
     event_bus: EventBus,
     bot_id: str,
-    worker_id: str,
     error: str,
     clock: Clock,
 ) -> bool:
     bot = await repositories.get(bot_id)
     if bot is None:
         return False
-    record = await repositories.persist_error_if_owned(
+    record = await repositories.persist_lifecycle(
         bot_id,
-        worker_id,
         LifecycleUpdate(
             desired_status=bot.desired_status,
             status="error",
@@ -60,11 +56,10 @@ async def persist_error(
             started_at=bot.started_at,
             stopped_at=bot.stopped_at,
         ),
-        clock.now(),
     )
     if record is None:
         return False
-    await publish_persisted_transition(event_bus, worker_id, record)
+    await publish_persisted_transition(event_bus, record)
     return True
 
 

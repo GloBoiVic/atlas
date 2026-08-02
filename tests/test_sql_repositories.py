@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import JSON, MetaData
@@ -10,31 +10,19 @@ from sqlalchemy.pool import StaticPool
 from backend.persistence.models import (
     Account,
     Bot,
-    BotRun,
     ReconciliationRun,
     Strategy,
     StrategyVersion,
 )
-from backend.persistence.repositories.protocols import LifecycleUpdate, ReconciliationRecord
+from backend.persistence.repositories.protocols import ReconciliationRecord
 from backend.persistence.repositories.sqlalchemy import (
     SqlAlchemySupervisorRepositories,
-    _claim_statement,
     _reconciliation_insert_statement,
 )
 
 
 def compile_postgresql(statement: object) -> str:
     return str(statement.compile(dialect=postgresql.dialect()))
-
-
-def test_claim_uses_atomic_upsert_and_stale_lease_predicate():
-    sql = compile_postgresql(
-        _claim_statement("bot-1", "worker-a", datetime(2026, 8, 1, 12, 0, tzinfo=UTC))
-    )
-
-    assert "ON CONFLICT (bot_id) DO UPDATE" in sql
-    assert "locked_at <=" in sql
-    assert "RETURNING" in sql
 
 
 def test_reconciliation_insert_uses_database_conflict_idempotency():
@@ -64,7 +52,6 @@ async def sqlite_repository():
         Strategy.__table__,
         StrategyVersion.__table__,
         Bot.__table__,
-        BotRun.__table__,
         ReconciliationRun.__table__,
     ):
         sqlite_table = table.to_metadata(sqlite_metadata)
@@ -95,78 +82,6 @@ async def sqlite_repository():
 
 
 @pytest.mark.asyncio
-async def test_sqlite_claim_enforces_one_current_owner(sqlite_repository):
-    now = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
-
-    first = await sqlite_repository.claim("bot-1", "worker-a", now)
-    other = await sqlite_repository.claim("bot-1", "worker-b", now + timedelta(seconds=1))
-
-    assert first is not None
-    assert other is None
-
-
-@pytest.mark.asyncio
-async def test_sqlite_claim_replaces_expired_lease(sqlite_repository):
-    now = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
-
-    await sqlite_repository.claim("bot-1", "worker-a", now)
-    replacement = await sqlite_repository.claim("bot-1", "worker-b", now + timedelta(seconds=30))
-
-    assert replacement is not None
-    assert replacement.worker_id == "worker-b"
-
-
-@pytest.mark.asyncio
-async def test_sqlite_error_persistence_requires_current_lease_owner(sqlite_repository):
-    now = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
-    await sqlite_repository.claim("bot-1", "worker-a", now)
-    await sqlite_repository.claim("bot-1", "worker-b", now + timedelta(seconds=30))
-
-    result = await sqlite_repository.persist_error_if_owned(
-        "bot-1",
-        "worker-a",
-        LifecycleUpdate(desired_status="running", status="error", last_error="stale"),
-        now + timedelta(seconds=30),
-    )
-
-    assert result is None
-    current = await sqlite_repository.get("bot-1")
-    assert current is not None and current.status == "stopped"
-
-
-@pytest.mark.asyncio
-async def test_sqlite_lifecycle_persistence_requires_current_lease_owner(sqlite_repository):
-    now = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
-    await sqlite_repository.claim("bot-1", "worker-a", now)
-
-    result = await sqlite_repository.persist_lifecycle_if_owned(
-        "bot-1",
-        "worker-b",
-        LifecycleUpdate(desired_status="paused", status="paused"),
-        now,
-    )
-
-    assert result is None
-    current = await sqlite_repository.get("bot-1")
-    assert current is not None and current.status == "stopped"
-
-
-@pytest.mark.asyncio
-async def test_sqlite_lifecycle_persistence_rejects_expired_current_owner(sqlite_repository):
-    now = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
-    await sqlite_repository.claim("bot-1", "worker-a", now)
-
-    result = await sqlite_repository.persist_lifecycle_if_owned(
-        "bot-1",
-        "worker-a",
-        LifecycleUpdate(desired_status="running", status="running"),
-        now + timedelta(seconds=30),
-    )
-
-    assert result is None
-
-
-@pytest.mark.asyncio
 async def test_sqlite_reconciliation_record_is_idempotent(sqlite_repository):
     result = ReconciliationRecord(
         id="reconciliation-1",
@@ -186,3 +101,28 @@ async def test_sqlite_reconciliation_record_is_idempotent(sqlite_repository):
     )
 
     assert first == second
+
+
+@pytest.mark.asyncio
+async def test_sqlite_lifecycle_persistence_updates_bot(sqlite_repository):
+    from backend.persistence.repositories.protocols import LifecycleUpdate
+
+    now = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
+    result = await sqlite_repository.persist_lifecycle(
+        "bot-1",
+        LifecycleUpdate(
+            desired_status="running",
+            status="running",
+            started_at=now,
+        ),
+    )
+
+    assert result is not None
+    assert result.status == "running"
+    assert result.desired_status == "running"
+
+
+@pytest.mark.asyncio
+async def test_sqlite_get_restore_candidates_excludes_stopped(sqlite_repository):
+    candidates = await sqlite_repository.get_restore_candidates()
+    assert [c.id for c in candidates] == ["bot-1"]

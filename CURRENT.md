@@ -21,93 +21,64 @@ Last updated: 2026-08-01
 
 ## What was built
 
-- Task 6 structured logging implementation is complete and verified.
-- Task 6 reviewer fix is complete: CircuitBreaker logs now filter arbitrary context keys.
-- Five requested Feature 02 slices are complete and verified: EventBus, Clock abstraction,
-  configuration, retry/circuit breaker error handling, and structured logging.
-- BotSupervisor slice is complete on `feature/02-bot-supervisor`; this branch tracks the
-  follow-up Next.js 16 upgrade review fixes.
-- Supervisor Task 3 runtime protocols and contract tests are complete.
-- Error handling remains partial because the health monitor is deferred.
-- Task 2 reviewer fixes complete: UTC event validation, callback typing, stats contract cleanup,
-  expanded EventBus coverage, and the lifecycle event re-review fix.
-- Supervisor Task 3 runtime protocol slice, BotSupervisor implementation, and worker-boundary
-  integration are complete.
-- Supervisor Task 4 BotSupervisor implementation and runtime tests are complete.
-- Supervisor Task 4 review fixes are complete: lease renewal, shutdown gating, cancellation-safe
-  cleanup, heartbeat isolation, pause idempotency, and race/failure regression coverage.
-- Supervisor Task 4 critical follow-up is complete: renewal exceptions now fail closed, persist
-  exception context as ERROR, stop the affected pipeline, and release its lease without affecting
-  other bots.
-- Supervisor Task 4 remaining race fix is complete: lease-failure cleanup now holds a task-aware
-  per-bot lock through ERROR persistence, pipeline cleanup, and lease release; deterministic
-  failure-versus-start and failure-versus-stop tests pass.
-- Supervisor Task 4 final review fixes are complete: explicit stop/shutdown now converge ordinary
-  ERROR bots to STOPPED, false lease releases clear local ownership, and cancellation cleanup is
-  covered by regression tests.
-- Supervisor Task 4 remaining heartbeat race is complete: lease generations and ownership/status
-  checks now ignore stale delayed failures, with deterministic stop/reclaim coverage verified.
-- Supervisor Task 4 cross-worker ownership race is complete: heartbeat ERROR persistence is now
-  atomic and owner-conditional in both repositories, and stale cleanup cannot release a reclaimed
-  worker's lease.
-- Supervisor Task 4 final critical lifecycle fix is complete: pause/stop persistence is now
-  owner-conditional, and heartbeat cleanup handles externally persisted PAUSED/STOPPED state.
-- Supervisor Task 5 worker integration is complete: `run_worker()` accepts an injected
-  `BotSupervisor`, restores active bots, and owns supervisor shutdown without constructing
-  unavailable runtime dependencies.
-- Task 1 ORM models and migration are complete and verified.
-- Task 1 review fixes are complete: strategy reference tables now resolve ORM metadata and
-  migration constraints, and bot P&L nullability/default matches the canonical schema.
-- Task 1 follow-up fix is complete: Strategy timestamp nullability now matches the canonical
-  schema and migration.
-- Supervisor Task 2 repository slice is complete: model-free protocols, SQLAlchemy and
-  in-memory bot, lease, lifecycle, and reconciliation repositories are implemented and tested.
-- Supervisor Task 2 review fixes are complete: database-enforced one-run-per-bot, atomic first
-  lease claims, concurrent-safe reconciliation idempotency, and SQL dialect coverage.
-- Supervisor Task 2 follow-up review fixes are complete: the unique constraint has a safe `003`
-  migration path, SQL repositories have executable async SQLite coverage, and verification counts
-  and environment-gap documentation are current.
-- Final Task 4 verification: focused supervisor/repository tests pass (39), full pytest passes
-  (127), Ruff, mypy, and `git diff --check` pass.
-- Final important supervisor findings are fixed: cancellation-safe stop finalization waits for
-  pipeline cleanup before STOPPED/release, failed stops persist ERROR and retain ownership, and
-  shutdown reports unresolved cleanup failures. Focused supervisor tests pass (29) and full pytest
-  passes (138).
-- Remaining cancellation findings are fixed: the entire stop transaction is shielded through
-  lifecycle events and lease release, lease-loss cleanup uses the same boundary, and unresolved
-  shutdown diagnostics include affected bot IDs.
-- Final follow-up verification: focused supervisor tests pass (33), full pytest passes (142),
-  Ruff, mypy, offline migration SQL generation, and `git diff --check` pass.
-- Remaining start-abort cleanup finding is complete: failed pipeline stops during start failure or
-  cancellation now persist owner-conditional ERROR/unresolved state, retain the live disabled
-  pipeline and lease, and block duplicate starts until cleanup succeeds.
-- Final start-abort verification: focused supervisor tests pass (35), full pytest passes (144),
-  Ruff, mypy, offline migration SQL generation, and `git diff --check` pass.
-- Final whole-branch review fixes are complete and verified: full pytest passes (150), focused
-  supervisor/repository tests pass (57), Ruff, mypy, offline migrations, and diff check pass.
-- Next.js 16 Task 1 and Task 2 are complete: the frontend resolves Next.js 16.2.12, uses the
-  ESLint CLI, and documents the Node.js 20.9+ and App Router runtime guidance.
-- Next.js 16 final review fixes are complete: the standalone frontend image copies its required
-  runtime assets, launches the standalone server with Node, and has a static Docker contract test.
+### Lease / Worker-Ownership Removal (feature/02-lease-removal, uncommitted)
+
+The cross-worker lease protocol was removed from the entire stack. Atlas MVP now
+explicitly supports one worker process. Specific changes:
+
+- **ORM models:** `BotRun` model removed; `bot_runs` table dropped in migration `004`.
+- **Repository protocols:** `LeaseRecord` dataclass and `LeaseRepository` protocol removed.
+  `SupervisorRepositories` simplified to `BotRepository & ReconciliationRepository`.
+- **SQLAlchemy repositories:** All lease/claim/renew/release methods removed. `persist_lifecycle`
+  and `persist_error` are now unconditional writes (no owner-conditional gating).
+- **In-memory repositories:** Same simplification — no lease tracking, unconditional writes.
+- **BotSupervisor:** Heartbeat loop, `worker_id`, lease generations, ownership tracking
+  (`_claimed`, `_ownership_lost`, `_lease_generations`), `_assert_owned()`, `_release_claim()`,
+  `_ensure_heartbeat_task()`, and all lease-failure handling removed. Retained: in-process
+  per-bot `asyncio.Lock` (via explicit `acquire()`/`release()`, no async generator), pipeline
+  tracking, lifecycle persistence, startup restoration, reconciliation before execution,
+  cancellation-safe cleanup.
+- **Worker errors:** `LeaseOwnershipLost` removed; `BotPipelineError` retained.
+- **Worker lifecycle:** `persist_error()` simplified (no `worker_id` param, no `if_owned` call).
+- **Migrations:** `004_drop_bot_runs.py` created. Alembic history preserved; no migrations
+  rewritten or deleted.
+- **Alembic env.py:** `BotRun` import removed.
+- **Tests:** All lease-specific tests removed; lease-adjacent tests simplified. 47/47 targeted
+  tests passing, Ruff and mypy clean.
+
+### Previous Feature 02 slices (committed)
+
+- EventBus, Clock abstraction, configuration system, circuit breaker/retry error handling,
+  structured logging, BotSupervisor implementation, worker-boundary integration.
 
 ## What comes next
 
-Do not claim Feature 02 complete. Health monitor and any remaining Feature 02 criteria remain
-deferred; BotSupervisor implementation, worker-boundary integration, and its acceptance criterion
-are complete.
+- Health monitor and orphan-state handling remain deferred (pre-existing).
+- Docker/Compose verification must run inside the Codespace when the branch is committed
+  and pushed. **Do not run unbounded test suites or full Docker Compose builds from this
+  session — previous unbounded runs hung indefinitely. Bounded targeted tests (32/32 pass)
+  suffice for this review cycle.**
 
 ## Notes
 
-Next.js 16 Task 1, Task 2, and final review fixes are implemented on `chore/next16-upgrade`.
-The existing npm audit findings remain a documented residual dependency risk; no overrides or
-downgrades were added.
+- The single-worker deployment invariant is the explicit replacement for cross-worker mutual
+  exclusion. This is safe only while Docker Compose runs one worker and Atlas does not support
+  horizontal scaling or overlapping deployments.
+- A crashed worker may leave a bot persisted as RUNNING/STARTING until Docker restart recovery
+  or a future health monitor reconciles it. This consequence is accepted.
+- BotSupervisor's `_bot_lock` was changed from an `@asynccontextmanager` async generator to
+  explicit `acquire()`/`release()` to eliminate a cancellation deadlock.
+- No run-history records were added. The `bot_runs` table was exclusively lease machinery; no
+  product behavior consumed runtime-history records.
 
-Branch from `main` because no `develop` branch exists. Run the full test suite immediately
-after moving `AccountMode`, then again after all Feature 02 slices. Docker/Compose verification
-must run inside the Codespace because Docker is unavailable on the Mac host.
-Live Alembic checks and PostgreSQL lease concurrency remain Codespace checks; offline migration
-upgrade/downgrade SQL generation passes locally.
+## Closeout — Lease-Removal Review Cycle
 
-TODO: `Dockerfile.api` and `Dockerfile.worker` currently install development dependencies into
-runtime images. A future development/production image split is separate work and is not
-implemented here.
+- **Docs (Task 7):** Complete — 6 canonical files updated.
+- **Review (Task 8):** Complete — Tier 2 follow-up PASS; all 3 findings (fixture isolation,
+  migration downgrade UC, stale docstring) fixed in Task 9. Bounded verification: 32/32
+  migration + supervisor tests pass, Ruff clean.
+- **Full-suite verification:** Intentionally not run. Previous unbounded suites hung
+  indefinitely in this workspace. Bounded targeted tests are the agreed check for this cycle.
+  Docker/Compose validation is deferred until the branch is committed and pushed.
+- **State:** All 9 lease-removal tasks done. Uncommitted changes remain on
+  `chore/next16-upgrade`.

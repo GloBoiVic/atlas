@@ -112,28 +112,6 @@ class Bot(Base):
     )
 
 
-class BotRun(Base):
-    __tablename__ = "bot_runs"
-    __table_args__ = (UniqueConstraint("bot_id", name="uq_bot_runs_bot_id"),)
-
-    id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid4())
-    )
-    bot_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("bots.id", ondelete="CASCADE"), nullable=False
-    )
-    process_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    worker_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
-    locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    status: Mapped[str] = mapped_column(String(20), nullable=False)
-    started_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
-    )
-    stopped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-
 class ReconciliationRun(Base):
     __tablename__ = "reconciliation_runs"
 

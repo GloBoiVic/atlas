@@ -4,6 +4,8 @@
 
 Start, stop, pause, resume, and monitor multiple isolated paper/testnet bots from the UI. Bots run in one worker process under a durable supervisor and recover only after reconciliation.
 
+The MVP runs a single worker process. `BotSupervisor` uses in-process per-bot locks and durable lifecycle state; there are no cross-worker leases, heartbeats, or worker ownership protocols. Startup restores active bots and reconciles before execution. Health-monitor and orphan-state handling remain deferred.
+
 ## Dependencies
 
 - 04 — Strategy Engine
