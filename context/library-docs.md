@@ -90,12 +90,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.persistence.database import async_session
 
-async def get_session() -> AsyncGenerator[AsyncSession, None]:
+async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
     async with async_session() as session:
-        yield session
+        try:
+            yield session
+        except Exception:
+            await session.rollback()
+            raise
 
-# Transaction commit/rollback ownership must be explicit at the service/repository
-# boundary. Do not add commits to routes or hide trading-state transitions in DI.
+# The generic `get_async_session()` dependency yields read-only sessions by default —
+# it never commits. Domain services that write must create sessions from the factory:
+#
+#   async with async_session() as session:
+#       ...
+#       await session.commit()  # explicit ownership
+#
+# SqlAlchemySupervisorRepositories demonstrates the correct write pattern using
+# `async with self._session_factory.begin()` for managed commit/rollback scopes.
 ```
 
 ### WebSocket
@@ -176,21 +187,27 @@ class TimestampMixin:
 
 ```python
 # backend/persistence/models.py
+from uuid import uuid4
+
 from sqlalchemy import JSON, Boolean, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 class Strategy(Base, TimestampMixin):
     __tablename__ = "strategies"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     entrypoint: Mapped[str] = mapped_column(String(500), nullable=False)
     repository: Mapped[str] = mapped_column(String(500), nullable=False)
     version: Mapped[str] = mapped_column(String(50), nullable=False, default="1.0.0")
     commit_sha: Mapped[str] = mapped_column(String(64), nullable=False)
-    parameters: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False, default=dict)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    parameters: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, default=dict)
+    is_active: Mapped[bool] = mapped_column(nullable=True, default=True)
 ```
+
+**UUID identity:** All models use the `Uuid` column type with Python `UUID` type
+annotations and `default=uuid4`. Migration 005 converted the foundation tables from
+`String(36)`; no `String(36)` identity columns remain in the current models.
 
 ### Async Session
 
@@ -239,10 +256,16 @@ await session.refresh(strategy)
 - Always use async sessions (`AsyncSession`) — never synchronous sessions
 - Always use `expire_on_commit=False` in session factory
 - Always use `select()` style queries — never `session.query()`
-- Always commit and refresh after create/update
+- Repository implementations own their session lifecycles from a factory, not from a shared
+  session — domain services use `async with async_session() as session:` or
+  `async with session_factory.begin() as session:` for controlled transaction boundaries
+- Generic `get_async_session()` dependency yields read-only sessions by default — never
+  add commits to the dependency; write ownership lives at the service/unit-of-work boundary
 - Never use `session.execute(text(...))` — always use ORM queries
-- Models use UUID primary keys — never auto-increment integers
+- Models use UUID primary keys — `Uuid` column type with Python `UUID` type. Migration 005
+  converted the foundation tables; no `String(36)` identity columns remain.
 - Models use `TIMESTAMP WITH TIME ZONE` — never naive timestamps
+- Foreign keys reference the same type as the referenced primary key (UUID → UUID)
 
 ---
 
@@ -353,6 +376,13 @@ exchange = ccxt.binance({
     "options": {"defaultType": "spot"},
 })
 
+# Async exchange instances own an aiohttp session and must be closed on every
+# success, error, and cancellation path.
+try:
+    candles = await exchange.fetch_ohlcv("BTC/USDT", "1m", since, limit)
+finally:
+    await exchange.close()
+
 # Testnet mode
 exchange.set_sandbox_mode(True)
 ```
@@ -383,6 +413,7 @@ async def place_order(symbol: str, side: str, amount: Decimal):
 - Always use `set_sandbox_mode(True)` for testnet — never skip this
 - Always handle `ccxt.NetworkError` and `ccxt.ExchangeError` separately
 - Always use async methods (`fetch_ohlcv`, `create_order`) — not sync versions
+- Always close async exchange instances with `await exchange.close()` in a `finally` block
 - Symbol format is exchange-specific (e.g., `"BTC/USDT"` for Binance)
 - Never hardcode API keys — always use environment variables
 - Never convert money or quantity values to Python `float`; use exchange-specific Decimal formatting at the adapter boundary

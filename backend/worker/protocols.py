@@ -2,15 +2,16 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Protocol, runtime_checkable
+from uuid import UUID
 
 
 @dataclass(frozen=True, slots=True)
 class BotSnapshot:
     """Persistence-neutral bot configuration and lifecycle state for runtime injection."""
 
-    id: str
+    id: UUID
     name: str
-    account_id: str
+    account_id: UUID
     broker: str
     mode: str
     instrument: str

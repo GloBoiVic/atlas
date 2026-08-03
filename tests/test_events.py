@@ -1,5 +1,6 @@
 import asyncio
 from datetime import UTC, datetime, timedelta, timezone
+from decimal import Decimal
 from uuid import UUID, uuid4
 
 import pytest
@@ -33,10 +34,45 @@ from backend.core.events import (
     TickReceived,
     TradeClosed,
 )
+from backend.data.models import Candle, Tick
 
+# CandleClosed and TickReceived now require keyword-only payload fields.
+# Construct a minimal valid payload for tests.
+_FIXTURE_INSTRUMENT_ID = uuid4()
+_FIXTURE_CANDLE = Candle(
+    instrument_id=_FIXTURE_INSTRUMENT_ID,
+    provider="binance",
+    timeframe="1m",
+    open_time=datetime(2026, 1, 1, tzinfo=UTC),
+    open=Decimal("100"),
+    high=Decimal("110"),
+    low=Decimal("90"),
+    close=Decimal("105"),
+    base_volume=Decimal("1000"),
+)
+_FIXTURE_TICK = Tick(
+    instrument_id=_FIXTURE_INSTRUMENT_ID,
+    timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+    price=Decimal("100.5"),
+)
+
+
+def _make_candle_closed(**kwargs: object) -> CandleClosed:
+    extra: dict[str, object] = {}
+    if "candle" not in kwargs:
+        extra["candle"] = _FIXTURE_CANDLE
+    return CandleClosed(**{**extra, **kwargs})  # type: ignore[arg-type]
+
+
+def _make_tick_received(**kwargs: object) -> TickReceived:
+    extra: dict[str, object] = {}
+    if "tick" not in kwargs:
+        extra["tick"] = _FIXTURE_TICK
+    return TickReceived(**{**extra, **kwargs})  # type: ignore[arg-type]
+
+
+# Event types that remain metadata-only (no payload fields yet)
 EVENT_TYPES: tuple[type[DomainEvent], ...] = (
-    CandleClosed,
-    TickReceived,
     SignalGenerated,
     RiskApproved,
     RiskRejected,
@@ -74,7 +110,7 @@ async def test_publish_delivers_matching_event_to_handlers_in_registration_order
     bus.subscribe(CandleClosed, first)
     bus.subscribe(CandleClosed, second)
 
-    event = CandleClosed()
+    event = _make_candle_closed()
     await bus.publish(event)
 
     assert results == ["first", "second"]
@@ -98,7 +134,7 @@ async def test_publish_awaits_each_handler_before_starting_next() -> None:
 
     bus.subscribe(CandleClosed, first)
     bus.subscribe(CandleClosed, second)
-    publish_task = asyncio.create_task(bus.publish(CandleClosed()))
+    publish_task = asyncio.create_task(bus.publish(_make_candle_closed()))
     await first_started.wait()
     await asyncio.sleep(0)
     assert results == ["first-start"]
@@ -118,7 +154,7 @@ async def test_subscriptions_match_exact_event_class_only() -> None:
         received.append(event)
 
     bus.subscribe(DomainEvent, handler)
-    await bus.publish(CandleClosed())
+    await bus.publish(_make_candle_closed())
 
     assert received == []
 
@@ -134,7 +170,7 @@ async def test_subscription_handle_unsubscribes_one_handler() -> None:
     subscription = bus.subscribe(CandleClosed, handler)
     subscription.unsubscribe()
     subscription.unsubscribe()
-    await bus.publish(CandleClosed())
+    await bus.publish(_make_candle_closed())
 
     assert received == []
     assert bus.stats == {"subscribed_events": 0}
@@ -151,7 +187,7 @@ async def test_unsubscribe_removes_only_one_duplicate_registration() -> None:
     first = bus.subscribe(CandleClosed, handler)
     bus.subscribe(CandleClosed, handler)
     first.unsubscribe()
-    await bus.publish(CandleClosed())
+    await bus.publish(_make_candle_closed())
 
     assert len(received) == 1
 
@@ -165,7 +201,7 @@ async def test_publishing_same_event_twice_does_not_deduplicate() -> None:
         received.append(event)
 
     bus.subscribe(CandleClosed, handler)
-    event = CandleClosed()
+    event = _make_candle_closed()
     await bus.publish(event)
     await bus.publish(event)
 
@@ -188,7 +224,7 @@ async def test_handler_failure_is_recorded_pauses_bot_and_later_handlers_run() -
 
     bus.subscribe(CandleClosed, bad_handler)
     bus.subscribe(CandleClosed, good_handler)
-    event = CandleClosed(bot_id=bot_id)
+    event = _make_candle_closed(bot_id=bot_id)
     await bus.publish(event)
 
     assert received == [event]
@@ -232,7 +268,7 @@ async def test_failure_callback_errors_are_isolated_from_later_handlers() -> Non
 
     bus.subscribe(CandleClosed, bad_handler)
     bus.subscribe(CandleClosed, good_handler)
-    event = CandleClosed(bot_id=uuid4())
+    event = _make_candle_closed(bot_id=uuid4())
 
     await bus.publish(event)
 
@@ -242,7 +278,7 @@ async def test_failure_callback_errors_are_isolated_from_later_handlers() -> Non
 def test_domain_event_metadata_defaults_and_account_mode() -> None:
     account_id = uuid4()
     bot_id = uuid4()
-    event = CandleClosed(account_id=account_id, bot_id=bot_id, mode=AccountMode.PAPER)
+    event = _make_candle_closed(account_id=account_id, bot_id=bot_id, mode=AccountMode.PAPER)
 
     assert event.event_id is not None
     assert event.correlation_id is not None
@@ -250,16 +286,19 @@ def test_domain_event_metadata_defaults_and_account_mode() -> None:
     assert event.account_id == account_id
     assert event.bot_id == bot_id
     assert event.mode is AccountMode.PAPER
+    assert event.candle is _FIXTURE_CANDLE
 
 
 def test_domain_event_rejects_naive_occurred_at() -> None:
     with pytest.raises(ValueError, match="UTC"):
-        CandleClosed(occurred_at=datetime(2026, 1, 1))
+        _make_candle_closed(occurred_at=datetime(2026, 1, 1))
 
 
 def test_domain_event_rejects_non_utc_occurred_at() -> None:
     with pytest.raises(ValueError, match="UTC"):
-        CandleClosed(occurred_at=datetime(2026, 1, 1, tzinfo=timezone(timedelta(hours=2))))
+        _make_candle_closed(
+            occurred_at=datetime(2026, 1, 1, tzinfo=timezone(timedelta(hours=2)))
+        )
 
 
 @pytest.mark.parametrize("event_type", EVENT_TYPES)
@@ -276,3 +315,62 @@ def test_all_required_event_classes_are_metadata_only(
         "bot_id",
         "mode",
     }
+
+
+def test_candle_closed_carries_candle_payload() -> None:
+    candle = Candle(
+        instrument_id=uuid4(),
+        provider="binance",
+        timeframe="1h",
+        open_time=datetime(2026, 1, 1, tzinfo=UTC),
+        open=Decimal("50000"),
+        high=Decimal("51000"),
+        low=Decimal("49000"),
+        close=Decimal("50500"),
+        base_volume=Decimal("100"),
+    )
+    event = CandleClosed(candle=candle)
+    assert event.candle is candle
+    assert event.candle.instrument_id == candle.instrument_id
+    assert "candle" in event.__dataclass_fields__
+    # candle is kw_only to avoid inheritance ordering issues
+    assert event.__dataclass_fields__["candle"].kw_only is True
+
+
+def test_tick_received_carries_tick_payload() -> None:
+    tick = Tick(
+        instrument_id=uuid4(),
+        timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+        price=Decimal("100.5"),
+    )
+    event = TickReceived(tick=tick)
+    assert event.tick is tick
+    assert "tick" in event.__dataclass_fields__
+    assert event.__dataclass_fields__["tick"].kw_only is True
+
+
+@pytest.mark.asyncio
+async def test_candle_closed_passed_to_eventbus_delivers_payload() -> None:
+    """EventBus delivery preserves the candle payload through the handler."""
+    bus = EventBus()
+    candle = Candle(
+        instrument_id=uuid4(),
+        provider="binance",
+        timeframe="1m",
+        open_time=datetime(2026, 1, 1, tzinfo=UTC),
+        open=Decimal("100"),
+        high=Decimal("110"),
+        low=Decimal("90"),
+        close=Decimal("105"),
+        base_volume=Decimal("1000"),
+    )
+    received: list[Candle] = []
+
+    async def handler(event: DomainEvent) -> None:
+        assert isinstance(event, CandleClosed)
+        received.append(event.candle)
+
+    bus.subscribe(CandleClosed, handler)
+
+    await bus.publish(CandleClosed(candle=candle))
+    assert received == [candle]

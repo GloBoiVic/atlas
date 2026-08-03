@@ -1,5 +1,22 @@
 # Completed Work
 
+---
+
+## 2026-08-02 — Context Normalization Before Feature 03
+
+- Reconciled Atlas context with the actual single-user, single-worker, paper-first platform.
+- Reworked persistence guidance around the target native UUID identity, service-owned
+  transactions, provider-aware instruments, explicit candle price/volume semantics, dataset
+  identity, and an explicit Trade lifecycle.
+- Clarified Binance Spot as the first concrete provider and OANDA as deferred, including their
+  differing kline/candle formats and live-feed semantics.
+- Separated historical Feature 03 responsibilities from live streaming Feature 08 and replay
+  responsibilities in Feature 05.
+- Documented typed event payload contracts as required targets while recording the current
+  implementation gap; reserved production mode remains consistently documented as gated.
+- Updated dependent feature files, roadmap, coding standards, and library guidance. No
+  application implementation was performed. Feature 03 implementation planning remains next.
+
 The canonical record of completed dispatch work. One-off task briefs and reports are
 deleted after their summaries are captured here; full detail remains recoverable from
 git history.

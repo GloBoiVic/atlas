@@ -51,7 +51,10 @@ def calculate_position_size(balance, risk_per_trade, stop_distance):
 **Rules:**
 - Always use type hints on function signatures
 - Use `X | None` for nullable types and built-in generics such as `list[X]` and `dict[K, V]`
-- Use `UUID` for IDs, not `str`
+- Use `UUID` for IDs, not `str` or `int`. Python domain and repository identifiers use
+  `UUID` at domain and API boundaries. ORM models use native `Uuid` column type with
+  Python `UUID` annotations, and migrations use native UUID after migration 005.
+  Historical migrations 001–004 used `String(36)`.
 - Use `Decimal` for backend money, prices, quantities, fees, and P&L. Float is allowed only for non-monetary ratios or bounded indicator calculations.
 
 ### Naming
@@ -293,52 +296,70 @@ try {
 ```
 backend/
 ├── core/
-│   ├── events.py          # EventBus and typed domain events
-│   ├── clock.py           # Clock abstraction
-│   ├── interfaces.py      # Abstract base classes
-│   ├── errors.py          # Error types
-│   └── logging.py         # Structured logging setup
+│   ├── __init__.py
+│   ├── account_mode.py    # AccountMode enum (paper, testnet, production)
+│   ├── clock.py           # Clock, LiveClock, SimulationClock
+│   ├── errors.py          # Error types for broker, risk, strategy, data, config
+│   ├── events.py          # EventBus, DomainEvent, typed event classes
+│   └── logging.py         # Structured logging via structlog
 ├── data/
-│   ├── provider.py        # DataProvider interface
-│   ├── csv_provider.py    # CSV data provider
-│   └── binance_provider.py # Binance data provider
+│   ├── __init__.py
+│   ├── interfaces.py      # HistoricalDataProvider, LiveDataProvider protocols
+│   ├── models.py          # Candle, Tick, Instrument, DatasetIdentity domain models
+│   ├── csv_provider.py    # CSV historical data provider
+│   └── binance_provider.py # Binance historical data provider
 ├── strategy/
-│   ├── engine.py          # Strategy engine
+│   ├── __init__.py
+│   ├── engine.py          # Strategy engine (subscribes to CandleClosed, emits SignalGenerated)
 │   ├── base.py            # Strategy base class
 │   └── examples/          # Example strategies
 ├── risk/
-│   ├── engine.py          # Risk engine
-│   └── config.py          # Risk configuration
+│   ├── __init__.py
+│   ├── engine.py          # Risk engine (subscribes to SignalGenerated, emits RiskApproved/Rejected)
+│   └── config.py          # Risk configuration types
 ├── execution/
-│   ├── engine.py          # Execution engine
+│   ├── __init__.py
+│   ├── engine.py          # Execution engine (subscribes to RiskApproved)
 │   ├── broker.py          # Broker interface
+│   ├── models.py          # Order, Fill, Position, Trade domain models
 │   ├── paper_broker.py    # Paper trading broker
 │   └── binance_broker.py  # Binance broker adapter
 ├── journal/
-│   ├── service.py         # Journal service
-│   └── models.py          # Journal domain models
+│   ├── __init__.py
+│   ├── service.py         # Journal service (subscribes to TradeClosed)
+│   └── models.py          # Journal entry domain models
 ├── analytics/
-│   ├── service.py         # Analytics service
-│   └── metrics.py         # Performance metrics
+│   ├── __init__.py
+│   ├── service.py         # Analytics service (reads from journal)
+│   └── metrics.py         # Performance metrics calculation
 ├── backtester/
-│   ├── engine.py          # Backtester engine
-│   ├── simulation_clock.py # Simulation clock
-│   └── models.py          # BacktestRun and BacktestTrade
+│   ├── __init__.py
+│   ├── engine.py          # Backtester engine (replays candles with SimulationClock)
+│   ├── models.py          # BacktestRun and BacktestTrade domain models
+│   └── simulation_clock.py # Simulation clock (moved from core)
 ├── health/
-│   ├── monitor.py         # Health monitor
-│   ├── models.py          # ComponentHealth, HealthStatus
-│   └── circuit_breaker.py # Circuit breaker implementation
+│   ├── __init__.py
+│   └── circuit_breaker.py # Circuit breaker and retry_async
 ├── persistence/
-│   ├── database.py        # Database connection
-│   ├── models.py          # SQLAlchemy models
-│   └── repositories/      # Repository abstractions
+│   ├── __init__.py
+│   ├── database.py        # Database connection, Base, async_session factory
+│   ├── models.py          # SQLAlchemy ORM models
+│   └── repositories/      # Repository protocols, SQLAlchemy, and in-memory implementations
 ├── api/
-│   ├── app.py             # FastAPI application
-│   ├── deps.py            # Dependency injection
-│   ├── routes/            # API routes
-│   ├── schemas.py         # Pydantic models
-│   └── websocket.py       # WebSocket handlers
-└── config.py              # Application configuration
+│   ├── __init__.py
+│   ├── app.py             # FastAPI application with lifespan
+│   ├── deps.py            # Dependency injection (get_async_session, etc.)
+│   └── routes/            # API route modules
+├── worker/
+│   ├── __init__.py
+│   ├── main.py            # Worker process entrypoint
+│   ├── supervisor.py      # BotSupervisor with per-bot lifecycle management
+│   ├── lifecycle.py       # Persistence and event helpers for lifecycle transitions
+│   ├── protocols.py       # BotSnapshot, ReconciliationResult, BotPipeline, PipelineFactory, Reconciler
+│   ├── cleanup.py         # Graceful shutdown helpers
+│   └── errors.py          # BotPipelineError
+├── config.py              # Settings, YamlConfig, load_config
+└── main.py                # Application entrypoint
 ```
 
 **Rules:**

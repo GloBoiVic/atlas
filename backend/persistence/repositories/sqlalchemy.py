@@ -1,11 +1,16 @@
+from typing import Any
+from uuid import UUID
+
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from backend.persistence.models import Bot, ReconciliationRun
+from backend.data.models import Candle as CandleDomain
+from backend.persistence.models import Bot, Candle, Instrument, ReconciliationRun
 from backend.persistence.repositories.protocols import (
     BotRecord,
+    InstrumentRecord,
     LifecycleUpdate,
     ReconciliationRecord,
 )
@@ -36,6 +41,24 @@ def _reconciliation_insert_statement(
         .on_conflict_do_nothing(index_elements=[ReconciliationRun.id])
         .returning(ReconciliationRun)
     )
+
+
+def _candle_insert_statement(
+    rows: list[dict[str, Any]],
+    dialect_name: str = "postgresql",
+) -> Any:
+    insert_statement = (
+        sqlite_insert(Candle) if dialect_name == "sqlite" else postgres_insert(Candle)
+    )
+    return insert_statement.values(rows).on_conflict_do_nothing(
+        index_elements=[
+            Candle.instrument_id,
+            Candle.provider,
+            Candle.timeframe,
+            Candle.open_time,
+            Candle.price_basis,
+        ],
+    ).returning(Candle.id)
 
 
 def _bot_record(bot: Bot) -> BotRecord:
@@ -69,6 +92,21 @@ def _reconciliation_record(run: ReconciliationRun) -> ReconciliationRecord:
     )
 
 
+def _instrument_record(instrument: Instrument) -> InstrumentRecord:
+    return InstrumentRecord(
+        id=instrument.id,
+        symbol=instrument.symbol,
+        provider=instrument.provider,
+        asset_type=instrument.asset_type,
+        base_currency=instrument.base_currency,
+        quote_currency=instrument.quote_currency,
+        price_precision=instrument.price_precision,
+        quantity_precision=instrument.quantity_precision,
+        is_active=instrument.is_active or False,
+        constraints=instrument.constraints,
+    )
+
+
 class SqlAlchemySupervisorRepositories:
     """SQLAlchemy repositories that own sessions and transaction boundaries."""
 
@@ -80,12 +118,12 @@ class SqlAlchemySupervisorRepositories:
             result = await session.execute(select(Bot).where(Bot.desired_status != "stopped"))
             return [_bot_record(bot) for bot in result.scalars().all()]
 
-    async def get(self, bot_id: str) -> BotRecord | None:
+    async def get(self, bot_id: UUID) -> BotRecord | None:
         async with self._session_factory() as session:
             bot = await session.get(Bot, bot_id)
             return _bot_record(bot) if bot is not None else None
 
-    async def persist_lifecycle(self, bot_id: str, state: LifecycleUpdate) -> BotRecord | None:
+    async def persist_lifecycle(self, bot_id: UUID, state: LifecycleUpdate) -> BotRecord | None:
         async with self._session_factory.begin() as session:
             bot = await session.get(Bot, bot_id)
             if bot is None:
@@ -101,9 +139,8 @@ class SqlAlchemySupervisorRepositories:
     async def record(self, result: ReconciliationRecord) -> ReconciliationRecord:
         async with self._session_factory.begin() as session:
             dialect_name = session.get_bind().dialect.name
-            inserted = await session.execute(
-                _reconciliation_insert_statement(result, dialect_name)
-            )
+            stmt = _reconciliation_insert_statement(result, dialect_name)
+            inserted = await session.execute(stmt)  # type: ignore[call-overload]
             run = inserted.scalar_one_or_none()
             if run is None:
                 run = await session.get(ReconciliationRun, result.id)
@@ -111,7 +148,158 @@ class SqlAlchemySupervisorRepositories:
                 raise RuntimeError("reconciliation insert did not produce a row")
             return _reconciliation_record(run)
 
-    async def get_reconciliation(self, reconciliation_id: str) -> ReconciliationRecord | None:
+    async def get_reconciliation(self, reconciliation_id: UUID) -> ReconciliationRecord | None:
         async with self._session_factory() as session:
             run = await session.get(ReconciliationRun, reconciliation_id)
             return _reconciliation_record(run) if run is not None else None
+
+
+class SqlAlchemyInstrumentRepository:
+    """Provider-aware instrument lookup and upsert.
+
+    ``resolve`` is read-safe for existing instruments — it uses a select-then-insert
+    strategy so that a caller who supplies no metadata never overwrites fields on an
+    existing record.  ``upsert`` is the explicit metadata-update path.
+    """
+
+    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
+        self._session_factory = session_factory
+
+    async def resolve(
+        self,
+        *,
+        symbol: str,
+        provider: str,
+        asset_type: str | None = None,
+    ) -> InstrumentRecord:
+        async with self._session_factory() as session:
+            existing = await session.execute(
+                select(Instrument).where(
+                    Instrument.symbol == symbol,
+                    Instrument.provider == provider,
+                )
+            )
+            row = existing.scalar_one_or_none()
+            if row is not None:
+                return _instrument_record(row)
+
+        # Not found — insert without overwriting any concurrent insert.
+        async with self._session_factory.begin() as session:
+            dialect_name = session.get_bind().dialect.name
+            insert_statement = (
+                sqlite_insert(Instrument)
+                if dialect_name == "sqlite"
+                else postgres_insert(Instrument)
+            )
+            stmt = (
+                insert_statement
+                .values(
+                    symbol=symbol,
+                    provider=provider,
+                    asset_type=asset_type or "crypto",
+                    price_precision=8,
+                    quantity_precision=8,
+                )
+                .on_conflict_do_nothing(
+                    index_elements=[Instrument.symbol, Instrument.provider],
+                )
+                .returning(Instrument)
+            )
+            result = await session.execute(stmt)
+            inserted = result.scalar_one_or_none()
+            if inserted is not None:
+                return _instrument_record(inserted)
+
+            # A concurrent insert won the race — fetch the row they created.
+            existing_after = await session.execute(
+                select(Instrument).where(
+                    Instrument.symbol == symbol,
+                    Instrument.provider == provider,
+                )
+            )
+            row_after = existing_after.scalar_one()
+            return _instrument_record(row_after)
+
+    async def upsert(
+        self,
+        *,
+        symbol: str,
+        provider: str,
+        asset_type: str,
+        base_currency: str | None = None,
+        quote_currency: str | None = None,
+        price_precision: int = 8,
+        quantity_precision: int = 8,
+        constraints: dict[str, object] | None = None,
+    ) -> InstrumentRecord:
+        constraints_dict = constraints or {}
+        async with self._session_factory.begin() as session:
+            stmt = (
+                postgres_insert(Instrument)
+                .values(
+                    symbol=symbol,
+                    provider=provider,
+                    asset_type=asset_type,
+                    base_currency=base_currency,
+                    quote_currency=quote_currency,
+                    price_precision=price_precision,
+                    quantity_precision=quantity_precision,
+                    constraints=constraints_dict,
+                )
+                .on_conflict_do_update(
+                    index_elements=[Instrument.symbol, Instrument.provider],
+                    set_={
+                        "asset_type": asset_type,
+                        "base_currency": base_currency,
+                        "quote_currency": quote_currency,
+                        "price_precision": price_precision,
+                        "quantity_precision": quantity_precision,
+                        "constraints": constraints_dict,
+                        "is_active": True,
+                    },
+                )
+                .returning(Instrument)
+            )
+            result = await session.execute(stmt)
+            instrument = result.scalar_one()
+            return _instrument_record(instrument)
+
+
+class SqlAlchemyCandleRepository:
+    """Bulk-insert candles with conflict-safe no-op deduplication."""
+
+    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
+        self._session_factory = session_factory
+
+    async def save_many(self, candles: list[CandleDomain]) -> int:
+        if not candles:
+            return 0
+        rows = [
+            {
+                "instrument_id": c.instrument_id,
+                "provider": c.provider,
+                "timeframe": c.timeframe,
+                "open_time": c.open_time,
+                "close_time": c.close_time,
+                "price_basis": c.price_basis,
+                "open": c.open,
+                "high": c.high,
+                "low": c.low,
+                "close": c.close,
+                "base_volume": c.base_volume,
+                "quote_volume": c.quote_volume,
+                "trade_count": c.trade_count,
+                "taker_buy_base_volume": c.taker_buy_base_volume,
+                "taker_buy_quote_volume": c.taker_buy_quote_volume,
+                "tick_volume": c.tick_volume,
+                "is_complete": c.is_complete,
+            }
+            for c in candles
+        ]
+        async with self._session_factory.begin() as session:
+            dialect_name = session.get_bind().dialect.name
+            stmt = _candle_insert_statement(rows, dialect_name)
+            result = await session.execute(stmt)
+            # RETURNING is reliable across the supported PostgreSQL/SQLite dialects;
+            # unlike rowcount it remains correct when drivers report -1/unknown.
+            return len(result.all())

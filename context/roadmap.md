@@ -8,7 +8,7 @@ Atlas is a single-user trading operations platform deployed remotely as one Dock
 Deploy strategy package → Backtest → Paper trade on Binance data → Monitor → Validate on Binance testnet → Journal and analyze
 ```
 
-The architecture remains broker-agnostic, but implementation is deliberately narrow: Binance Spot is the first concrete integration. Oanda, futures, production live trading, multi-account support, and automated infrastructure deployment are deferred.
+The architecture remains broker-agnostic, but implementation is deliberately narrow: Binance Spot is the first concrete integration. OANDA, futures, production live trading, multi-account support, and automated infrastructure deployment are deferred.
 
 Development happens through vertical slices. Each phase includes tests and produces a usable, verifiable capability.
 
@@ -46,13 +46,15 @@ Development happens through vertical slices. Each phase includes tests and produ
 
 ### Deliverables
 
-- [ ] Typed, bot-scoped in-process EventBus
+- [ ] Typed, bot-scoped in-process EventBus with DomainEvent base class
 - [ ] Event IDs, correlation IDs, timestamps, account IDs, bot IDs, and execution modes
-- [ ] Deterministic sequential delivery and failure handling
+- [ ] Deterministic sequential delivery and failure handling with FailureRecorder
 - [ ] LiveClock and SimulationClock
 - [ ] Pydantic Settings and YAML configuration
-- [ ] Structured logging
-- [ ] Retry logic, circuit breaker, health monitor, and BotSupervisor contracts
+- [ ] Structured logging with structlog
+- [ ] Retry logic, circuit breaker, and BotSupervisor with lifecycle persistence
+- [ ] SqlAlchemySupervisorRepositories and InMemorySupervisorRepositories
+- [ ] Bot lifecycle persistence: accounts, strategies, strategy_versions, bots, reconciliation_runs
 
 ### Done when
 
@@ -60,6 +62,7 @@ Development happens through vertical slices. Each phase includes tests and produ
 - Simulation time advances deterministically
 - Configuration rejects unsafe mode combinations
 - Supervisor lifecycle operations are idempotent
+- Supervisor can restore active bots after restart with reconciliation gating
 
 ---
 
@@ -69,18 +72,27 @@ Development happens through vertical slices. Each phase includes tests and produ
 
 ### Deliverables
 
-- [ ] Candle, Tick, Instrument, and dataset contracts
+- [ ] HistoricalDataProvider and LiveDataProvider interfaces (separate)
+- [ ] Candle, Tick, Instrument (provider-aware), and DatasetIdentity contracts
 - [ ] CSV historical provider
 - [ ] Binance Spot historical provider through ccxt
-- [ ] Binance completed-candle/trade streaming provider
-- [ ] Candle persistence and bulk loading
+- [ ] Candle persistence and bulk loading with
+      `(instrument_id, provider, timeframe, open_time, price_basis)` uniqueness
 - [ ] Timestamp, ordering, duplicate, precision, and Decimal validation
+- [ ] Dataset fingerprinting for reproducible backtests
+- [ ] Historical data loader does not emit CandleClosed events
+- [ ] Domain event payload contracts established: CandleClosed carries `candle: Candle`
+      field, TickReceived carries `tick: Tick` field (where applicable). Downstream
+      event payloads (e.g. SignalGenerated, RiskApproved) are completed at their owning
+      feature boundaries before integration.
+- [ ] UUID identity convention adopted for all new models and migrations (target:
+      `Uuid` column type, Python `UUID` types)
 
 ### Done when
 
 - CSV and Binance data produce the same normalized Candle model
 - Historical datasets are identifiable and reproducible
-- Only completed candles produce `CandleClosed`
+- Only completed candles in live mode produce CandleClosed (Feature 08)
 - Reconnects do not duplicate candles or subscriptions
 
 ---
@@ -93,7 +105,7 @@ Development happens through vertical slices. Each phase includes tests and produ
 
 - [ ] Strategy base class and completed-candle contract
 - [ ] Optional tick observation without tick-generated trading signals
-- [ ] Signal model with strategy version metadata
+- [ ] Signal model with strategy version, commit SHA, and completed-candle timestamp
 - [ ] SMA crossover and Bollinger Bands examples
 - [ ] Strategy registry backed by a deployed private Git package
 - [ ] Strategy commit and parameter validation
@@ -119,7 +131,7 @@ Development happens through vertical slices. Each phase includes tests and produ
 - [ ] Stop-loss/take-profit calculation
 - [ ] Decimal quantity and instrument constraint validation
 - [ ] Per-bot risk state
-- [ ] YAML defaults and supported configuration overrides
+- [ ] YAML defaults and supported configuration overrides (no separate DB table)
 
 ### Done when
 
@@ -143,6 +155,7 @@ Daily loss limits, maximum drawdown, and trading sessions are deferred until the
 - [ ] One net position per account and instrument
 - [ ] Fees, slippage, quantity precision, and protective exits
 - [ ] Order, fill, position, and trade state machines
+- [ ] Trade entity: Created on position open, finalized on position close
 - [ ] Idempotent client order IDs and unknown-order handling
 
 ### Done when
@@ -151,6 +164,7 @@ Daily loss limits, maximum drawdown, and trading sessions are deferred until the
 - Protective exits follow documented candle assumptions
 - Duplicate submissions cannot create duplicate orders
 - Broker reconciliation can recover unknown state
+- Trade entity connects execution to journaling (TradeClosed → JournalEntry)
 
 ---
 
@@ -162,7 +176,7 @@ Daily loss limits, maximum drawdown, and trading sessions are deferred until the
 
 - [ ] Historical replay with SimulationClock
 - [ ] Signal-at-close and fill-at-next-candle-open timing
-- [ ] BacktestRun and BacktestTrade persistence with run-level metrics
+- [ ] BacktestRun and BacktestTrade persistence with run-level metrics and dataset fingerprint
 - [ ] Documented metrics with fees, slippage, and fill assumptions
 - [ ] Backtest API endpoints
 - [ ] Backtest result UI
@@ -170,7 +184,7 @@ Daily loss limits, maximum drawdown, and trading sessions are deferred until the
 ### Done when
 
 - Historical data → Strategy → Risk → Paper Execution → Metrics works end to end
-- Same inputs produce identical results
+- Same inputs produce identical results (dataset fingerprint verified)
 - Backtest records remain separate from paper/testnet trading records
 - Metrics have fixture-based expected values
 
@@ -185,8 +199,9 @@ Daily loss limits, maximum drawdown, and trading sessions are deferred until the
 - [ ] Bot model and persisted lifecycle state
 - [ ] BotSupervisor with independent in-process pipelines
 - [ ] Start, stop, pause, and resume
-- [ ] Binance completed-candle feed integration
+- [ ] Binance completed-candle streaming feed (Feature 08)
 - [ ] Paper account, positions, P&L, and heartbeat tracking
+- [ ] Trade entity lifecycle (create on position open, finalize on close)
 - [ ] Startup restoration and broker/account reconciliation
 - [ ] Real-time bot status events
 
@@ -196,6 +211,7 @@ Daily loss limits, maximum drawdown, and trading sessions are deferred until the
 - Paper bots react only to completed candles
 - Restart restores active bots only after successful reconciliation
 - A failed reconciliation prevents new orders
+- Trades are created and finalized through the trade lifecycle
 
 ---
 
@@ -205,15 +221,15 @@ Daily loss limits, maximum drawdown, and trading sessions are deferred until the
 
 ### Deliverables
 
-- [ ] Journal entries linked to bot, account, strategy version, fills, and trade
-- [ ] Signal and market context capture
+- [ ] Journal entries linked to trade (canonical anchor), bot, account, strategy version
+- [ ] Signal and market context capture on TradeClosed
 - [ ] Analytics service and API
-- [ ] Total return, win rate, Sharpe ratio, max drawdown, and profit factor formulas documented
+- [ ] Total return, win rate, Sharpe ratio, max drawdown, and profit factor with documented formulas
 - [ ] Journal and analytics UI
 
 ### Done when
 
-- Completed trades are journalized automatically
+- Completed trades are journalized automatically via TradeClosed
 - Metrics are reproducible from persisted trades
 - Open and closed trade treatment is documented
 
@@ -236,7 +252,7 @@ Daily loss limits, maximum drawdown, and trading sessions are deferred until the
 
 ### Done when
 
-- The dashboard answers “How is automated trading doing right now?”
+- The dashboard answers "How is automated trading doing right now?"
 - Bot and position controls are deliberate and observable
 - Real-time data displays correct persisted state
 
@@ -285,9 +301,9 @@ Daily loss limits, maximum drawdown, and trading sessions are deferred until the
 
 ## Deferred Scope
 
-- [ ] Oanda integration
+- [ ] OANDA integration (provider and broker adapter)
 - [ ] Futures markets
-- [ ] Production live trading
+- [ ] Production live trading (requires safety gate and production adapter)
 - [ ] Multiple accounts
 - [ ] Multiple net/hedged positions per instrument
 - [ ] Automated strategy deployment
@@ -302,10 +318,10 @@ The MVP is complete when one trader can:
 
 1. Deploy a versioned Python strategy package.
 2. Load or import historical data.
-3. Run a deterministic backtest.
+3. Run a deterministic backtest with reproducible dataset identity.
 4. Review persisted results and metrics.
 5. Run multiple paper bots against Binance Spot live public data.
-6. Monitor bot status, positions, and P&L.
+6. Monitor bot status, positions, P&L, and trades.
 7. Recover active bots safely after an Atlas restart.
 8. Validate broker execution on Binance Spot testnet.
 9. Review completed trades in the journal and analytics views.

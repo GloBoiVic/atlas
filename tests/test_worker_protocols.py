@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from uuid import UUID
 
 import pytest
 
@@ -16,12 +17,15 @@ from backend.worker.protocols import (
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+_BOT_ID = UUID("00000000-0000-0000-0000-000000000001")
+_ACCOUNT_ID = UUID("00000000-0000-0000-0000-000000000010")
+
 
 def make_bot() -> BotSnapshot:
     return BotSnapshot(
-        id="bot-1",
+        id=_BOT_ID,
         name="momentum",
-        account_id="account-1",
+        account_id=_ACCOUNT_ID,
         broker="paper",
         mode="paper",
         instrument="BTCUSDT",
@@ -49,13 +53,13 @@ class FakePipeline:
 
 class FakeFactory:
     def create_pipeline(self, bot: BotSnapshot) -> BotPipeline:
-        assert bot.id == "bot-1"
+        assert bot.id == _BOT_ID
         return FakePipeline()
 
 
 class FakeReconciler:
     async def reconcile(self, bot: BotSnapshot) -> ReconciliationResult:
-        assert bot.id == "bot-1"
+        assert bot.id == _BOT_ID
         return ReconciliationResult(status=ReconciliationStatus.MATCHED)
 
 

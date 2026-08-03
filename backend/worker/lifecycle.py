@@ -24,14 +24,14 @@ async def publish_persisted_transition(
 ) -> None:
     logger.info(
         "bot_status_changed",
-        bot_id=record.id,
+        bot_id=str(record.id),
         status=record.status,
         desired_status=record.desired_status,
     )
     await event_bus.publish(
         BotStatusChanged(
-            account_id=UUID(record.account_id),
-            bot_id=UUID(record.id),
+            account_id=record.account_id,
+            bot_id=record.id,
             mode=AccountMode(record.mode),
         ),
     )
@@ -40,7 +40,7 @@ async def publish_persisted_transition(
 async def persist_error(
     repositories: SupervisorRepositories,
     event_bus: EventBus,
-    bot_id: str,
+    bot_id: UUID,
     error: str,
     clock: Clock,
 ) -> bool:

@@ -1,6 +1,7 @@
 """Runtime ownership and lifecycle supervision for isolated bot pipelines."""
 
 import asyncio
+from uuid import UUID
 
 import structlog
 
@@ -44,21 +45,21 @@ class BotSupervisor:
         self.reconciler = reconciler
         self.clock = clock
         self.event_bus = event_bus
-        self._pipelines: dict[str, BotPipeline] = {}
-        self._locks: dict[str, asyncio.Lock] = {}
-        self._stop_failures: set[str] = set()
+        self._pipelines: dict[UUID, BotPipeline] = {}
+        self._locks: dict[UUID, asyncio.Lock] = {}
+        self._stop_failures: set[UUID] = set()
         self._operations: set[asyncio.Task[object]] = set()
         self._shutting_down = False
 
-    async def start(self, bot_id: str) -> bool:
+    async def start(self, bot_id: UUID) -> bool:
         """Start, reconcile, and enable one bot pipeline."""
         return await self._start(bot_id)
 
-    async def restore(self, bot_id: str) -> bool:
+    async def restore(self, bot_id: UUID) -> bool:
         """Explicitly restore one bot, including a previously paused bot."""
         return await self._start(bot_id)
 
-    async def restore_active(self) -> list[str]:
+    async def restore_active(self) -> list[UUID]:
         """Restore only persisted RUNNING and STARTING bots."""
         if self._shutting_down:
             return []
@@ -67,7 +68,7 @@ class BotSupervisor:
         await asyncio.gather(*(self.restore(bot_id) for bot_id in bot_ids))
         return bot_ids
 
-    async def pause(self, bot_id: str) -> bool:
+    async def pause(self, bot_id: UUID) -> bool:
         """Disable execution while preserving the feed and strategy pipeline."""
         operation = asyncio.current_task()
         assert operation is not None
@@ -104,7 +105,7 @@ class BotSupervisor:
         finally:
             self._operations.discard(operation)
 
-    async def stop(self, bot_id: str) -> bool:
+    async def stop(self, bot_id: UUID) -> bool:
         """Stop one pipeline and persist STOPPED."""
         return await self._stop(bot_id)
 
@@ -148,7 +149,9 @@ class BotSupervisor:
             for bot_id, result in zip(bot_ids, results, strict=True)
             if isinstance(result, BaseException) or result is False
         ]
-        unresolved = sorted(set(failures) | set(self._pipelines))
+        unresolved = sorted(
+            str(bid) for bid in (set(failures) | set(self._pipelines))
+        )
         if cancelled:
             logger.error(
                 "bot_shutdown_cancelled",
@@ -163,10 +166,11 @@ class BotSupervisor:
                 unresolved_bot_ids=unresolved,
             )
             raise RuntimeError(
-                "one or more bot pipelines could not be stopped: " + ", ".join(failures)
+                "one or more bot pipelines could not be stopped: "
+                + ", ".join(str(bid) for bid in failures)
             )
 
-    async def _start(self, bot_id: str) -> bool:
+    async def _start(self, bot_id: UUID) -> bool:
         operation = asyncio.current_task()
         assert operation is not None
         self._operations.add(operation)
@@ -252,7 +256,7 @@ class BotSupervisor:
         finally:
             self._operations.discard(operation)
 
-    async def _stop(self, bot_id: str) -> bool:
+    async def _stop(self, bot_id: UUID) -> bool:
         operation = asyncio.current_task()
         assert operation is not None
         self._operations.add(operation)
@@ -275,7 +279,7 @@ class BotSupervisor:
 
     async def _abort_start(
         self,
-        bot_id: str,
+        bot_id: UUID,
         pipeline: BotPipeline | None,
         error: str | None = None,
     ) -> bool:
@@ -322,7 +326,7 @@ class BotSupervisor:
 
     async def _finalize_stop(
         self,
-        bot_id: str,
+        bot_id: UUID,
         bot: BotRecord,
         pipeline: BotPipeline | None,
     ) -> bool:
@@ -371,24 +375,24 @@ class BotSupervisor:
             await self._persist_stop_error(bot_id, BotPipelineError("stop cleanup cancelled"))
             return False
 
-    def _lock_for(self, bot_id: str) -> asyncio.Lock:
+    def _lock_for(self, bot_id: UUID) -> asyncio.Lock:
         return self._locks.setdefault(bot_id, asyncio.Lock())
 
-    async def _acquire_bot_lock(self, bot_id: str) -> None:
+    async def _acquire_bot_lock(self, bot_id: UUID) -> None:
         """Acquire the per-bot serialisation lock."""
         await self._lock_for(bot_id).acquire()
 
-    def _release_bot_lock(self, bot_id: str) -> None:
+    def _release_bot_lock(self, bot_id: UUID) -> None:
         """Release the per-bot serialisation lock."""
         self._lock_for(bot_id).release()
 
-    async def _persist(self, bot_id: str, state: LifecycleUpdate) -> None:
+    async def _persist(self, bot_id: UUID, state: LifecycleUpdate) -> None:
         record = await self.repositories.persist_lifecycle(bot_id, state)
         if record is None:
             raise BotPipelineError("bot persistence failed")
         await publish_persisted_transition(self.event_bus, record)
 
-    async def _persist_error(self, bot_id: str, error: str) -> bool:
+    async def _persist_error(self, bot_id: UUID, error: str) -> bool:
         return await persist_error(
             self.repositories,
             self.event_bus,
@@ -397,7 +401,7 @@ class BotSupervisor:
             self.clock,
         )
 
-    async def _persist_stop_error(self, bot_id: str, error: Exception) -> None:
+    async def _persist_stop_error(self, bot_id: UUID, error: Exception) -> None:
         """Record a failed stop while retaining local ownership for cleanup retry."""
         try:
             await self._persist_error(bot_id, str(error))
