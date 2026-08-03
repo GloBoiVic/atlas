@@ -16,7 +16,7 @@ Last updated: 2026-08-02
 
 ## Branch
 
-- **Name:** feature/03-data-layer
+- **Name:** main
 - **Created:** 2026-08-02
 
 ## What was built
@@ -163,10 +163,14 @@ Last updated: 2026-08-02
 
 ## Notes
 
-- Development happens locally with the `.venv` (no Docker, no local PostgreSQL).
-  Source-level checks: `ruff`, `mypy`, bounded `pytest`.
-- Docker/Compose/PostgreSQL validation validated in the **single** Codespace on
-  `main` (no per-branch Codespaces).
+- Local Docker Desktop (macOS 13.7.8, Intel i5-7267U, 8 GB RAM) is validated
+  alongside Codespaces. See `docs/codespaces.md` for both workflows.
+- Profile A (2 CPUs / ~2.9 GiB) is the recommended conservative resource
+  allocation; profile B (3 CPUs / ~4.06 GiB) is viable for iteration after
+  a clean startup. Sequential builds only — parallel builds are not safe
+  on this machine.
+- Docker/Compose/PostgreSQL validation has been validated on both local
+  Docker and the **shared** Codespace on `main` (no per-branch Codespaces).
 - `candles` and `instruments` tables are live in the ORM and migrations
   (006). Candles require Decimal precision, provider-scoped uniqueness,
   and `idx_candles_lookup`.

@@ -13,12 +13,23 @@ Read these files in order:
 5. `context/library-docs.md` — project-specific library patterns
 6. `context/features/<current-feature>.md` — deliverables and acceptance criteria
 
-Development environment: use GitHub Codespaces as documented in `docs/codespaces.md`.
-Do not assume Docker Desktop or a local Docker daemon is available on the developer's Mac.
-Atlas still uses Docker Compose for the API, worker, frontend, and PostgreSQL services.
-Codespace creation does not install the full application dependency trees; use Compose image
-builds for runtime dependencies and install optional development dependencies manually only
-when the machine has sufficient memory.
+Development environment: local Docker Desktop (macOS) is supported when available; GitHub
+Codespaces remains the fallback. See `docs/codespaces.md` for both workflows. Docker Compose
+is the runtime topology for the API, worker, frontend, and PostgreSQL services on either
+platform.
+
+**Low-resource local Docker rules (8 GB RAM host):**
+
+- **Do not** run `docker compose up --build` for all services at once. Build `api`, `worker`,
+  and `frontend` one at a time; then `docker compose up -d`.
+- Use service-specific rebuilds (`docker compose build api`) instead of blanket builds.
+- Profile A (2 CPUs / ~2.9 GiB) is the recommended conservative resource allocation.
+- Profile B (3 CPUs / ~4.06 GiB) provides higher headroom and is viable for iteration after
+  a clean startup. Changing Docker Desktop resources recreates existing containers — this is
+  expected. Do not claim parallel builds are safe on this machine.
+- Codespace creation does not install the full application dependency trees; use Compose image
+  builds for runtime dependencies and install optional development dependencies manually only
+  when the machine has sufficient memory.
 
 When the work touches a covered library, also read the relevant local skill under
 `.agents/skills/`:
