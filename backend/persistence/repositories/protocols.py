@@ -2,16 +2,18 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Protocol
-from uuid import uuid4
+from uuid import UUID, uuid4
+
+from backend.data.models import Candle as CandleDomain
 
 
 @dataclass(frozen=True, slots=True)
 class BotRecord:
     """Persistence-neutral bot data needed by the supervisor."""
 
-    id: str
+    id: UUID
     name: str
-    account_id: str
+    account_id: UUID
     broker: str
     mode: str
     instrument: str
@@ -38,25 +40,25 @@ class LifecycleUpdate:
 class ReconciliationRecord:
     """A broker reconciliation result, represented without ORM objects."""
 
-    account_id: str
-    bot_id: str | None
+    account_id: UUID
+    bot_id: UUID | None
     status: str
     broker_snapshot: Mapping[str, object] = field(default_factory=dict)
     differences: Mapping[str, object] = field(default_factory=dict)
     started_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     completed_at: datetime | None = None
     error_message: str | None = None
-    id: str = field(default_factory=lambda: str(uuid4()))
+    id: UUID = field(default_factory=uuid4)
 
 
 class BotRepository(Protocol):
     async def get_restore_candidates(self) -> list[BotRecord]:
         """Return bots whose desired state is not stopped."""
 
-    async def get(self, bot_id: str) -> BotRecord | None:
+    async def get(self, bot_id: UUID) -> BotRecord | None:
         """Return one bot, if it exists."""
 
-    async def persist_lifecycle(self, bot_id: str, state: LifecycleUpdate) -> BotRecord | None:
+    async def persist_lifecycle(self, bot_id: UUID, state: LifecycleUpdate) -> BotRecord | None:
         """Persist lifecycle state and return the resulting bot."""
 
 
@@ -64,9 +66,70 @@ class ReconciliationRepository(Protocol):
     async def record(self, result: ReconciliationRecord) -> ReconciliationRecord:
         """Persist a reconciliation result."""
 
-    async def get_reconciliation(self, reconciliation_id: str) -> ReconciliationRecord | None:
+    async def get_reconciliation(self, reconciliation_id: UUID) -> ReconciliationRecord | None:
         """Return one reconciliation result, if it exists."""
 
 
 class SupervisorRepositories(BotRepository, ReconciliationRepository, Protocol):
     """Combined dependency contract used by supervisor composition."""
+
+
+# --- Feature 03 repository protocols ---
+
+
+class InstrumentRepository(Protocol):
+    """Provider-aware instrument lookup and creation."""
+
+    async def resolve(
+        self,
+        *,
+        symbol: str,
+        provider: str,
+        asset_type: str | None = None,
+    ) -> "InstrumentRecord":
+        """Get or create an instrument keyed on ``(provider, symbol)``.
+
+        If the row exists, returns it.  Otherwise inserts a record with the
+        supplied fields and sensible defaults for precision/constraints.
+        """
+
+    async def upsert(
+        self,
+        *,
+        symbol: str,
+        provider: str,
+        asset_type: str,
+        base_currency: str | None = None,
+        quote_currency: str | None = None,
+        price_precision: int = 8,
+        quantity_precision: int = 8,
+        constraints: dict[str, object] | None = None,
+    ) -> "InstrumentRecord":
+        """Upsert an instrument, updating constraints and ``is_active`` on conflict."""
+
+
+@dataclass(frozen=True, slots=True)
+class InstrumentRecord:
+    """Persistence-neutral instrument data."""
+
+    id: UUID
+    symbol: str
+    provider: str
+    asset_type: str
+    base_currency: str | None
+    quote_currency: str | None
+    price_precision: int
+    quantity_precision: int
+    is_active: bool
+    constraints: dict[str, object] = field(default_factory=dict)
+
+
+class CandleRepository(Protocol):
+    """Bulk-insert candles with conflict-safe no-op deduplication."""
+
+    async def save_many(self, candles: list[CandleDomain]) -> int:
+        """Insert ``candles``, deduplicating on unique-constraint conflict.
+
+        Uses ``ON CONFLICT DO NOTHING`` — existing rows are retained unchanged.
+        Returns the number of rows that were **inserted**, not the batch size.
+        """

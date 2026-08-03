@@ -80,11 +80,11 @@ class FakeFactory:
         stop_gate: asyncio.Event | None = None,
         fail_stop: bool = False,
     ) -> None:
-        self.pipelines: dict[str, FakePipeline] = {}
+        self.pipelines: dict[UUID, FakePipeline] = {}
         self.start_gate = start_gate
         self.fail_start = fail_start
-        self.stop_gate = stop_gate
         self.fail_stop = fail_stop
+        self.stop_gate = stop_gate
 
     def create_pipeline(self, bot: BotSnapshot) -> FakePipeline:
         pipeline = FakePipeline(self.start_gate, self.fail_start, self.stop_gate, self.fail_stop)
@@ -95,7 +95,7 @@ class FakeFactory:
 class FakeReconciler:
     def __init__(self, status: ReconciliationStatus = ReconciliationStatus.MATCHED) -> None:
         self.status = status
-        self.calls: list[str] = []
+        self.calls: list[UUID] = []
 
     async def reconcile(self, bot: BotSnapshot) -> ReconciliationResult:
         self.calls.append(bot.id)
@@ -104,7 +104,7 @@ class FakeReconciler:
 
 class FailingLifecycleRepositories(InMemorySupervisorRepositories):
     async def persist_lifecycle(
-        self, bot_id: str, state: LifecycleUpdate
+        self, bot_id: UUID, state: LifecycleUpdate
     ) -> BotRecord | None:
         if state.status == "starting":
             raise RuntimeError("persistence failed")
@@ -119,7 +119,7 @@ class GatedStopRepositories(InMemorySupervisorRepositories):
         self.allow = asyncio.Event()
 
     async def persist_lifecycle(
-        self, bot_id: str, state: LifecycleUpdate
+        self, bot_id: UUID, state: LifecycleUpdate
     ) -> BotRecord | None:
         if state.status == self.phase:
             self.started.set()
@@ -138,9 +138,9 @@ def make_bot(
     global _make_bot_seq
     _make_bot_seq += 1
     return BotRecord(
-        id=str(UUID(int=hash((_make_bot_seq, status, desired_status)) % (2**64))),
+        id=UUID(int=hash((_make_bot_seq, status, desired_status)) % (2**64)),
         name="momentum",
-        account_id=str(UUID(int=0)),
+        account_id=UUID(int=0),
         broker="paper",
         mode="paper",
         instrument="BTCUSDT",
@@ -196,7 +196,7 @@ async def test_start_creates_pipeline_and_enables_only_after_match() -> None:
 async def test_concurrent_same_bot_start_is_idempotent() -> None:
     bot = make_bot()
     supervisor, _, factory, _, _ = make_supervisor([bot])
-    assert await asyncio.gather(supervisor.start(bot.id), supervisor.start(bot.id)) == [
+    assert await asyncio.gather(supervisor.start(bot.id), supervisor.start(bot.id)) == [  # type: ignore[comparison-overlap]
         True,
         True,
     ]
@@ -371,7 +371,7 @@ async def test_lifecycle_events_follow_persisted_transitions_and_stop_releases()
     supervisor.event_bus.subscribe(BotStatusChanged, collect)
     await supervisor.start(bot.id)
     await supervisor.stop(bot.id)
-    assert [event.bot_id for event in events] == [UUID(bot.id)] * 4
+    assert [event.bot_id for event in events] == [bot.id] * 4
     assert factory.pipelines[bot.id].stopped is True
     await supervisor.shutdown()
     current = await repositories.get(bot.id)
@@ -421,8 +421,6 @@ async def test_shutdown_waits_for_inflight_start_and_stops_pipeline() -> None:
     shutting_down = asyncio.create_task(supervisor.shutdown())
     await asyncio.sleep(0)
     gate.set()
-    # Start completes successfully because it already passed the shutdown gate
-    # Shutdown then stops the running pipeline
     assert await starting is True
     await shutting_down
     assert factory.pipelines[bot.id].stopped is True

@@ -103,18 +103,15 @@ The MVP uses one net position per account and instrument. Hedged or multiple ind
 
 ## Broker Agnostic
 
-The initial broker/data integrations being considered are:
+The architecture is broker-agnostic. Broker-specific API logic lives behind interfaces and adapters.
 
-- Oanda
-- Binance
+**Binance Spot is the first concrete integration.** It was chosen because it provides practical public market data and an accessible testnet path. The MVP targets paper trading on Binance public streaming data before testnet execution.
 
-A futures provider has not yet been selected.
+**OANDA is deferred.** The OANDA provider and broker adapter will be designed when scheduled, not before the paper-trading workflow is stable. OANDA's different candle semantics (RFC3339 timestamps, bid/ask/mid prices, tick-count volume), live pricing model (price stream, not completed candles), and instrument constraints (margin rate, pip location) should influence the provider abstractions without being retrofitted into the current implementation.
 
-The architecture remains broker-agnostic, but Binance Spot is the first concrete integration because it provides practical public market data and an accessible testnet path. Oanda and futures are deferred until the initial paper-trading workflow is stable.
+Futures providers have not been selected.
 
-Do not hard-code Atlas around Oanda or Binance.
-
-Broker-specific functionality must live behind broker interfaces/adapters.
+Do not hard-code Atlas around any single provider. Broker-specific functionality must live behind interfaces/adapters.
 
 ---
 
@@ -362,7 +359,7 @@ The goal is to minimize differences between:
 - Paper Trading
 - Live Trading
 
-For the first vertical slice, live market data feeds paper execution. Authenticated execution begins with Binance Spot testnet after paper trading is stable.
+For the first vertical slice, live market data feeds paper execution. Paper trading reuses the same Strategy, Risk, and Paper Execution contracts as backtesting. Authenticated execution begins with Binance Spot testnet after paper trading is stable. Production live trading is deferred until a production adapter and safety gate exist.
 
 ---
 

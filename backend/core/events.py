@@ -2,12 +2,16 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from inspect import isawaitable
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 from uuid import UUID, uuid4
 
 import structlog
 
 from backend.core.account_mode import AccountMode
+
+if TYPE_CHECKING:
+    from backend.data.models import Candle as CandleModel
+    from backend.data.models import Tick as TickModel
 
 logger = structlog.get_logger(__name__)
 
@@ -30,12 +34,12 @@ class DomainEvent:
 
 @dataclass(frozen=True, slots=True)
 class CandleClosed(DomainEvent):
-    pass
+    candle: "CandleModel" = field(kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)
 class TickReceived(DomainEvent):
-    pass
+    tick: "TickModel" = field(kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)

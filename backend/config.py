@@ -6,7 +6,7 @@ from typing import Any
 
 import structlog
 import yaml  # type: ignore[import-untyped]
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from backend.core.errors import ConfigError
@@ -77,12 +77,22 @@ class RiskConfig(BaseModel):
 
 
 class BrokerConfig(BaseModel):
-    """Broker selection and deployment mode loaded from YAML."""
+    """Broker selection and deployment mode loaded from YAML.
+
+    PRODUCTION mode is explicitly rejected until a deployment-specific safety gate
+    exists (see ``context/architecture.md`` Production Mode section).
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1)
     mode: Environment
+
+    @model_validator(mode="after")
+    def _reject_production_mode(self) -> "BrokerConfig":
+        if self.mode == Environment.PRODUCTION:
+            raise ValueError("PRODUCTION mode is reserved and not yet supported in the MVP")
+        return self
 
 
 class YamlConfig(BaseModel):

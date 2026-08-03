@@ -19,6 +19,19 @@ Detailed persistence is defined in `context/database.md`. Feature-specific behav
 7. All money, prices, quantities, fees, and P&L use `Decimal` in the backend domain.
 8. Backtest behavior is deterministic through the shared Clock abstraction.
 
+## Identity Convention
+
+**UUID identity is implemented end-to-end:**
+
+- Python domain types use `UUID` from the standard library.
+- ORM models use native PostgreSQL `UUID` columns (SQLAlchemy `Uuid` type).
+- Repository protocols accept and return `UUID`.
+
+The foundation migrations (001–004) introduced `String(36)` identifiers; migration 005
+converted the existing tables to native PostgreSQL `UUID`, and migration 006 created
+`instruments` and `candles` with `UUID` from the start. New code must continue to use
+`UUID` — no `String(36)` or `str` identifiers.
+
 ## Runtime Topology
 
 ```text
@@ -56,20 +69,37 @@ API routes validate transport input and call application services. Routes do not
 
 ### Persistence
 
-Engines never access database tables directly. Repositories are the only database access boundary. The schema, relationships, statuses, and migration rules live in `context/database.md`.
+Engines never access database tables directly. Repositories are the only database access boundary. Repository callers depend on `Protocol` interfaces, not ORM model classes.
+
+**Session ownership:** Sessions yielded by the `get_async_session()` dependency are
+read-only by default — the dependency never commits. Services that write create sessions
+from the `async_session` factory and own commit/rollback explicitly — following the
+`SqlAlchemySupervisorRepositories` pattern that uses
+`async with self._session_factory.begin() as session:` for write scopes.
 
 ### Market Data
 
-Providers normalize external data into common `Candle`, `Tick`, and `Instrument` models. The first implementation supports CSV historical data and Binance Spot public data. Oanda and futures providers are deferred.
+**Historical and live data provider interfaces are separate.** The historical interface
+returns bounded lists of normalized candles. The live interface is an async generator of
+streaming candles and ticks.
 
 Providers must:
 
 - Normalize timestamps to UTC.
 - Return Decimal domain values.
 - Sort and deduplicate candles.
-- Emit `CandleClosed` only for completed candles.
 - Use the shared Clock for timeout decisions.
 - Reconnect without duplicate subscriptions or events.
+
+**CandleClosed is emitted only by the live streaming feed or by historical replay
+(Feature 05).** Feature 03 (historical data loader) does not emit CandleClosed.
+
+**Instruments are provider-aware.** Candles reference an `instrument_id` FK rather than
+duplicating fragile symbol strings. Provider-specific constraints (Binance LOT_SIZE vs.
+OANDA margin rate) are stored as structured JSONB metadata, not flattened into shared
+columns. Volume semantics are explicit: `base_volume`, `quote_volume`, `trade_count`,
+`tick_volume`. OANDA's `tick_volume` (price-update count) is not the same as Binance's
+`base_volume` (traded asset quantity).
 
 ### Strategy Engine
 
@@ -84,7 +114,7 @@ Every order intent passes through the Risk Engine. The initial controls are:
 - Stop-loss and take-profit calculation.
 - Decimal quantity and instrument constraint validation.
 
-Daily loss, maximum drawdown, and session restrictions are deferred follow-up controls. Risk receives an explicit account and market context; it does not query database tables directly.
+Daily loss, maximum drawdown, and trading session controls are deferred follow-up controls. Risk receives an explicit account and market context (`RiskContext`); it does not query database tables directly. Risk configuration lives in the bot's YAML configuration, not a separate database table.
 
 ### Execution Engine
 
@@ -92,9 +122,11 @@ The Execution Engine converts `RiskApproved` decisions into broker orders and ow
 
 The `Broker` interface exposes order submission, cancellation, account state, positions, and reconciliation. Paper execution is deterministic and supports the shared next-candle-open backtest fill model. Binance Spot testnet execution is added later through the same interface.
 
+**Trade lifecycle:** A `Trade` entity is created when a position opens and finalized when the position closes. It aggregates fills and carries gross/net P&L, fees, and market context. Trades are the canonical source of truth for journaling and analytics.
+
 ### Journal and Analytics
 
-Journal and Analytics consume completed trade facts and read persisted repositories. They do not own execution state. Journal writes are idempotent and associate trades with the account, bot, strategy version, fills, and market context.
+Journal and Analytics consume completed Trade facts and read persisted repositories. They do not own execution state. Journal writes are idempotent and associate trades with the account, bot, strategy version, and market context.
 
 ## EventBus
 
@@ -104,44 +136,61 @@ The EventBus is lightweight, typed, in-process pub/sub. It is not a durable queu
 
 - `publish()` is asynchronous and awaits handlers.
 - Handlers run in deterministic registration order for trading-critical events.
-- Every event includes `event_id`, `occurred_at`, and `correlation_id`.
-- Trading events include `account_id`, `bot_id`, and `mode`.
+- Every event includes `event_id` (`UUID`), `occurred_at`, and `correlation_id` (`UUID`).
+- Trading events include `account_id` (`UUID`), `bot_id` (`UUID`), and `mode`.
 - Handlers are idempotent and use event IDs or durable broker IDs for side effects.
-- A handler failure is logged and classified; it is never silently swallowed.
-- A safety-critical failure pauses the affected bot.
+- A handler failure is logged, recorded via `FailureRecorder`, and pauses the affected bot.
 - The EventBus does not retry unknown broker operations; reconciliation decides whether retry is safe.
+- `FailureRecorder` is an in-memory protocol (`InMemoryFailureRecorder`). Durable dead-letter storage is deferred.
 
-### Domain Events
+### Domain Events (Payload Contracts)
 
-```text
-CandleClosed
-TickReceived
-SignalGenerated
-RiskApproved
-RiskRejected
-OrderSubmitted
-OrderFilled
-PositionOpened
-PositionUpdated
-PositionClosed
-TradeClosed
-```
+Events are frozen `@dataclass` subclasses of `DomainEvent`. `DomainEvent` carries common
+metadata (`event_id: UUID`, `occurred_at: datetime`, `correlation_id: UUID`,
+`account_id: UUID | None`, `bot_id: UUID | None`, `mode: AccountMode | None`).
 
-Error and lifecycle events include:
+**Required payload contracts** (each event type must carry its own typed payload fields):
 
 ```text
-ApiError
-DataFeedError
-OrderRejected
-OrderFailed
-StrategyError
-ConnectionLost
-ConnectionRestored
-CircuitBreakerOpen
-CircuitBreakerClosed
-BotStatusChanged
-HealthStatusChanged
+Trading:
+CandleClosed          —  candle: Candle
+TickReceived          —  tick: Tick
+SignalGenerated       —  signal: Signal, strategy_version_id: UUID
+RiskApproved          —  signal: Signal, position_size: Decimal,
+                         stop_loss: Decimal, take_profit: Decimal
+RiskRejected          —  signal: Signal, reason: str
+OrderSubmitted        —  order: Order, broker_order_id: str
+OrderFilled           —  order: Order, fill: Fill
+PositionOpened        —  position: Position
+PositionUpdated       —  position: Position
+PositionClosed        —  position: Position
+TradeClosed           —  trade: Trade
+
+Error and lifecycle:
+ApiError              —  component: str, error: str
+DataFeedError         —  instrument_id: UUID, error: str
+OrderRejected         —  order_id: UUID, reason: str
+OrderFailed           —  order_id: UUID, error: str
+StrategyError         —  bot_id: UUID, error: str
+ConnectionLost        —  provider: str
+ConnectionRestored    —  provider: str
+CircuitBreakerOpen    —  component: str
+CircuitBreakerClosed  —  component: str
+BotStatusChanged      —  (inherits DomainEvent metadata)
+HealthStatusChanged   —  component: str, status: str
 ```
+
+**Current implementation status:** `CandleClosed` carries `candle: Candle` and
+`TickReceived` carries `tick: Tick` (both keyword-only dataclass fields). The remaining
+event subclasses are still defined with `pass` — their payload fields must be added before
+the Feature 04+ event emission integration. The `DomainEvent` base class uses `UUID` typed
+fields.
+
+### EventBus Implementation
+
+The `EventBus` class supports typed subscription, sequential awaited delivery, failure
+recording, and bot-pause on safety-critical failures. It uses per-type handler lists and
+continues processing remaining handlers after a failure.
 
 ### Candle Signal Flow
 
@@ -151,10 +200,11 @@ Candle closes at T
   → Strategy evaluates completed candle
   → SignalGenerated
   → Risk approves or rejects
-  → Paper/real execution submits an order
+  → RiskApproved / RiskRejected
+  → Execution submits order
   → OrderSubmitted / OrderFilled
   → Position and Trade events
-  → Journal and Analytics persist/read facts
+  → Journal and Analytics consume facts
 ```
 
 An approved signal confirmed at candle close is eligible for a fill at the next candle open in backtests and the paper simulator.
@@ -171,19 +221,17 @@ STOPPED → STARTING → RUNNING → PAUSING → PAUSED
                        ERROR ← STOPPING
 ```
 
-Each pipeline owns its subscriptions, strategy instance, risk context, feed tasks, and execution context. Database state records the desired and observed lifecycle state and the last error. There is no `bot_runs` table; runtime ownership is implicit in the single-worker topology.
+Each pipeline owns its subscriptions, strategy instance, risk context, feed tasks, and execution context. Database state records the desired and observed lifecycle state and the last error.
 
 On worker startup:
 
-1. Load bots persisted as active (`desired_status != "stopped"`).
-2. Create isolated pipelines for bots with `status` of `running` or `starting`.
-3. Query the broker/account for orders and positions.
+1. Load bots persisted as active (`desired_status != "stopped"`), filtering for those with `status` of `running` or `starting`.
+2. Create isolated pipelines for those bots.
+3. Query the broker/account for orders and positions (`Reconciler.reconcile`).
 4. Persist a reconciliation result.
-5. Resume only after successful reconciliation.
+5. Enable execution only after successful reconciliation (`is_safe_to_execute`).
 
-Failed reconciliation leaves the bot paused or errored and prevents new orders. Start, stop, pause, resume, and shutdown operations are idempotent.
-
-**Health monitoring and orphan-state handling are deferred.** A crashed worker may leave a bot persisted as `RUNNING` or `STARTING` until Docker restart recovery triggers startup restoration. The single-worker invariant is safe only while Docker Compose runs one worker and Atlas does not support horizontal scaling, overlapping deployments, or externally launched duplicate workers. If that boundary changes, durable ownership must be designed before enabling multiple workers.
+Failed reconciliation leaves the bot in `starting` state with `last_error` set and prevents new orders. Start, stop, pause, resume, and shutdown operations are idempotent.
 
 ## Trading State Contracts
 
@@ -193,10 +241,8 @@ Order: pending → submitted → partially_filled → filled
 
 Position: flat → open → reducing → closed
 
-Trade: planned → entered → exited
+Trade: entered → exited
 ```
-
-An `unknown` order state is used after a broker timeout. Atlas reconciles before retrying to prevent duplicate orders. Client order IDs and broker order/fill IDs are persisted with uniqueness constraints.
 
 ## Backtesting
 
@@ -219,7 +265,11 @@ Signal confirmed at candle T close
   → fill at T+1 open
 ```
 
-Every run records its strategy commit, parameters, dataset identity, risk configuration, execution configuration, fill model, status, and results. Backtest records never become paper or testnet trading records.
+Every run records its strategy commit, parameters, dataset identity (fingerprint), risk configuration, execution configuration, fill model, status, and results. Backtest records never become paper or testnet trading records.
+
+## Production Mode
+
+`AccountMode.PRODUCTION` exists in the enum but must **never** be accepted in the MVP. A production adapter and a deployment-specific safety gate (e.g., a physical confirmation step, a separate configuration file, or a dedicated deployment manifest) must exist before the system allows a `PRODUCTION` mode bot to start. Until those mechanisms are designed and implemented, `production` in the enum is a reserved value that should be rejected by configuration validation.
 
 ## Error and Safety Rules
 

@@ -146,3 +146,16 @@ broker:
 
     with pytest.raises(ConfigError, match="Invalid configuration"):
         load_config(config_path)
+
+
+def test_broker_config_rejects_production_mode() -> None:
+    """PRODUCTION mode must be rejected by the MVP safety guard.
+
+    See ``context/architecture.md`` Production Mode section.
+    """
+    from pydantic import ValidationError
+
+    from backend.config import BrokerConfig
+
+    with pytest.raises(ValidationError, match="reserved"):
+        BrokerConfig(name="binance", mode="production")
