@@ -33,12 +33,40 @@ git history.
 
 ---
 
-## Feature 03 — Data Layer (in progress)
+## Feature 03 — Data Layer (complete)
 
-- **Branch:** `feature/03-data-layer` (created 2026-08-02)
-- **Status:** Branch created from `main`; `CURRENT.md` updated. No implementation yet.
-- **Next:** DataProvider interface, Candle/Tick/Instrument models, CSV provider,
-  historical loader, candle storage pipeline, Binance provider (ccxt), provider registry.
+- **Branch:** `feature/03-data-layer`
+- **Commit:** `ec70874`
+- **Completed:** 2026-08-02
+
+### PostgreSQL / Codespace validation
+
+- Migrations 005 (`convert_string36_to_uuid`) and 006 (`create_instruments_and_candles`)
+  passed upgrade → downgrade → re-upgrade round-trip on the shared Codespace PostgreSQL instance.
+- `alembic current` reports `006` (head).
+- `InstrumentRepository.resolve()` and `CandleRepository.save_many()` smoke-tested against
+  live PostgreSQL with correct upsert, dedup, and inserted-count semantics.
+- `/health` endpoint accessible via Docker Compose.
+- Migration SQL rendering tests pass.
+- **Tests:** 218 passing. **Ruff:** clean. **Mypy:** clean (14 pre-existing test-only annotations).
+
+### Delivered
+
+- CSVDataProvider: validated, sorted, deduplicated OHLC from CSV files with strict
+  column contract, Decimal normalization, UTC timestamps, and BOM support.
+- BinanceHistoricalProvider: normalized Spot klines via async ccxt with bounded
+  pagination, UTC/Decimal normalization, strict OHLCV validation, and cleanup on all exits.
+- HistoricalDataLoader: repository-owned CSV instrument resolution with idempotent
+  candle persistence; no provider database access or CandleClosed emission.
+- DatasetIdentity fingerprint for reproducible backtests.
+- HistoricalProviderRegistry: strict lookup, duplicate-registration errors,
+  side-effect-free CSV/Binance composition with configured data dir and injectable
+  exchange factory.
+- Migrations 005 (UUID identity) and 006 (instruments + candles tables).
+- Provider interfaces: HistoricalDataProvider, LiveDataProvider (stub for Feature 08).
+- Data domain models: Candle, Tick, Instrument, DatasetIdentity, HistoricalLoadResult.
+- InstrumentRepository and CandleRepository protocols with SQLAlchemy implementations.
+- CandleClosed and TickReceived typed event payloads (kw_only=True convention).
 
 ---
 

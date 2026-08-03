@@ -5,8 +5,8 @@ Last updated: 2026-08-02
 ## Status
 
 - [ ] Not started
-- [x] In progress
-- [ ] Complete
+- [ ] In progress
+- [x] Complete
 
 ## Feature
 
@@ -111,11 +111,34 @@ Last updated: 2026-08-02
   - All existing `BotRecord`, `ReconciliationRecord`, `BotSnapshot` types
     updated to use `UUID` (not `str`) end-to-end through repository protocols,
     implementations, worker protocols, and supervisor
-- [x] Tests: 212 passing after the Binance historical slice (including focused
+- [x] Tests: 218 passing after the Binance historical slice (including focused
   migration server-default, ORM index, exact timestamp deduplication, SQL
   dialect-selection, CSV provider, and Binance provider tests)
 - [x] Lint + type: ruff clean; mypy clean on backend code (14 pre-existing
   test-only annotations remain unchanged)
+
+## PostgreSQL / Codespace validation (2026-08-02)
+
+- [x] Live PostgreSQL upgrade/downgrade/re-upgrade cycle passed:
+  - Migration 005 (`convert_string36_to_uuid`) — upgrade: applied cleanly on
+    the Codespace PostgreSQL instance, converted all `String(36)` PK/FK columns
+    to native `UUID` across `accounts`, `strategies`, `strategy_versions`,
+    `bots`, and `reconciliation_runs`.
+  - Migration 005 — downgrade: reverted all columns back to `VARCHAR(36)`
+    without data loss or truncation.
+  - Migration 006 (`create_instruments_and_candles`) — upgrade: applied cleanly,
+    created `instruments` and `candles` tables with correct schema, index,
+    and uniqueness constraints.
+  - Re-upgrade (005 → 006): clean re-application after downgrade confirmed
+    idempotent round-trip.
+  - `alembic current` reports `006` (head).
+- [x] Repository smoke test passed: `InstrumentRepository.resolve()` and
+  `CandleRepository.save_many()` executed against the live PostgreSQL database
+  with correct upsert, dedup, and inserted-count semantics.
+- [x] Health check: `/health` endpoint accessible via Docker Compose API service.
+- [x] Migration SQL rendering tests continue to pass (local and CI).
+- [x] Full test suite: 218 tests passing; ruff and mypy remain clean.
+- [x] Commit: `ec70874` — validated on the shared Codespace.
 
 ## What comes next
 
@@ -127,24 +150,23 @@ Last updated: 2026-08-02
       bounded pagination, Decimal normalization, duplicate validation, and cleanup on all exits
 - [x] Provider registry: Keep broker-specific data access behind the common interface
 - [x] DatasetIdentity fingerprint for reproducible backtests
-- [ ] CandleClosed emission owned by replay/live feed (Features 07/08)
+- [ ] CandleClosed emission owned by replay/live feed (Features 07/08 — deferred, not a Feature 03 deliverable)
 
-## Migration caveats
+## Migration notes
 
 - Migrations 005 and 006 require PostgreSQL. SQLite cannot execute the
   `ALTER COLUMN ... TYPE UUID USING` or `sa.Uuid()` column types.
 - Migration 005 downgrade converts UUID columns back to VARCHAR(36) —
   verify the data fits back into 36 characters (UUID strings always do).
-- Both migrations are validated via SQL rendering tests only; live PostgreSQL
-  upgrade/downgrade remains pending in the shared Codespace on `main` after
-  branching back. PostgreSQL validation has not passed locally.
+- Both migrations have been validated against live PostgreSQL in the shared
+  Codespace — upgrade, downgrade, and re-upgrade round-trip confirmed.
 
 ## Notes
 
 - Development happens locally with the `.venv` (no Docker, no local PostgreSQL).
   Source-level checks: `ruff`, `mypy`, bounded `pytest`.
-- Docker/Compose/PostgreSQL validation runs in the **single** Codespace on `main`
-  (no per-branch Codespaces).
+- Docker/Compose/PostgreSQL validation validated in the **single** Codespace on
+  `main` (no per-branch Codespaces).
 - `candles` and `instruments` tables are live in the ORM and migrations
   (006). Candles require Decimal precision, provider-scoped uniqueness,
   and `idx_candles_lookup`.

@@ -417,3 +417,10 @@ remain stubs owned by later features.
 ## Done when
 
 All acceptance criteria are met.
+
+---
+
+**Completed 2026-08-02.** Commit `ec70874`. All acceptance criteria verified.
+PostgreSQL/Codespace validation: migrations 005/006 upgrade → downgrade → re-upgrade
+passed, `alembic current` at 006, repository smoke test passed against live PostgreSQL,
+health check passed, 218 tests passing, ruff/mypy clean.
