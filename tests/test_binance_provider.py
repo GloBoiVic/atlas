@@ -5,7 +5,8 @@ from uuid import uuid4
 
 import pytest
 
-from backend.data.binance_provider import BinanceHistoricalProvider
+from backend.core.errors import HistoricalDataTimeoutError
+from backend.data.binance_provider import BinanceHistoricalProvider, BinanceTimeoutPolicy
 from backend.data.models import Instrument
 
 
@@ -17,18 +18,31 @@ class MockExchange:
         self.started = asyncio.Event()
         self.release = asyncio.Event()
         self.wait_on_fetch = False
+        self.stall_after_calls: int | None = None
 
     async def fetch_ohlcv(
         self, symbol: str, timeframe: str, since: int | None = None, limit: int | None = None
     ) -> list[list[object]]:
         self.calls.append((symbol, timeframe, since, limit))
-        if self.wait_on_fetch:
+        if self.wait_on_fetch or (
+            self.stall_after_calls is not None and len(self.calls) > self.stall_after_calls
+        ):
             self.started.set()
             await self.release.wait()
         return self.pages.pop(0) if self.pages else []
 
     async def close(self) -> None:
         self.closed = True
+
+
+class AdvancingClock:
+    def __init__(self, current_time: datetime) -> None:
+        self.current_time = current_time
+        self.calls = 0
+
+    def now(self) -> datetime:
+        self.calls += 1
+        return self.current_time if self.calls == 1 else self.current_time.replace(year=2025)
 
 
 def _instrument(provider: str = "binance") -> Instrument:
@@ -137,4 +151,68 @@ async def test_binance_provider_rejects_invalid_ohlcv_values() -> None:
             datetime(2024, 1, 1, tzinfo=UTC),
             datetime(2024, 1, 1, 0, 1, tzinfo=UTC),
         )
+    assert exchange.closed is True
+
+
+@pytest.mark.asyncio
+async def test_binance_provider_times_out_a_stalled_page_without_partial_success() -> None:
+    exchange = MockExchange([[_row(1_704_067_200_000)]])
+    exchange.wait_on_fetch = True
+
+    with pytest.raises(HistoricalDataTimeoutError, match="page request"):
+        await BinanceHistoricalProvider(
+            exchange=exchange,
+            timeout_policy=BinanceTimeoutPolicy(page_timeout_seconds=0.01),
+        ).get_historical_candles(
+            _instrument(),
+            "1m",
+            datetime(2024, 1, 1, tzinfo=UTC),
+            datetime(2024, 1, 1, 0, 1, tzinfo=UTC),
+        )
+
+    assert exchange.closed is True
+
+
+@pytest.mark.asyncio
+async def test_binance_provider_uses_clock_for_domain_deadline_without_network_wait() -> None:
+    exchange = MockExchange([])
+    clock = AdvancingClock(datetime(2024, 1, 1, tzinfo=UTC))
+
+    with pytest.raises(HistoricalDataTimeoutError, match="overall timeout"):
+        await BinanceHistoricalProvider(
+            exchange=exchange,
+            clock=clock,
+            timeout_policy=BinanceTimeoutPolicy(overall_timeout_seconds=10.0),
+        ).get_historical_candles(
+            _instrument(),
+            "1m",
+            datetime(2024, 1, 1, tzinfo=UTC),
+            datetime(2024, 1, 1, 0, 1, tzinfo=UTC),
+        )
+
+    assert exchange.calls == []
+    assert exchange.closed is True
+
+
+@pytest.mark.asyncio
+async def test_binance_provider_times_out_total_pagination_after_successful_page() -> None:
+    first_page = [_row(1_704_067_200_000 + index * 60_000) for index in range(1000)]
+    exchange = MockExchange([first_page, []])
+    exchange.stall_after_calls = 1
+
+    with pytest.raises(HistoricalDataTimeoutError, match="overall timeout"):
+        await BinanceHistoricalProvider(
+            exchange=exchange,
+            timeout_policy=BinanceTimeoutPolicy(
+                page_timeout_seconds=1.0,
+                overall_timeout_seconds=0.01,
+            ),
+        ).get_historical_candles(
+            _instrument(),
+            "1m",
+            datetime.fromtimestamp(1_704_067_200, tz=UTC),
+            datetime.fromtimestamp(1_704_067_200 + 1000 * 60, tz=UTC),
+        )
+
+    assert len(exchange.calls) == 1
     assert exchange.closed is True

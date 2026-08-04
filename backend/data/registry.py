@@ -3,6 +3,7 @@
 from collections.abc import Mapping
 from pathlib import Path
 
+from backend.core.clock import LiveClock
 from backend.data.binance_provider import BinanceHistoricalProvider, ExchangeFactory
 from backend.data.csv_provider import CSVDataProvider
 from backend.data.interfaces import HistoricalDataProvider
@@ -66,7 +67,10 @@ def create_historical_provider_registry(
     return HistoricalProviderRegistry(
         {
             "csv": CSVDataProvider(data_dir),
-            "binance": BinanceHistoricalProvider(exchange_factory=exchange_factory),
+            "binance": BinanceHistoricalProvider(
+                exchange_factory=exchange_factory,
+                clock=LiveClock(),
+            ),
         }
     )
 

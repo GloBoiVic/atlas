@@ -1,4 +1,4 @@
-from backend.data.binance_provider import BinanceHistoricalProvider
+from backend.data.binance_provider import BinanceHistoricalProvider, BinanceTimeoutPolicy
 from backend.data.csv_provider import CSVDataProvider
 from backend.data.interfaces import HistoricalDataProvider, LiveDataProvider
 from backend.data.loader import (
@@ -24,6 +24,7 @@ from backend.data.registry import (
 __all__ = [
     "Candle",
     "BinanceHistoricalProvider",
+    "BinanceTimeoutPolicy",
     "CSVDataProvider",
     "DatasetIdentity",
     "HistoricalDataProvider",

@@ -88,7 +88,8 @@ Providers must:
 - Normalize timestamps to UTC.
 - Return Decimal domain values.
 - Sort and deduplicate candles.
-- Use the shared Clock for timeout decisions.
+- Use the shared Clock for observable/domain-time deadline decisions. Transport cancellation
+  uses explicit asyncio timeout policy; SimulationClock must not control real network I/O.
 - Reconnect without duplicate subscriptions or events.
 
 **CandleClosed is emitted only by the live streaming feed or by historical replay

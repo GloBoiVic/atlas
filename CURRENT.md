@@ -1,6 +1,6 @@
 # Current Feature
 
-Last updated: 2026-08-02
+Last updated: 2026-08-04
 
 ## Status
 
@@ -11,13 +11,13 @@ Last updated: 2026-08-02
 ## Feature
 
 - **Number:** 03
-- **Name:** Data Layer
+- **Name:** Data Layer — timeout follow-up
 - **File:** context/features/03-data-layer.md
 
 ## Branch
 
-- **Name:** main
-- **Created:** 2026-08-02
+- **Name:** feature/03-timeout-followup
+- **Created:** 2026-08-04
 
 ## What was built
 
@@ -61,6 +61,16 @@ Last updated: 2026-08-02
 - [x] Added registration, lookup, default construction, dependency injection, and no-network
       composition tests.
 - [x] Tests: 218 passing after provider registry checks; ruff and mypy are clean.
+
+### Timeout follow-up (2026-08-04)
+
+- [x] Added constructor-injected Binance timeout policy: 10 seconds per page and 600 seconds
+      overall by default, with ccxt's native request timeout configured at exchange construction.
+- [x] Injected the shared Clock for domain-time deadline decisions while keeping real asyncio
+      transport cancellation separate from SimulationClock.
+- [x] Preserved exchange cleanup on success, provider errors, timeout, and cancellation; timeout
+      failures never return partial candle results.
+- [x] Added focused page-timeout, overall-timeout, partial-pagination, and cleanup coverage.
 
 ### Foundation slice (2026-08-02)
 
