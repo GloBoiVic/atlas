@@ -351,6 +351,8 @@ Performance Metrics
 
 The Backtester should be separate from live infrastructure in terms of execution environment, but it must reuse the same core Strategy and Risk implementations whenever possible.
 
+**MVP realism scope:** The MVP backtester and Paper Broker operate on completed candles only — no same-candle fills, no order-book simulation, no OHLC-based spread/volume inference. Slippage is a configurable fixed adverse percentage (default 0.05%); fees are a configurable taker fee (default 0.10% per fill). Both are recorded per run. Market orders are the only order type; limit/stop-limit/OCO/iceberg are deferred. Candle data gaps are detected for observability but never synthesized; non-24/7 calendars are deferred. A no-future-data validation gate must be applied before trusting any backtest result.
+
 Do **not** create a completely separate version of strategy logic for backtesting.
 
 The goal is to minimize differences between:

@@ -5,6 +5,14 @@
 Real-time market data feeds for live trading and paper trading. The live feed owns
 CandleClosed event emission — only completed, deduplicated candles produce events.
 
+**Completed-candle authority:** The Binance `k.x` flag is the authoritative signal for
+candle completion. Incomplete candles are never emitted as `CandleClosed`.
+
+**No synthetic gap candles:** Data gaps are detected for observability, but the MVP never
+synthesizes missing candles. Non-24/7 calendars and gap-recovery policy are deferred.
+Binance crypto 24/7 candle coverage is the MVP target — gaps of more than one candle
+interval are logged and surfaced via `DataFeedError`.
+
 ## Dependencies
 
 - 03 — Data Layer (interfaces and data models)
@@ -36,8 +44,8 @@ class BinanceStreamingProvider(LiveDataProvider):
     def __init__(self, event_bus: EventBus):
         self.event_bus = event_bus
 
-    async def subscribe_candles(self, instrument: str, timeframe: str) -> AsyncGenerator[Candle, None]:
-        symbol = self._to_binance_symbol(instrument)
+    async def subscribe_candles(self, instrument: Instrument, timeframe: str) -> AsyncGenerator[Candle, None]:
+        symbol = self._to_binance_symbol(instrument.symbol)
         interval = self._to_binance_interval(timeframe)
         ws_url = f"wss://stream.binance.com:9443/ws/{symbol.lower()}@kline_{interval}"
         async with websockets.connect(ws_url) as ws:
@@ -55,8 +63,8 @@ class BinanceStreamingProvider(LiveDataProvider):
 
                 yield candle
 
-    async def subscribe_ticks(self, instrument: str) -> AsyncGenerator[Tick, None]:
-        symbol = self._to_binance_symbol(instrument)
+    async def subscribe_ticks(self, instrument: Instrument) -> AsyncGenerator[Tick, None]:
+        symbol = self._to_binance_symbol(instrument.symbol)
         ws_url = f"wss://stream.binance.com:9443/ws/{symbol.lower()}@trade"
         async with websockets.connect(ws_url) as ws:
             async for message in ws:
@@ -98,19 +106,22 @@ def _is_new_candle(self, candle: Candle) -> bool:
 
 ### Data Feed Health Monitoring
 
+Feed health contracts (timeout detection, stale-feed signals) are defined here.
+Validation and hardening of health-monitor behavior is owned by Feature 13.
+
 ```python
 class DataFeedMonitor:
     def __init__(self, event_bus: EventBus, clock: Clock):
         self.event_bus = event_bus
         self.clock = clock
-        self.last_candle_time: dict[str, datetime] = {}
+        self.last_candle_time: dict[UUID, datetime] = {}
         self.timeout = timedelta(minutes=5)
 
-    async def check_feed(self, instrument: str):
-        last_time = self.last_candle_time.get(instrument)
+    async def check_feed(self, instrument_id: UUID):
+        last_time = self.last_candle_time.get(instrument_id)
         if last_time and self.clock.now() - last_time > self.timeout:
             await self.event_bus.publish(DataFeedError(
-                instrument=instrument,
+                instrument_id=instrument_id,
                 error="Data feed timeout - no candles received",
             ))
 ```

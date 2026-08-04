@@ -5,8 +5,13 @@ strategy:
     slow_period: 50
 
 risk:
-  max_open_positions: 5
   per_trade_risk: 0.01
+  max_open_positions: 5
+  stop_source: percentage_of_entry
+  stop_percentage: 0.02
+  stop_distance: null
+  stop_price: null
+  take_profit_risk_reward: null
 
 broker:
   name: "paper"

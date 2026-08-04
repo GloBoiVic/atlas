@@ -8,8 +8,10 @@ after paper trading is stable. Production live trading is deferred.
 
 ## Dependencies
 
-- 07 — Execution Layer
-- 08 — Live Data Streaming
+- 02 — Core Infrastructure (BotSupervisor contract, lifecycle state machine)
+- 07 — Execution Layer (shared Paper Broker, execution state)
+- 08 — Live Data Streaming (completed-candle feed)
+- 12 — Bot Management (API/UI for lifecycle controls; Feature 09 constructs pipelines)
 
 ## Deliverables
 
@@ -20,7 +22,7 @@ after paper trading is stable. Production live trading is deferred.
 - [ ] Startup restoration: Reconcile broker state before enabling execution
 - [ ] Real-time bot status events via EventBus
 
-### Binance Spot Testnet (MVP+)
+### Binance Spot Testnet (Phase 11 — after paper execution is stable)
 - [ ] Binance Spot testnet broker adapter: Place, cancel, reconcile orders via ccxt
 - [ ] Broker authentication: Read credentials from server environment secrets
 - [ ] Testnet order execution: Submit, fill, cancel, and reconcile orders
@@ -32,14 +34,29 @@ Production mode is reserved. See "Production Mode" below.
 
 ## Technical Details
 
-### Event Payload Gap
+### Ownership Boundaries
 
-All execution-related event classes (`RiskApproved`, `OrderSubmitted`, `OrderFilled`,
-`PositionOpened`, `PositionUpdated`, `PositionClosed`, `TradeClosed`, `OrderFailed`) are
-currently defined with `pass`. The payload fields shown in Feature 07 must be added before
-live trading can emit valid events.
+Feature 09 owns **mode-specific pipeline assembly and broker adapters only**. It does not
+redefine:
 
-### Paper Trading
+- **BotSupervisor lifecycle** (Feature 02) — supervising start/stop/pause/resume.
+- **Execution state and Paper Broker algorithm** (Feature 07) — order/fill/position/trade
+  state machines, idempotency, fee/slippage defaults.
+- **Live streaming feed** (Feature 08) — completed-candle emission, deduplication.
+- **Bot API/UI** (Feature 12) — lifecycle endpoints, status presentation.
+
+See Feature 07 for authoritative execution event payload status. The "Event Payload Gap"
+sections that previously appeared in this file were duplicates and have been removed.
+
+### Strategy-Version Startup Policy
+
+A running bot keeps its pinned strategy version and does not hot-reload from a new commit.
+On startup, the supervisor verifies that the installed strategy package matches the
+persisted `strategy_version_id`. If the identity mismatches or the package is missing,
+the bot fails closed with `last_error` set and does not start. Adopting a new strategy
+commit requires an explicit stop/recreate cycle.
+
+### Paper Trading (Phase 8)
 
 Paper trading runs the same bot pipeline as backtesting but receives live data from the
 streaming feed (Feature 08). The paper broker simulates fills deterministically using the

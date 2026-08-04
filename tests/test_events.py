@@ -33,6 +33,7 @@ from backend.core.events import (
     TradeClosed,
 )
 from backend.data.models import Candle, Tick
+from backend.strategy.contracts import Signal, SignalDirection
 
 # CandleClosed and TickReceived now require keyword-only payload fields.
 # Construct a minimal valid payload for tests.
@@ -53,6 +54,16 @@ _FIXTURE_TICK = Tick(
     timestamp=datetime(2026, 1, 1, tzinfo=UTC),
     price=Decimal("100.5"),
 )
+_FIXTURE_SIGNAL = Signal(
+    instrument_id=_FIXTURE_INSTRUMENT_ID,
+    direction=SignalDirection.BUY,
+    strength=Decimal("1"),
+    metadata={},
+    candle_timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+    strategy_version_id=uuid4(),
+    strategy_name="test",
+    strategy_commit_sha="abc123",
+)
 
 
 def _make_candle_closed(**kwargs: object) -> CandleClosed:
@@ -71,8 +82,6 @@ def _make_tick_received(**kwargs: object) -> TickReceived:
 
 # Event types that remain metadata-only (no payload fields yet)
 EVENT_TYPES: tuple[type[DomainEvent], ...] = (
-    RiskApproved,
-    RiskRejected,
     OrderSubmitted,
     OrderFilled,
     PositionOpened,
@@ -343,6 +352,28 @@ def test_tick_received_carries_tick_payload() -> None:
     assert event.tick is tick
     assert "tick" in event.__dataclass_fields__
     assert event.__dataclass_fields__["tick"].kw_only is True
+
+
+def test_risk_events_carry_frozen_keyword_only_payloads_and_metadata() -> None:
+    event = RiskApproved(
+        signal=_FIXTURE_SIGNAL,
+        position_size=Decimal("1"),
+        stop_loss=Decimal("99"),
+        take_profit=Decimal("0"),
+        account_id=uuid4(),
+        bot_id=uuid4(),
+        mode=AccountMode.PAPER,
+    )
+    assert event.signal is _FIXTURE_SIGNAL
+    assert event.__dataclass_fields__["signal"].kw_only is True
+    with pytest.raises((AttributeError, TypeError)):
+        event.position_size = Decimal("2")  # type: ignore[misc]
+
+
+def test_risk_rejection_carries_typed_signal_payload() -> None:
+    event = RiskRejected(signal=_FIXTURE_SIGNAL, reason="invalid_stop: bad geometry")
+    assert event.signal is _FIXTURE_SIGNAL
+    assert event.reason.startswith("invalid_stop")
 
 
 @pytest.mark.asyncio

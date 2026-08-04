@@ -1,5 +1,8 @@
 # Feature: 05 — Backtesting
 
+**Roadmap phase:** Phase 7. This feature is deliberately sequenced after Features 06 (Risk)
+and 07 (Execution Layer) despite its lower domain ID.
+
 ## Description
 
 Run a strategy against historical data and get performance results. Deterministic and fast.
@@ -19,18 +22,20 @@ Run a strategy against historical data and get performance results. Deterministi
 - [ ] Simulated execution: Paper fills on historical data via the same Paper Broker used in live mode
 - [ ] Historical replay: Loads candles from database (not from provider), emits CandleClosed events
 - [ ] Dataset identity: Every backtest stores a dataset fingerprint for reproducibility
-- [ ] BacktestRun and BacktestTrade models with run-level metrics persisted on BacktestRun
-- [ ] Backtest persistence: Results stored in PostgreSQL
-- [ ] Performance metrics: Total return, win rate, Sharpe ratio, max drawdown, profit factor
+- [ ] BacktestRun and BacktestTrade models with run-level raw metrics persisted on BacktestRun
+- [ ] Backtest persistence: Results stored in PostgreSQL (logically isolated from live/paper records)
+- [ ] Run-level raw metrics stored on BacktestRun; canonical metric formulas owned by Feature 10
 - [ ] Backtest API endpoints: POST /backtests, GET /backtests, GET /backtests/{id}
 - [ ] Backtest UI: Run backtest, view results, compare runs
 
 ### Event Payload Status
 
-The backtester emits `CandleClosed` events during replay. `CandleClosed` now carries a
+The backtester emits `CandleClosed` events during replay. `CandleClosed` carries a
 typed, keyword-only payload (`candle: Candle = field(kw_only=True)`) in
 `backend/core/events.py`, so the backtester can emit these events and downstream
-consumers can read `event.candle`.
+consumers can read `event.candle`. The backtester does **not** emit execution events
+itself — the shared Paper Broker (via Feature 07) emits `OrderSubmitted`, `OrderFilled`,
+`PositionOpened`, `PositionClosed`, and `TradeClosed` during replay.
 
 ## Technical Details
 
@@ -154,7 +159,34 @@ class BacktestTrade:
 
 ### Performance Metrics
 
-Run-level metrics are persisted on `backtest_runs`; the formulas and numeric policy are documented in the analytics feature and database schema.
+Run-level raw metrics are persisted on `backtest_runs`. The *canonical metric formulas*,
+return series, annualization policy, undefined-value handling, and open-trade treatment
+are owned by Feature 10 (Journal & Analytics). Feature 05 may calculate and store the
+same raw run metrics, but must cite Feature 10 for definitions and must not invent
+alternate formulas.
+
+**Numeric storage:** Monetary run metrics (total return absolute, max drawdown amount) use
+`NUMERIC`/`Decimal`. Non-monetary ratios (Sharpe, profit factor) may use `FLOAT` but must
+handle undefined cases (zero variance, no losing trades) explicitly.
+
+**Recorded execution assumptions:** Every backtest run records its fee config, slippage
+config, fill model (`next_candle_open`), protective-trigger ambiguity rule (stop-loss
+first), strategy version commit, strategy parameters, risk configuration, dataset
+fingerprint, and starting balance. This ensures metrics are reproducible from persisted
+closed trades and the recorded configuration.
+
+### Lookahead/Data-Integrity Gate
+
+Before a backtest result is trusted:
+
+1. **Completed-candle verification:** Confirm that no signal was generated from an
+   incomplete candle (the engine gates this, but a post-run audit should validate).
+2. **No-future-data review:** Verify that strategy logic does not reference candle data
+   beyond the current candle's close time. Atlas should add an automated lookahead
+   detection or sliced-recomputation validation gate analogous to Freqtrade's lookahead
+   analysis.
+3. **Deterministic reproduction:** Re-run with the same fingerprint and configuration;
+   results must match exactly.
 
 ### Backtest API Endpoints
 

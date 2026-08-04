@@ -1,8 +1,9 @@
 import os
 import re
+from decimal import Decimal
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import structlog
 import yaml  # type: ignore[import-untyped]
@@ -72,8 +73,37 @@ class RiskConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    max_open_positions: int = Field(gt=0)
-    per_trade_risk: float = Field(gt=0, le=1)
+    per_trade_risk: Decimal = Field(default=Decimal("0.01"), gt=0, le=Decimal("0.02"))
+    max_open_positions: int = Field(default=5, gt=0)
+    stop_source: Literal[
+        "percentage_of_entry",
+        "absolute_price_distance",
+        "explicit_stop_price",
+    ] = "percentage_of_entry"
+    stop_percentage: Decimal | None = Field(default=Decimal("0.02"), gt=0)
+    stop_distance: Decimal | None = Field(default=None, gt=0)
+    stop_price: Decimal | None = Field(default=None, gt=0)
+    take_profit_risk_reward: Decimal | None = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def _validate_stop_configuration(self) -> "RiskConfig":
+        source_values = {
+            "percentage_of_entry": self.stop_percentage,
+            "absolute_price_distance": self.stop_distance,
+            "explicit_stop_price": self.stop_price,
+        }
+        selected_value = source_values[self.stop_source]
+        if selected_value is None:
+            raise ValueError(f"{self.stop_source} requires a positive configured value")
+        for source, value in source_values.items():
+            if value is not None and not value.is_finite():
+                raise ValueError(f"{source} must be finite")
+        if (
+            self.take_profit_risk_reward is not None
+            and not self.take_profit_risk_reward.is_finite()
+        ):
+            raise ValueError("take_profit_risk_reward must be finite")
+        return self
 
 
 class BrokerConfig(BaseModel):
@@ -113,9 +143,7 @@ def _expand_environment_variables(contents: str) -> str:
         variable_name = match.group(1)
         value = os.environ.get(variable_name)
         if value is None:
-            raise ConfigError(
-                f"Environment variable {variable_name!r} is not set"
-            )
+            raise ConfigError(f"Environment variable {variable_name!r} is not set")
         return value
 
     return _ENVIRONMENT_VARIABLE.sub(replace, contents)

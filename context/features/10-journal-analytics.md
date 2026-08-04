@@ -99,11 +99,14 @@ class AnalyticsService:
         # Profit factor: gross_profit / gross_loss
         ...
 
+        # Monetary values (total_return, max_drawdown) serialized as decimal strings
+        # to preserve precision across the API boundary. Ratios (win_rate, sharpe_ratio,
+        # profit_factor) are float by policy.
         return PerformanceMetrics(
-            total_return=float(total_pnl),
+            total_return=str(total_pnl) if total_pnl is not None else None,
             win_rate=winning_trades / total_trades if total_trades else 0.0,
             sharpe_ratio=sharpe_ratio,
-            max_drawdown=float(max_drawdown),
+            max_drawdown=str(max_drawdown) if max_drawdown is not None else None,
             profit_factor=profit_factor,
             total_trades=total_trades,
             winning_trades=winning_trades,
@@ -111,17 +114,46 @@ class AnalyticsService:
         )
 ```
 
-### Metrics Policy
+### Canonical Metric Definitions
 
-- **Total return:** Sum of net P&L (after fees) across all closed trades in the period.
-- **Win rate:** Winning trades / total closed trades.
-- **Sharpe ratio:** Annualized return over risk-free rate divided by annualized return
-  volatility. Uses daily or per-trade return series depending on availability.
-- **Max drawdown:** Largest peak-to-trough decline in cumulative equity.
-- **Profit factor:** Sum of winning trade P&L / sum of losing trade P&L (absolute values).
-  Undefined (infinity) if there are no losing trades.
-- **Open trades** are excluded from all metrics until they close.
-- Fees and slippage are deducted at the fill level and reflected in trade `net_pnl`.
+Feature 10 owns the canonical metric formulas. Feature 05 may store raw run-level snapshots
+but must cite these definitions and must not invent alternate formulas.
+
+- **Total return:** `(ending_equity - starting_equity) / starting_equity`. Also persist
+  absolute net P&L. Both include fees and slippage. Starting equity is the configured
+  initial balance; ending equity is the sum of starting equity plus closed-trade net P&L.
+
+- **Win rate:** closed winning trades / all closed trades. Zero when there are no closed
+  trades. Open trades are excluded.
+
+- **Profit factor:** gross winning net P&L / absolute gross losing net P&L. **Undefined**
+  when there are no losses — represented explicitly (not as a misleading zero or infinity).
+
+- **Max drawdown:** largest peak-to-trough decline in the marked equity curve. **Default
+  basis:** closed-trade equity for canonical MVP analytics. Open-trade treatment (marked
+  equity including unrealized P&L) is shown separately, not mixed. The source series must
+  be recorded.
+
+- **Sharpe ratio:** `mean(periodic_excess_return) / std(periodic_excess_return) *
+  sqrt(annualization_factor)`. **Recommended MVP defaults:** daily equity returns,
+  risk-free rate = zero, annualization factor = `sqrt(365)` (Binance Spot 24/7).
+  Require a minimum-observation rule (e.g., at least 30 daily returns). Explicitly
+  report `undefined` for zero variance or insufficient samples.
+
+- **Numeric storage:** Monetary metrics (P&L, drawdown amounts) use `NUMERIC`/`Decimal`.
+  Non-monetary ratios (Sharpe, profit factor) may use `FLOAT` but must define
+  serialization and undefined-value behavior explicitly.
+
+- **Fees and slippage:** Deducted at the fill level and reflected in trade `net_pnl`.
+  The configured fee and slippage values are recorded per run.
+
+- **Open trade exclusion:** Open trades are excluded from all canonical metrics until
+  they close. Marked-equity analytics that include unrealized P&L may be provided as a
+  separate view.
+
+- **Metric reproducibility:** All metrics must be reproducible from persisted closed
+  trades and the recorded starting balance, fee/slippage config, fill model, dataset
+  fingerprint, strategy commit, and parameter snapshot.
 
 ### API Endpoints
 

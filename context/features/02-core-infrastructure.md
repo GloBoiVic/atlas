@@ -16,7 +16,8 @@ EventBus, Clock abstraction, error handling, configuration system, and structure
 - [x] Clock abstraction: LiveClock, SimulationClock
 - [x] Configuration system: Pydantic Settings, YAML strategy config, deployment mode validation
 - [x] Structured logging: structlog setup
-- [ ] Error handling: Retry logic and circuit breaker are complete; health monitor remains deferred
+- [x] Retry logic and circuit breaker implemented
+- [ ] Health-monitor *primitive contracts* defined here (deferred; Feature 13 validates and hardens them)
 
 ## Technical Details
 

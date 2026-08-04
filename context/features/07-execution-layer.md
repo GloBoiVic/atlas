@@ -18,20 +18,33 @@ Place orders through broker adapters. Paper trading and live trading use same in
 - [ ] Position model: one net position per account and instrument
 - [ ] Trade model: Explicit Trade entity connecting fills to journaling/analytics
 - [ ] Fill model: Append-only fill records
-- [ ] Paper Broker: Simulates deterministic fills locally from the current market-data context
+- [ ] Paper Broker: Simulates deterministic fills locally — price source is the current executable market price in live mode, or the next candle open in backtest replay mode. The fill algorithm is identical in both modes.
 - [ ] Order management: Track open orders, fills, cancellations, state transitions
 - [ ] Position tracking: Update positions on fills, calculate unrealized P&L
 - [ ] Trade lifecycle: Create Trade on position open, finalize on position close
 - [ ] Broker reconciliation on startup and unknown states
 
-### Event Payload Gap
+### Event Payload Status
 
-`RiskApproved`, `OrderSubmitted`, `OrderFilled`, `PositionOpened`, `PositionUpdated`,
-`PositionClosed`, `TradeClosed`, and `OrderFailed` event classes in
-`backend/core/events.py` are currently defined with `pass`. The payload fields shown in
-the code examples below must be added before Feature 06/07 integration. Without these
-payload types, the execution engine cannot read `event.signal`, `event.position_size`,
-etc.
+This feature owns the payload definitions for all execution-related events. The event
+classes in `backend/core/events.py` currently have the following status:
+
+| Event class | Payload status |
+|---|---|
+| `RiskApproved` | `pass` — owned by Feature 06; must carry `signal`, `position_size`, `stop_loss`, `take_profit` |
+| `RiskRejected` | `pass` — owned by Feature 06; must carry `signal`, `reason` |
+| `SignalGenerated` | **Implemented** — carries `signal: Signal` (owned by Feature 04) |
+| `OrderSubmitted` | `pass` — must carry `order: Order`, `broker_order_id: str` |
+| `OrderFilled` | `pass` — must carry `order: Order`, `fill: Fill` |
+| `PositionOpened` | `pass` — must carry `position: Position` |
+| `PositionUpdated` | `pass` — must carry `position: Position` |
+| `PositionClosed` | `pass` — must carry `position: Position` |
+| `TradeClosed` | `pass` — must carry `trade: Trade` |
+| `OrderFailed` | `pass` — must carry `order_id: UUID`, `error: str` |
+
+All payload fields must follow the `kw_only=True` dataclass convention. This feature
+is the authoritative source for execution event payload contracts; duplicate "Event
+Payload Gap" sections in other feature files are stale and have been removed.
 
 ## Technical Details
 
@@ -144,11 +157,36 @@ class PaperBroker(Broker):
         self.orders: list[Order] = []
 
     async def submit_order(self, order: Order, client_order_id: str) -> OrderResult:
-        # The execution context supplies the deterministic current/next-open price.
+        # The execution context supplies the deterministic fill price:
+        # current executable market price in live mode,
+        # next candle open in backtest replay mode.
         # Paper fills apply configured fees and slippage and are idempotent.
         # Rejected client_order_ids return the previous result (idempotency).
         ...
 ```
+
+### Execution Policy (Approved Defaults)
+
+The following defaults apply to both backtesting and paper trading, and are documented
+in the accepted blueprint (Section 9):
+
+- **Order types:** Market entries and execution-managed protective exits only. Limit,
+  stop-limit, OCO, iceberg, and order-book-aware fill models are deferred.
+- **Fee default:** Configurable taker fee, default **0.10% per fill**. Recorded in
+  `execution_config` on every run.
+- **Slippage default:** Configurable fixed adverse percentage per fill, default **0.05%**.
+  No OHLC-based spread/volume inference.
+- **Precision:** Provider/instrument tick and step constraints are applied before
+  submission. All money, prices, quantities, fees, and P&L remain `Decimal`.
+- **Partial fills:** The state contract supports partial fills, but the default Paper
+  Broker fills complete. When partial fills are enabled, fill-quantity-weighted average
+  entry/exit prices apply, with one net position per account/instrument.
+- **Protective-trigger ambiguity:** When both stop-loss and take-profit levels could be
+  touched in one candle, apply stop-loss first (conservative deterministic rule).
+  Record the rule in `execution_config`.
+- **Unknown order state:** A broker timeout or non-deterministic response produces
+  `unknown`. The system fails closed — unknown orders are never retried until
+  reconciliation resolves the state. Reconciliation decides whether retry is safe.
 
 ### Trade Lifecycle
 

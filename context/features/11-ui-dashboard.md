@@ -9,6 +9,8 @@ Functional operational dashboard for the single-user remote deployment. The MVP 
 - 01 — Project Foundation
 - 05 — Backtesting
 - 07 — Execution Layer
+- 08 — Live Data Streaming — real-time feed infrastructure consumed via Feature 09
+- 09 — Live Trading (Paper + Testnet) — live paper/testnet data for dashboard display
 - 10 — Journal & Analytics
 - 12 — Bot Management
 
@@ -56,6 +58,13 @@ The canonical MVP page and route inventory is defined in `context/design.md`. Th
 ### UI Integration
 
 Use the canonical chart, WebSocket, Axios, TanStack Query, and Shadcn patterns in `context/library-docs.md`. This feature owns page behavior, routes, loading/error states, and acceptance criteria rather than duplicating library examples.
+
+### UI Boundary
+
+The UI displays persisted and live facts only. It never calculates trading decisions, risk
+approvals, position sizes, or metric formulas. All trading-critical computation runs on the
+backend. The UI consumes Feature 09 for real-time paper/testnet data and Feature 12 for bot
+lifecycle controls.
 
 ## Acceptance Criteria
 

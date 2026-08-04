@@ -40,7 +40,7 @@ Development happens through vertical slices. Each phase includes tests and produ
 
 ---
 
-## Phase 2: Core Infrastructure
+## Phase 2: Core Infrastructure (Feature 02)
 
 **Goal:** Define the deterministic runtime contracts used by every later phase.
 
@@ -66,9 +66,9 @@ Development happens through vertical slices. Each phase includes tests and produ
 
 ---
 
-## Phase 3: Data Layer
+## Phase 3: Data Layer (Feature 03, Feature 08 interfaces)
 
-**Goal:** Normalize historical and public Binance Spot data behind provider-agnostic interfaces.
+**Goal:** Normalize historical and public Binance Spot data behind provider-agnostic interfaces. Feature 08's data interfaces and contracts are defined here; live streaming implementation follows in Phase 8.
 
 ### Deliverables
 
@@ -97,7 +97,7 @@ Development happens through vertical slices. Each phase includes tests and produ
 
 ---
 
-## Phase 4: Strategy Engine
+## Phase 4: Strategy Engine (Feature 04)
 
 **Goal:** Run version-pinned Python strategies against completed candles.
 
@@ -120,7 +120,7 @@ Development happens through vertical slices. Each phase includes tests and produ
 
 ---
 
-## Phase 5: Risk Engine
+## Phase 5: Risk Engine (Feature 06)
 
 **Goal:** Centrally approve or reject every order using explicit account and market context.
 
@@ -143,7 +143,7 @@ Daily loss limits, maximum drawdown, and trading sessions are deferred until the
 
 ---
 
-## Phase 6: Execution Layer
+## Phase 6: Execution Layer (Feature 07)
 
 **Goal:** Provide deterministic paper execution through broker-agnostic interfaces.
 
@@ -168,9 +168,11 @@ Daily loss limits, maximum drawdown, and trading sessions are deferred until the
 
 ---
 
-## Phase 7: Backtesting
+## Phase 7: Backtesting (Feature 05)
 
 **Goal:** Produce reproducible performance results using the same Strategy, Risk, and Paper Execution implementations used by paper bots.
+
+**Depends on:** Phase 5 (Risk Engine, Feature 06) and Phase 6 (Execution Layer, Feature 07). Backtesting replays candles through the shared Strategy/Risk/Paper Execution pipeline — it does not redefine any of those contracts.
 
 ### Deliverables
 
@@ -190,9 +192,9 @@ Daily loss limits, maximum drawdown, and trading sessions are deferred until the
 
 ---
 
-## Phase 8: Bot Runtime and Paper Trading
+## Phase 8: Bot Runtime and Paper Trading (Features 08 live, 09 paper, 12 runtime)
 
-**Goal:** Operate multiple isolated paper bots against Binance Spot live public data.
+**Goal:** Operate multiple isolated paper bots against Binance Spot live public data. Live streaming implementation (Feature 08), paper pipeline assembly (Feature 09), and runtime-facing bot lifecycle (Feature 12) converge in this phase.
 
 ### Deliverables
 
@@ -215,7 +217,7 @@ Daily loss limits, maximum drawdown, and trading sessions are deferred until the
 
 ---
 
-## Phase 9: Journal and Analytics
+## Phase 9: Journal and Analytics (Feature 10)
 
 **Goal:** Record completed trades and explain strategy performance.
 
@@ -235,9 +237,9 @@ Daily loss limits, maximum drawdown, and trading sessions are deferred until the
 
 ---
 
-## Phase 10: Operational UI
+## Phase 10: Operational UI (Features 11, 12 API/UI)
 
-**Goal:** Provide the primary operational view for the single trader.
+**Goal:** Provide the primary operational view for the single trader. Consumes Feature 09 (live paper/testnet data) for real-time dashboard state in addition to Feature 12 bot management endpoints.
 
 ### Deliverables
 
@@ -258,9 +260,9 @@ Daily loss limits, maximum drawdown, and trading sessions are deferred until the
 
 ---
 
-## Phase 11: Binance Testnet Trading
+## Phase 11: Binance Testnet Trading (Feature 09 testnet slice)
 
-**Goal:** Validate authenticated broker execution and reconciliation without production orders.
+**Goal:** Validate authenticated broker execution and reconciliation without production orders. Adds the Binance Spot testnet adapter after paper execution and reconciliation are stable.
 
 ### Deliverables
 
@@ -278,7 +280,7 @@ Daily loss limits, maximum drawdown, and trading sessions are deferred until the
 
 ---
 
-## Phase 12: Hardening and Operations
+## Phase 12: Hardening and Operations (Feature 13)
 
 **Goal:** Make the remote single-user deployment reliable and safe to operate.
 

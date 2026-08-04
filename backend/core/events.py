@@ -1,6 +1,7 @@
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from inspect import isawaitable
 from typing import TYPE_CHECKING, Protocol
 from uuid import UUID, uuid4
@@ -50,12 +51,16 @@ class SignalGenerated(DomainEvent):
 
 @dataclass(frozen=True, slots=True)
 class RiskApproved(DomainEvent):
-    pass
+    signal: "Signal" = field(kw_only=True)
+    position_size: Decimal = field(kw_only=True)
+    stop_loss: Decimal = field(kw_only=True)
+    take_profit: Decimal = field(kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)
 class RiskRejected(DomainEvent):
-    pass
+    signal: "Signal" = field(kw_only=True)
+    reason: str = field(kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)

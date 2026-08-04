@@ -451,14 +451,14 @@ CREATE TABLE backtest_runs (
     start_date TIMESTAMP WITH TIME ZONE NOT NULL,
     end_date TIMESTAMP WITH TIME ZONE NOT NULL,
     risk_config JSONB NOT NULL,
-    execution_config JSONB NOT NULL,
+    execution_config JSONB NOT NULL,   -- includes fee config, slippage config, fill model, protective-trigger rule
     status VARCHAR(20) NOT NULL DEFAULT 'pending',
     fill_model VARCHAR(100) NOT NULL DEFAULT 'next_candle_open',
-    total_return NUMERIC(20, 8),
-    win_rate FLOAT,
-    sharpe_ratio FLOAT,
-    max_drawdown NUMERIC(20, 8),
-    profit_factor FLOAT,
+    total_return NUMERIC(20, 8),       -- Decimal monetary metric
+    win_rate FLOAT,                    -- Non-monetary ratio; FLOAT is acceptable
+    sharpe_ratio FLOAT,                -- Non-monetary ratio; FLOAT is acceptable
+    max_drawdown NUMERIC(20, 8),       -- Decimal monetary metric
+    profit_factor FLOAT,               -- Non-monetary ratio; FLOAT is acceptable
     total_trades INT,
     winning_trades INT,
     losing_trades INT,
@@ -470,6 +470,13 @@ CREATE TABLE backtest_runs (
 
 CREATE INDEX idx_backtest_status ON backtest_runs(status);
 ```
+
+**Numeric policy for metric columns:** Monetary values (total_return, max_drawdown) use
+`NUMERIC`/`Decimal`. Non-monetary ratios (win_rate, sharpe_ratio, profit_factor) use
+`FLOAT` — these are ratios derived from Decimal inputs, not primary money amounts. The
+application layer must define and enforce undefined-value handling (zero variance for
+Sharpe, no losing trades for profit factor) rather than allowing the database to store
+misleading zero or infinity values.
 
 ### Backtest Trades
 
@@ -638,3 +645,7 @@ no existing migrations are rewritten or deleted.
    where available.
 9. **Secrets stay outside the database.** Broker credentials are server environment secrets.
 10. **Repository protocols are the boundary.** Callers depend on `Protocol` interfaces.
+11. **Data retention:** The MVP retains all data indefinitely. Backtest runs, trades,
+    candles, journal entries, and bot lifecycle records are never pruned automatically.
+    Calendar-aware recovery and data pruning are deferred; the MVP targets Binance crypto
+    24/7 candles where gaps are the exception, not the rule.

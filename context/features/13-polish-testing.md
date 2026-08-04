@@ -16,7 +16,14 @@ Remote single-user MVP hardening. Tests pass, failures fail closed, recovery is 
 - [ ] Bot restart and broker reconciliation tests
 - [ ] Paper/testnet credential and endpoint safety tests
 - [ ] Error handling refinement: All error paths tested
-- [ ] Health monitoring: All components report health
+- [ ] Health monitoring: Contracts defined by Feature 02/08; validation and hardening here
+- [ ] Lookahead/data-integrity validation gate: Automated check that backtest results
+      contain no future-data violations
+- [ ] Deterministic realism tests: Verify fee, slippage, fill model, and
+      protective-trigger assumptions produce expected edge-case behavior
+- [ ] Reconciliation tests: Unknown-order, partial-fill restart, and fail-closed recovery
+- [ ] Endpoint safety tests: No production credentials reach browser or database;
+      testnet mode cannot accidentally submit production orders
 - [ ] Structured logging: All operations logged
 - [ ] Documentation: Setup guide, architecture overview, API docs
 - [ ] Performance testing: Backtester handles large datasets
@@ -56,12 +63,18 @@ class TestBacktester:
         risk_engine = RiskEngine(event_bus, account_context, RiskConfig())
         broker = PaperBroker()
         execution_engine = ExecutionEngine(event_bus, broker, bot_id)
-        data_provider = CSVDataProvider("tests/data")
+        # BacktesterEngine consumes candles from a repository, not a CSV provider.
+        # Tests inject a pre-populated in-memory CandleRepository or use fixtures
+        # that load test CSV data into it.
+        candle_repository = InMemoryCandleRepository(test_candles)
 
         # Run backtest
-        engine = BacktesterEngine(event_bus, strategy, risk_engine, data_provider, SimulationClock())
+        engine = BacktesterEngine(
+            event_bus, strategy, risk_engine, execution_engine,
+            candle_repository, SimulationClock(),
+        )
         result = await engine.run(BacktestConfig(
-            instrument="BTCUSDT",
+            instrument_id=instrument_id,
             timeframe="1h",
             start_date=datetime(2024, 1, 1),
             end_date=datetime(2024, 6, 1),
