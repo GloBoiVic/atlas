@@ -115,8 +115,14 @@ class StrategyEngine:
         self._commit_sha = commit_sha
         self._data_requirement = data_requirement
         self._warmed_up = False
-        self._seen_candle_ids: set[UUID] = set()
+        self._seen_candle_keys: set[tuple] = set()
         self._event_bus.subscribe(CandleClosed, self._on_candle)
+
+    @staticmethod
+    def _candle_key(candle: Candle) -> tuple:
+        """Canonical composite key matching the database uniqueness constraint."""
+        return (candle.instrument_id, candle.provider,
+                candle.timeframe, candle.open_time, candle.price_basis)
 
     async def warm_up(self, candles: list[Candle]) -> None:
         """Feed historical candles to rebuild strategy state.
@@ -128,14 +134,25 @@ class StrategyEngine:
     async def _on_candle(self, event: CandleClosed) -> None:
         if not self._warmed_up:
             return
-        if event.candle.id in self._seen_candle_ids:
+
+        candle = event.candle
+        key = self._candle_key(candle)
+
+        if key in self._seen_candle_keys:
             return  # Duplicate protection
-        if event.candle.instrument_id != self._instrument_id:
+
+        # Validation before strategy evaluation
+        if candle.instrument_id != self._instrument_id:
             return  # Instrument mismatch
-        self._seen_candle_ids.add(event.candle.id)
+        if candle.timeframe != self._data_requirement.timeframe:
+            return  # Timeframe mismatch
+        if not candle.is_complete:
+            return  # Incomplete candle — not eligible for signal generation
+
+        self._seen_candle_keys.add(key)
 
         try:
-            decision = self._strategy.on_candle(event.candle)
+            decision = self._strategy.on_candle(candle)
         except Exception:
             await self._event_bus.publish(
                 StrategyError(bot_id=self._bot_id,
@@ -149,7 +166,7 @@ class StrategyEngine:
                 direction=decision.direction,
                 strength=decision.strength,
                 metadata=decision.metadata,
-                candle_timestamp=event.candle.open_time,
+                candle_timestamp=candle.open_time,
                 strategy_version_id=self._strategy_version_id,
                 strategy_name=self._strategy_name,
                 strategy_commit_sha=self._commit_sha,
