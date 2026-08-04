@@ -25,6 +25,10 @@ class StubStrategy(Strategy):
         return None
 
 
+def invalid_factory(config: dict[str, object]) -> object:
+    return object()
+
+
 def test_strategy_decision_is_frozen_and_validates_decimal_strength() -> None:
     decision = StrategyDecision(SignalDirection.BUY, Decimal("0.5"), {"tag": "test"})
 
@@ -123,3 +127,21 @@ def test_registry_fails_closed_for_commit_mismatch() -> None:
 
     with pytest.raises(StrategyIdentityMismatch):
         registry.resolve(version_id, "stub", "b" * 40, {})
+
+
+def test_registry_fails_closed_for_strategy_name_mismatch() -> None:
+    registry = StrategyRegistry()
+    version_id = uuid4()
+    registry.register(version_id, "stub", "a" * 40, StubStrategy)
+
+    with pytest.raises(StrategyIdentityMismatch):
+        registry.resolve(version_id, "different-stub", "a" * 40, {})
+
+
+def test_registry_fails_closed_when_factory_returns_non_strategy() -> None:
+    registry = StrategyRegistry()
+    version_id = uuid4()
+    registry.register(version_id, "stub", "a" * 40, invalid_factory)  # type: ignore[arg-type]
+
+    with pytest.raises(StrategyIdentityMismatch):
+        registry.resolve(version_id, "stub", "a" * 40, {})

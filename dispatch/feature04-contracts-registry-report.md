@@ -40,3 +40,16 @@ registry lookup, duplicate registration, missing versions, and commit mismatch.
 The environment lacks standalone `ruff`, `mypy`, and `uv` on PATH. Python's
 installed pytest module provided focused and full test runs; Ruff and mypy require
 the project's development toolchain to be installed.
+
+## Reviewer Finding Fixes
+
+Added focused registry tests for both previously uncovered fail-closed paths:
+
+- A persisted strategy-name mismatch raises `StrategyIdentityMismatch`.
+- A registered factory returning a non-`Strategy` raises `StrategyIdentityMismatch`.
+
+Fix verification:
+
+- Focused tests: `python3 -m pytest -q tests/test_strategy_contracts_registry.py` — 15 passed.
+- Full backend tests: `python3 -m pytest -q` — 236 passed.
+- No StrategyEngine or EventBus integration was added.
