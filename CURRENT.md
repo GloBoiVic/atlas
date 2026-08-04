@@ -50,8 +50,8 @@ Last updated: 2026-08-04
 - [x] Implemented synchronous Strategy base contract and timeframe-aware data requirements
 - [x] Implemented fail-closed trusted registry for explicitly deployed factories
 - [x] Added focused contract and registry tests
-- [ ] StrategyEngine/EventBus integration remains for the next task
+- [x] Implemented per-bot StrategyEngine, warm-up gating, event payloads, and focused tests
 
 ## What comes next
 
-- Implementation of strategy contracts, base class, engine, registry, and examples
+- Example strategies and remaining Feature 04 deliverables

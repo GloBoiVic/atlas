@@ -12,6 +12,7 @@ from backend.core.account_mode import AccountMode
 if TYPE_CHECKING:
     from backend.data.models import Candle as CandleModel
     from backend.data.models import Tick as TickModel
+    from backend.strategy.contracts import Signal
 
 logger = structlog.get_logger(__name__)
 
@@ -44,7 +45,7 @@ class TickReceived(DomainEvent):
 
 @dataclass(frozen=True, slots=True)
 class SignalGenerated(DomainEvent):
-    pass
+    signal: "Signal" = field(kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,7 +110,7 @@ class OrderFailed(DomainEvent):
 
 @dataclass(frozen=True, slots=True)
 class StrategyError(DomainEvent):
-    pass
+    error: str = field(kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)

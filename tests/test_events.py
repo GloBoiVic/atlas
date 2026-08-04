@@ -29,8 +29,6 @@ from backend.core.events import (
     PositionUpdated,
     RiskApproved,
     RiskRejected,
-    SignalGenerated,
-    StrategyError,
     TickReceived,
     TradeClosed,
 )
@@ -73,7 +71,6 @@ def _make_tick_received(**kwargs: object) -> TickReceived:
 
 # Event types that remain metadata-only (no payload fields yet)
 EVENT_TYPES: tuple[type[DomainEvent], ...] = (
-    SignalGenerated,
     RiskApproved,
     RiskRejected,
     OrderSubmitted,
@@ -86,7 +83,6 @@ EVENT_TYPES: tuple[type[DomainEvent], ...] = (
     DataFeedError,
     OrderRejected,
     OrderFailed,
-    StrategyError,
     ConnectionLost,
     ConnectionRestored,
     CircuitBreakerOpen,

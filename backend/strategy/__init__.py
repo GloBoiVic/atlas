@@ -6,6 +6,7 @@ from backend.strategy.contracts import (
     SignalDirection,
     StrategyDecision,
 )
+from backend.strategy.engine import StrategyEngine
 from backend.strategy.registry import (
     DuplicateStrategyRegistration,
     RegisteredStrategy,
@@ -24,6 +25,7 @@ __all__ = [
     "SignalDirection",
     "Strategy",
     "StrategyDecision",
+    "StrategyEngine",
     "StrategyIdentityMismatch",
     "StrategyNotRegistered",
     "StrategyRegistry",
