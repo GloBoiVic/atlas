@@ -104,7 +104,44 @@ columns. Volume semantics are explicit: `base_volume`, `quote_volume`, `trade_co
 
 ### Strategy Engine
 
-Strategies evaluate completed candles and may observe ticks for state or monitoring. Tick observation does not create trading signals in the MVP. Strategy packages are deployed from a private Git repository and bots pin a repository commit SHA.
+Strategies evaluate completed candles and return a lightweight trading decision. The
+Strategy Engine assembles the canonical immutable `Signal` with full provenance —
+`strategy_version_id`, instrument UUID, completed-candle timestamp, Decimal strength,
+and strategy metadata. The engine owns bot/account scope, instrument and candle
+provenance, strategy identity, validation, and deduplication.
+
+**Strategy contracts:**
+
+- Strategies return `StrategyDecision` (direction, Decimal strength, metadata); they
+  never construct `Signal` objects.
+- Strategies declare a timeframe-aware `DataRequirement`. Feature 04 validates one
+  candle requirement against the bot configuration.
+- Tick observation via `on_tick()` is supported for state/monitoring but does not
+  generate trading signals in the MVP.
+- Strategy hooks are synchronous and computation-focused; they perform no I/O.
+
+**Engine responsibilities:**
+
+- Validates completed-candle instrument, timeframe, and completeness before evaluation.
+- Silently rejects duplicate candle events.
+- Owns warm-up lifecycle: feeds historical candles to rebuild strategy state without
+  emitting signals. Signal generation begins only after warm-up completes.
+- Wraps strategy execution: an exception produces no signal, publishes `StrategyError`,
+  and pauses the affected bot (fail-closed under EventBus safety rules).
+
+**Deployment trust:**
+
+- The runtime registry resolves only already-deployed, explicitly registered strategy
+  packages with verified pinned commit SHAs.
+- The deployed package owns the parameter schema and safe defaults; bots and backtests
+  own selected YAML values that are validated, frozen, and recorded alongside the
+  strategy version identity.
+- Registry code does not clone repositories, install dependencies, or execute
+  API-supplied import paths.
+- Missing packages or identity mismatches fail closed — the bot does not start.
+
+Strategy packages are deployed from a private Git repository. Bots pin a repository
+commit SHA. The same contracts run in backtesting and paper trading.
 
 ### Risk Engine
 
@@ -156,7 +193,7 @@ metadata (`event_id: UUID`, `occurred_at: datetime`, `correlation_id: UUID`,
 Trading:
 CandleClosed          —  candle: Candle
 TickReceived          —  tick: Tick
-SignalGenerated       —  signal: Signal, strategy_version_id: UUID
+SignalGenerated       —  signal: Signal  (strategy_version_id is canonical on Signal)
 RiskApproved          —  signal: Signal, position_size: Decimal,
                          stop_loss: Decimal, take_profit: Decimal
 RiskRejected          —  signal: Signal, reason: str

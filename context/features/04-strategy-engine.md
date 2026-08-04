@@ -34,8 +34,6 @@ the same `kw_only=True` convention when implemented:
 @dataclass(frozen=True, slots=True)
 class SignalGenerated(DomainEvent):
     signal: Signal = field(kw_only=True)
-    strategy_version_id: UUID = field(kw_only=True)
-    candle_id: UUID = field(kw_only=True)
 ```
 
 The `DomainEvent` base class correctly uses `UUID` typed fields for `event_id`,
@@ -45,14 +43,23 @@ The `DomainEvent` base class correctly uses `UUID` typed fields for `event_id`,
 
 ### Strategy Base Class
 
+Strategies return a trading decision (`StrategyDecision`) containing direction, Decimal
+strength, and indicator metadata. The engine assembles the canonical `Signal` with full
+provenance. Strategies never construct `Signal` objects themselves.
+
 ```python
+@dataclass(frozen=True, slots=True)
+class DataRequirement:
+    data_type: DataType        # CANDLE, TICK, etc.
+    timeframe: str             # "1m", "5m", "1h" — validated against bot config
+
 class Strategy(ABC):
     def __init__(self, config: dict):
         self.config = config
 
     @abstractmethod
-    def on_candle(self, candle: Candle) -> Signal | None:
-        """Evaluate a completed candle and optionally generate a signal."""
+    def on_candle(self, candle: Candle) -> StrategyDecision | None:
+        """Evaluate a completed candle and optionally return a trading decision."""
         pass
 
     def on_tick(self, tick: Tick) -> None:
@@ -60,9 +67,10 @@ class Strategy(ABC):
         The default is a no-op — strategies that need tick state override this."""
         return None
 
-    def required_data(self) -> list[DataType]:
-        """Declare what data types this strategy requires."""
-        return [DataType.CANDLE]
+    def required_data(self) -> DataRequirement:
+        """Declare the data requirement for this strategy.
+        Feature 04 supports one candle requirement only."""
+        return DataRequirement(data_type=DataType.CANDLE, timeframe="1m")
 ```
 
 ### Signal Model
@@ -70,13 +78,13 @@ class Strategy(ABC):
 ```python
 @dataclass(frozen=True, slots=True)
 class Signal:
-    instrument: str
-    direction: SignalDirection  # BUY, SELL, CLOSE
-    strength: float             # 0.0 to 1.0
-    metadata: dict              # Strategy-specific data (indicator values, etc.)
-    candle_timestamp: datetime  # The completed candle that triggered this signal
+    instrument_id: UUID
+    direction: SignalDirection          # BUY, SELL, CLOSE
+    strength: Decimal                   # 0.0 to 1.0 (Decimal domain)
+    metadata: dict                      # Strategy-specific data (indicator values, etc.)
+    candle_timestamp: datetime          # Completed candle that triggered this signal
+    strategy_version_id: UUID           # Canonical strategy version identity
     strategy_name: str
-    strategy_version: str
     strategy_commit_sha: str
 
 class SignalDirection(Enum):
@@ -87,35 +95,86 @@ class SignalDirection(Enum):
 
 ### Strategy Engine
 
+The engine owns bot/account scope, instrument and candle provenance, strategy identity,
+validation, and deduplication. Strategies return a lightweight decision; the engine
+assembles the canonical provenance-bearing Signal and owns the `strategy_version_id`.
+
 ```python
 class StrategyEngine:
-    def __init__(self, event_bus: EventBus, bot_id: UUID, strategy: Strategy,
-                 strategy_name: str, strategy_version: str, commit_sha: str):
-        self.event_bus = event_bus
-        self.bot_id = bot_id
-        self.strategy = strategy
-        self.strategy_name = strategy_name
-        self.strategy_version = strategy_version
-        self.commit_sha = commit_sha
-        self.event_bus.subscribe(CandleClosed, self._on_candle)
+    def __init__(self, event_bus: EventBus, bot_id: UUID, account_id: UUID,
+                 instrument_id: UUID, strategy: Strategy,
+                 strategy_version_id: UUID, strategy_name: str,
+                 commit_sha: str, data_requirement: DataRequirement):
+        self._event_bus = event_bus
+        self._bot_id = bot_id
+        self._account_id = account_id
+        self._instrument_id = instrument_id
+        self._strategy = strategy
+        self._strategy_version_id = strategy_version_id
+        self._strategy_name = strategy_name
+        self._commit_sha = commit_sha
+        self._data_requirement = data_requirement
+        self._warmed_up = False
+        self._seen_candle_ids: set[UUID] = set()
+        self._event_bus.subscribe(CandleClosed, self._on_candle)
 
-    async def _on_candle(self, event: CandleClosed):
-        signal = self.strategy.on_candle(event.candle)
-        if signal:
-            signal.strategy_name = self.strategy_name
-            signal.strategy_version = self.strategy_version
-            signal.strategy_commit_sha = self.commit_sha
-            signal.candle_timestamp = event.candle.open_time
-            await self.event_bus.publish(
-                SignalGenerated(bot_id=self.bot_id, signal=signal,
-                                account_id=event.account_id, mode=event.mode,
-                                correlation_id=event.correlation_id)
+    async def warm_up(self, candles: list[Candle]) -> None:
+        """Feed historical candles to rebuild strategy state.
+        No trading signals are emitted during warm-up."""
+        for candle in candles:
+            self._strategy.on_candle(candle)
+        self._warmed_up = True
+
+    async def _on_candle(self, event: CandleClosed) -> None:
+        if not self._warmed_up:
+            return
+        if event.candle.id in self._seen_candle_ids:
+            return  # Duplicate protection
+        if event.candle.instrument_id != self._instrument_id:
+            return  # Instrument mismatch
+        self._seen_candle_ids.add(event.candle.id)
+
+        try:
+            decision = self._strategy.on_candle(event.candle)
+        except Exception:
+            await self._event_bus.publish(
+                StrategyError(bot_id=self._bot_id,
+                              error="strategy on_candle failed")
+            )
+            return  # Fail closed — no signal, bot paused by supervisor
+
+        if decision is not None:
+            signal = Signal(
+                instrument_id=self._instrument_id,
+                direction=decision.direction,
+                strength=decision.strength,
+                metadata=decision.metadata,
+                candle_timestamp=event.candle.open_time,
+                strategy_version_id=self._strategy_version_id,
+                strategy_name=self._strategy_name,
+                strategy_commit_sha=self._commit_sha,
+            )
+            await self._event_bus.publish(
+                SignalGenerated(
+                    bot_id=self._bot_id, signal=signal,
+                    account_id=self._account_id, mode=event.mode,
+                    correlation_id=event.correlation_id
+                )
             )
 ```
 
 ### Example Strategy: SMA Crossover
 
+Strategies return a lightweight decision (direction, strength, metadata). The engine
+assembles the canonical Signal with instrument identity, strategy version, and provenance.
+
 ```python
+@dataclass(frozen=True, slots=True)
+class StrategyDecision:
+    direction: SignalDirection
+    strength: Decimal
+    metadata: dict
+
 class SMACrossoverStrategy(Strategy):
     def __init__(self, config: dict):
         super().__init__(config)
@@ -123,7 +182,7 @@ class SMACrossoverStrategy(Strategy):
         self.slow_period = config["slow_period"]
         self.candles: list[Candle] = []
 
-    def on_candle(self, candle: Candle) -> Signal | None:
+    def on_candle(self, candle: Candle) -> StrategyDecision | None:
         self.candles.append(candle)
         if len(self.candles) < self.slow_period:
             return None
@@ -136,15 +195,10 @@ class SMACrossoverStrategy(Strategy):
         prev_slow = sum(close_prices[-self.slow_period-1:-1]) / Decimal(str(self.slow_period))
 
         if fast_ma > slow_ma and prev_fast <= prev_slow:
-            return Signal(
-                instrument=candle.instrument,
+            return StrategyDecision(
                 direction=SignalDirection.BUY,
-                strength=0.8,
-                metadata={"fast_ma": float(fast_ma), "slow_ma": float(slow_ma)},
-                candle_timestamp=candle.open_time,
-                strategy_name="",
-                strategy_version="",
-                strategy_commit_sha="",
+                strength=Decimal("0.8"),
+                metadata={"fast_ma": fast_ma, "slow_ma": slow_ma},
             )
         # ... sell and close logic
 ```
@@ -163,6 +217,51 @@ The deployed strategy package is specified in the bot's configuration, which ref
 `strategy_version` record containing the repository URL and pinned commit SHA. Strategy
 parameters are passed from the bot config to the strategy constructor.
 
+### Warm-up and Replay Ownership
+
+The replay/data-feed layer (Feature 05, 07) owns sourcing and ordering historical candles.
+The Strategy Engine owns the warm-up lifecycle and signal gating:
+
+- The engine's `warm_up()` method accepts ordered historical candles and feeds them to the
+  strategy to rebuild internal state (moving averages, buffers, etc.).
+- Warm-up candles are evaluated by `on_candle()` but **never** emit a trading signal.
+- Signal generation begins only after `warmed_up` transitions to `True`.
+- The engine does not source, fetch, or order historical data — it receives pre-sourced
+  candles from the caller.
+
+### Registry and Deployment Trust
+
+The runtime registry resolves only already-deployed and explicitly registered strategy
+packages:
+
+1. A `StrategyVersion` record (persisted in the database) contains the repository URL
+   and pinned commit SHA.
+2. The registry verifies that the installed package identity matches the expected strategy
+   and pinned commit SHA at startup.
+3. Missing packages, version mismatches, or SHA mismatches fail closed — the bot does
+   not start.
+4. Registry code does **not** clone repositories, install dependencies, or execute
+   API-supplied import paths.
+
+### Parameter Ownership
+
+- The deployed strategy package owns the parameter schema and safe defaults.
+- The bot or backtest configuration owns the selected YAML parameter values.
+- Atlas validates parameter values against the schema, freezes the configuration, and
+  records the selected parameter snapshot alongside the `strategy_version_id`.
+- Parameter changes require a new bot configuration; they are not hot-reloaded.
+
+### Safety and Validation
+
+- The engine accepts only completed candles matching the bot's instrument and timeframe.
+- Duplicate candle events (same candle ID) are silently rejected.
+- A strategy exception produces no signal, publishes a `StrategyError` event, and pauses
+  the affected bot under the existing EventBus failure contract.
+- Strategy hooks (`on_candle`, `on_tick`) are synchronous and computation-focused; they
+  perform no I/O (database, network, or broker access).
+- The engine validates that the candle's `instrument_id`, `timeframe`, and `is_complete`
+  flag match the bot's data requirement before calling `on_candle()`.
+
 ### Strategy State Isolation
 
 Each bot pipeline creates its own strategy instance. Strategy state is not shared between
@@ -171,14 +270,20 @@ configuration — no persistent strategy state survives across bot restarts.
 
 ## Acceptance Criteria
 
-- [ ] Strategy receives CandleClosed event and produces Signal
-- [ ] Strategy engine emits SignalGenerated event with strategy version, commit SHA, and
-      completed-candle timestamp
-- [ ] Strategies are configurable via YAML and pinned to a deployed commit
+- [ ] Strategy receives CandleClosed event and produces a trading decision
+- [ ] Strategy engine assembles immutable Signal with `strategy_version_id`, `instrument_id`,
+      `candle_timestamp`, and Decimal `strength`
+- [ ] Strategy engine emits `SignalGenerated` with the assembled Signal (no `candle_id`)
+- [ ] Strategy engine validates completed-candle instrument, timeframe, and completeness
+- [ ] Strategy engine rejects duplicate candle events silently
+- [ ] Strategy exception publishes `StrategyError` and pauses bot (fail-closed)
+- [ ] Strategies are configurable via YAML and pinned to a deployed commit SHA
+- [ ] Strategy engine owns warm-up lifecycle; warm-up candles never emit signals
+- [ ] Registry resolves only deployed, version-pinned packages and fails closed on mismatch
 - [ ] Example strategies produce reasonable signals on historical data
 - [ ] Strategy interface supports completed candles and optional tick observation without
       generating tick signals
-- [ ] Strategies declare required data types
+- [ ] Strategies declare a timeframe-aware `DataRequirement`
 - [ ] Strategy state is isolated per bot and reset between runs
 
 ## Done when
