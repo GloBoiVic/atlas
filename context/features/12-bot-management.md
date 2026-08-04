@@ -8,9 +8,11 @@ The MVP runs a single worker process. `BotSupervisor` uses in-process per-bot lo
 
 ## Dependencies
 
+- 02 — Core Infrastructure (BotSupervisor lifecycle contract, state machine)
 - 04 — Strategy Engine
 - 07 — Execution Layer
 - 08 — Live Data Streaming
+- 09 — Live Trading (pipeline construction, broker adapters)
 
 ## Deliverables
 
@@ -25,6 +27,26 @@ The MVP runs a single worker process. `BotSupervisor` uses in-process per-bot lo
 - [ ] Confirmation dialogs: Destructive actions require confirmation
 
 ## Technical Details
+
+### Ownership Boundaries
+
+Feature 12 owns the **persisted Bot-facing application service, CRUD/lifecycle API
+endpoints, bot configuration UX, and lifecycle controls/status presentation**. It does not
+implement a second supervisor:
+
+- **Supervisor core:** Feature 02 owns the `BotSupervisor` contract and state machine.
+  Feature 12 requests operations (start, stop, pause, resume) from the supervisor.
+- **Pipeline construction:** Feature 09 owns mode-specific pipeline assembly and broker
+  adapters. Feature 12 calls Feature 09 to construct pipelines.
+- **Live feed:** Feature 08 provides the completed-candle stream that pipelines consume.
+- **Startup restoration and reconciliation mechanics** remain Feature 02/09; Feature 12
+  exposes their durable status and controls.
+
+### Migration Policy
+
+Bot configuration migration (schema changes across strategy versions) is deferred. The MVP
+requires explicit stop/recreate to adopt a new strategy version or configuration. No
+automated migration of running bot state across configuration changes exists.
 
 ### Bot Model
 

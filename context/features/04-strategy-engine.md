@@ -234,9 +234,34 @@ The deployed strategy package is specified in the bot's configuration, which ref
 `strategy_version` record containing the repository URL and pinned commit SHA. Strategy
 parameters are passed from the bot config to the strategy constructor.
 
+### No-Future-Data Expectation
+
+The strategy engine operates on completed candles only. A signal confirmed at candle `T`
+close is eligible at the `T+1` candle open — never at `T` itself. The engine never receives
+incomplete candles for signal evaluation. Strategy authors must not reference future data
+(e.g., using `T+1` close within `on_candle` at `T`). A lookahead validation gate should
+be applied before trusting any backtest result (Feature 05, Feature 13).
+
+### Repeated-Signal Responsibility
+
+The engine deduplicates candle events by the canonical composite key
+`(instrument_id, provider, timeframe, open_time, price_basis)`. A strategy that emits the
+same direction as a previously filled signal for the same market direction is permitted —
+repeated signals are handled by the Risk Engine (position-size limits, max open positions).
+The strategy engine does not suppress consecutive signals of the same direction; Risk
+decides whether a new position is warranted.
+
+### Strategy Version Immutability
+
+A running bot keeps its pinned strategy version — it never hot-reloads from a new commit.
+Adopting a new strategy commit requires an explicit stop/recreate cycle. The deployed
+strategy package's parameter schema and safe defaults are authoritative; bot configurations
+supply validated YAML values that are frozen and recorded alongside the
+`strategy_version_id`.
+
 ### Warm-up and Replay Ownership
 
-The replay/data-feed layer (Feature 05, 07) owns sourcing and ordering historical candles.
+The replay/data-feed layer (Feature 05, Feature 08) owns sourcing and ordering historical candles.
 The Strategy Engine owns the warm-up lifecycle and signal gating:
 
 - The engine's `warm_up()` method accepts ordered historical candles and feeds them to the

@@ -10,16 +10,62 @@ Last updated: 2026-08-04
 
 ## Feature
 
-- **Number:** 04
-- **Name:** Strategy Engine
-- **File:** context/features/04-strategy-engine.md
+- **Number:** 06
+- **Name:** Risk Engine
+- **File:** context/features/06-risk-engine.md
 
 ## Branch
 
-- **Name:** feature/04-strategy-engine
+- **Name:** feature/06-risk-engine
 - **Created:** 2026-08-04
 
 ## Current session
+
+### Context reconciliation (2026-08-04)
+
+- [x] Applied approved Atlas context reconciliation per `dispatch/ARCHITECTURE.md`
+- [x] Added Feature ID → roadmap phase table to `context/features/README.md`
+- [x] Updated `context/architecture.md`: fee/slippage scope, order-type scope,
+      partial-fill semantics, trigger ambiguity, unknown-order fail-closed policy,
+      ratio-vs-money numeric rule
+- [x] Updated `context/roadmap.md`: feature IDs on all phase headings, cross-links
+      for split phases (03/08, 08/09/12), Phase 7 dependency on 06/07, Phase 10
+      dependency on 09 data
+- [x] Updated `context/project-brief.md`: added MVP realism scope (completed candles,
+      no same-candle fills, fee/slippage defaults, no synthetic gaps)
+- [x] Updated `context/database.md`: NUMERIC vs FLOAT metric column policy,
+      data-retention policy
+- [x] Updated `context/features/02-core-infrastructure.md`: reconciled checkbox status;
+      health monitoring deferred to 13
+- [x] Updated `context/features/04-strategy-engine.md`: added repeated-signal
+      responsibility, no-future-data expectation, strategy version immutability
+- [x] Updated `context/features/05-backtesting.md`: marked Phase 7, deferred metric
+      formulas to 10, added lookahead/data-integrity gate, recorded execution
+      assumptions
+- [x] Updated `context/features/06-risk-engine.md`: removed stale SignalGenerated
+      payload claim (already implemented by 04), clarified risk-only payload ownership,
+      added reuse-by-backtesting section
+- [x] Updated `context/features/07-execution-layer.md`: authoritative execution event
+      payload status table, added approved fee/slippage/order-type/partial-fill/
+      trigger-ambiguity/unknown-order policy
+- [x] Updated `context/features/08-live-data-streaming.md`: changed examples to
+      `Instrument`, distinguished feed health contract from 13 hardening,
+      documented no synthetic gap candles
+- [x] Updated `context/features/09-live-trading.md`: removed duplicate payload-gap
+      section, added ownership boundaries, separated Phase 8 paper from Phase 11
+      testnet, added strategy-version startup policy
+- [x] Updated `context/features/10-journal-analytics.md`: canonical metric formulas
+      with annualization, drawdown basis, undefined cases, open-trade policy
+- [x] Updated `context/features/11-ui-dashboard.md`: added Feature 09 dependency,
+      documented UI boundary (displays facts only)
+- [x] Updated `context/features/12-bot-management.md`: added Feature 09 dependency,
+      ownership boundaries (supervisor core in 02, pipeline construction in 09),
+      migration policy
+- [x] Updated `context/features/13-polish-testing.md`: health-monitor boundary,
+      lookahead gate, reconciliation tests, endpoint safety gates
+- [x] Updated `CURRENT.md`: corrected stale next-feature from "Feature 05 — Bot
+      Supervisor" to "Feature 06 — Risk Engine"
+- [x] No application source code, dependencies, migrations, or `.env` modified
 
 ### Documentation reconciliation (2026-08-04)
 
@@ -77,5 +123,13 @@ Last updated: 2026-08-04
 
 ## What comes next
 
-- **Feature 05 — Bot Supervisor:** end-to-end wiring of YAML config → registry →
-  engine constructor, bot lifecycle, pipeline isolation
+- **Next scheduled feature:** Feature 07 — Execution Layer.
+
+### Feature 06 final validation (2026-08-04)
+
+- [x] Implemented typed risk events, YAML risk configuration, and the pure RiskEngine plus
+      EventBus adapter with isolated transient reservations.
+- [x] Added event, configuration, and comprehensive risk-engine behavior tests.
+- [x] Backend pytest: 266 passed
+- [x] Ruff: clean
+- [x] mypy: clean

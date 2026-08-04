@@ -1,146 +1,151 @@
-# Memory — Atlas Feature 03 Session
+# Memory — Feature 06 Risk Engine
 
-Last updated: 2026-08-02
+Last updated: 2026-08-04
 
 ## What was built
 
-*This session (Feature 03 implementation):*
+### Feature 06 — Risk Engine (this session)
 
-- **Data domain models & protocols** (`backend/data/models.py`, `backend/data/interfaces.py`):
-  - `Instrument`, `Candle`, `Tick`, `DatasetIdentity`, `HistoricalLoadResult` domain models
-  - `HistoricalDataProvider` and `LiveDataProvider` (stub) provider interfaces
-  - `CandleClosed` and `TickReceived` typed event payloads with `kw_only=True` convention
+- Implemented the deterministic Risk Engine on branch `feature/06-risk-engine`.
+- Created `backend/risk/engine.py` (398 lines) — `RiskEngine`, `RiskContext`, `PositionInfo`, `PositionStatus`, `RiskContextProvider` protocol, configuration-driven stop resolution, conservative tick/step rounding, equity-constrained sizing, max-open positions with transient reservations, per-bot isolation via bot_id filtering, CLOSE zero-quantity approval, and direction-conflict rejection (no scaling/reversal).
+- Added `RiskApproved`/`RiskRejected` typed event payloads to `backend/core/events.py` — `signal`, `position_size`, `stop_loss`, `take_profit` for approval; `signal`, `reason` for rejection.
+- Extended `RiskConfig` in `backend/config.py` with `stop_loss_multiplier`, `take_profit_multiplier`, `stop_source_config`, `take_profit_risk_reward`, `max_risk_per_trade`, and YAML-friendly source discriminator.
+- Updated `config/default.yaml` with full risk section: `max_open_positions: 5`, `per_trade_risk: 0.01`, `stop_source`, `stop_loss_multiplier`, `take_profit_risk_reward`.
+- Populated `backend/risk/__init__.py` with public exports.
+- Updated `tests/test_events.py` — `RiskApproved`/`RiskRejected` new-style payload assertions.
+- Updated `tests/test_config.py` — `RiskConfig` extended-field validation.
+- Created `tests/test_risk_engine.py` (22 KB, 38 tests) — every rejection path, identity/timestamp/entry mismatches, max-positions boundary with pending reservations, reserved-bot isolation, CLOSE approval, lifecycle hooks, constraint validation variants, post-rounding geometry guards.
+- **294 backend tests passing**, **Ruff clean**, **Feature 06 mypy clean** (21 pre-existing errors in unrelated test files), **98% risk-module coverage** (4 missed lines: defensive guard + fail-closed handler).
 
-- **CSV historical provider** (`backend/data/csv_provider.py`):
-  - Strict column contract, Decimal normalization, UTC timestamps, BOM support
-  - Validated, sorted, deduplicated OHLC from CSV files
-  - Range filtering and proper error handling for malformed rows
+### Context Documentation Reconciliation (preserved from previous session)
 
-- **Binance Spot historical provider** (`backend/data/binance_provider.py`):
-  - Normalized kline data via async ccxt with bounded pagination
-  - UTC/Decimal normalization, strict OHLCV validation
-  - Cleanup on all exit paths (normal, cancellation, error)
+- Reconciled all 17+ context documentation files to form a single authoritative source of truth.
+- Established singular ownership boundaries, approved MVP execution model, metric policy, and 9 approved defaults.
+- Final review: **PASS** with 0 Critical, 0 Important, 0 Minor findings.
+- Resolved 6 findings from the first review cycle.
 
-- **Historical data loader** (`backend/data/loader.py`):
-  - Repository-owned CSV instrument resolution with idempotent candle persistence
-  - No provider database access or CandleClosed emission
-  - `DatasetIdentity` fingerprint for reproducible backtests
+### Feature 04 — Strategy Engine (preserved from previous session)
 
-- **Provider registry** (`backend/data/registry.py`):
-  - `HistoricalProviderRegistry`: strict lookup, duplicate-registration errors
-  - Side-effect-free CSV/Binance composition with configured data dir and injectable exchange factory
+- Strategy contracts with UUID/Decimal, immutable Signal, provenance, warm-up, registry, parameter, validation, and fail-closed contracts.
+- StrategyEngine validates completed candles, deduplicates by composite key, gates signals until warm-up completes.
+- 256 tests, Ruff clean, mypy clean.
 
-- **In-memory & SQLAlchemy repositories** (`backend/persistence/repositories/`):
-  - `InstrumentRepository` and `CandleRepository` protocols, in-memory and SQLAlchemy implementations
-  - Bulk save with `ON CONFLICT DO NOTHING` and correct inserted-count return
-  - Updated `BotRepository` to use SQLAlchemy `select()` style for UUID compatibility
+### Feature 03 — Data Layer (preserved from previous session)
 
-- **Migrations 005 and 006** (`alembic/versions/`):
-  - 005: Convert existing `String(36)` PK/FK columns to native UUID across accounts, strategies, strategy_versions, bots, reconciliation_runs
-  - 006: Create provider-aware `instruments` and `candles` tables with native UUID FKs, JSONB provider metadata, explicit `price_basis`, and split volume columns
-  - Migration upgrade/downgrade round-trip validated on live Codespace PostgreSQL
-
-- **Tests (218 passing, ruff/mypy clean):**
-  - `test_data_models.py` (191 lines) — UTC, candle bounds, ordering, duplicates, Decimal values, completion, price basis
-  - `test_csv_data_layer.py` (397 lines) — CSV malformed rows, naive timestamps, duplicates, unsorted, range filtering, Decimal preservation
-  - `test_binance_provider.py` (140 lines) — pagination, mocked ccxt normalization, symbol mapping, cleanup on cancellation
-  - `test_instrument_candle_repos.py` (453 lines) — SQLAlchemy repository CRUD, conflict idempotency, bulk count
-  - `test_repository_contracts.py` (281 lines) — in-memory/SQLAlchemy parity contract enforcement
-  - `test_provider_registry.py` (81 lines) — strict lookup, duplicate registration, composition
-  - `test_migrations.py` (138 lines, updated) — migration SQL rendering, upgrade/downgrade round-trip
-  - `test_models.py` (87 lines, updated) — UUID/model updates, events type/event_type consistency
-  - Other amended tests: `test_repositories.py`, `test_sql_repositories.py`, `test_supervisor.py`, `test_worker_protocols.py`, `test_events.py`, `test_config.py`
-
-*Previous session (preserved — context normalization):*
-
-- Reconciled all 13 context files (project-brief, architecture, database, coding-standards, library-docs, roadmap, features 03–10) with the actual single-user, paper-first, single-worker MVP
-- UUID identity convention, separate historical/live provider interfaces, provider-aware instruments with JSONB metadata, Trade entity lifecycle, typed event payload contracts
-- OANDA deferred with documented format differences
-- `.devcontainer/devcontainer.json` and `.devcontainer/Dockerfile` for GitHub Codespaces
-- Updated Dockerfiles, pyproject.toml, Alembic config, Codespaces docs, AGENTS.md, CURRENT.md
-- Consolidated `.dispatch/` → COMPLETED.md; deleted 32 one-off task files
+- Historical CSV and Binance Spot providers, normalized contracts, provider-aware persistence, dataset fingerprints, UUID migrations 005/006, repositories, and provider registry.
 
 ## Decisions made
 
-*This session (Feature 03 implementation):*
+### From this session (Feature 06 Risk Engine)
 
-- **ccxt for Binance Spot historical** — async ccxt wraps Binance REST klines endpoint; no direct REST calls. Six-value OHLCV from ccxt includes only `base_volume`; optional quote/trade/taker fields not enriched without separate approval.
-- **Repository-owned instrument resolution** — CSV provider resolves instruments via `InstrumentRepository` (get-or-create upsert), not by accepting pre-resolved IDs. Binance provider does the same with provider `Base` + quote symbol mapping.
-- **ON CONFLICT DO NOTHING** — candles are deduplicated at the database level on `(instrument_id, provider, timeframe, open_time, price_basis)`. `save_many()` returns actual inserted count, not requested count.
-- **DatasetIdentity fingerprint** — SHA-256 of canonical serialized canonical JSON of sorted candles. Deterministic: same inputs always produce same fingerprint.
-- **kw_only=True for event payloads** — avoids inherited-default dataclass ordering failures. Applied to `CandleClosed` and `TickReceived` payload subclasses.
-- **Storage pipeline is not a standalone class** — the `HistoricalDataLoader` orchestrates provider → resolve → persist in one service; no separate "storage" abstraction layer beyond repositories.
-- **Migration 005 targets 7 tables** — accounts, strategies, strategy_versions, bots, reconciliation_runs (and their String(36) FK columns), plus migration 006 references new tables with native UUID.
-- **Migration 006 instrument uniqueness** — `(provider, symbol)` unique constraint on instruments; candles unique on `(instrument_id, provider, timeframe, open_time, price_basis)`.
-- **18 pre-existing test-only mypy annotations are excluded** from strict mode, not fixed. Verified clean run.
+- **No ATR for the MVP.** Stop sources are configuration-driven: `percentage_of_entry`, `absolute_price_distance`, or `explicit_stop_price`. No ATR indicator, no ATR import, no ATR field.
+- **1% default / 2% hard cap** on per-trade equity risk. Enforced at config level (Pydantic `gt=0, le=0.02`) and at runtime (guard raises if > 2% even if config somehow exceeds it).
+- **Three stop sources, not just strategy proposals.** The risk engine resolves stops from config — strategy stop proposals may be supported later but are always subject to Risk approval.
+- **Conservative rounding:** BUY → `ROUND_FLOOR` for stop distance and quantity; SELL → `ROUND_CEILING`. This prevents under-sizing long stops and over-sizing short stops when precision must truncate.
+- **Sizing from rounded stop distance.** Position size = risk_amount / rounded stop_distance, not raw stop_distance. This ensures the math uses the exact distance that will be enforced.
+- **Optional R:R take-profit.** No universal target ratio. When `take_profit_risk_reward` is configured, TP = entry ± (stop_distance × ratio); when absent, no TP is set.
+- **No scaling or reversal.** Direction conflict (BUY signal while existing long) rejects the signal. CLOSE is approved as a zero-quantity close intent.
+- **Transient reservations + per-bot isolation.** Each RiskEngine maintains its own `set[ReservationKey]` scoped by `(account_id, mode, instrument_id)`. Pending entries occupy a slot without needing a persisted position.
+- **Foreign bot filtering.** RiskEngine silently ignores signals where `event.bot_id != self._bot_id` — critical since EventBus is per-process, not per-bot-pipeline.
+- **Fail-closed:** exceptions in `_handler` log the error and re-raise; no misleading approvals are published.
+- **No Feature 07/05 scope leakage.** The risk engine has zero dependencies on orders, fills, positions, P&L, broker interfaces, database, API, or UI.
 
-*Previous session (preserved and still relevant):*
+### Preserved from previous sessions
 
-- **UUID identity convention is the confirmed target** — Python domain types use `UUID`, ORM models use `Uuid` column type, repository protocols accept/return `UUID`. Migration 005 now converts existing `String(36)` to native UUID.
-- **Historical and live data provider interfaces are separate** — Feature 03 covers historical only; live streaming is Feature 08.
-- **Instruments are provider-aware** — Candles reference `instrument_id` FK, not fragile symbol strings. Provider-specific constraints are JSONB metadata.
-- **Candle semantics are explicit** — `open_time` (interval start, UTC), `price_basis` (`"trade"` for Binance), `is_complete`, split volume fields.
-- **CandleClosed emission belongs to Feature 08** — not Feature 03.
-- **Trade is a first-class entity** — planned for Feature 05/07 when positions and fills are introduced.
-- **Session auto-commit is being migrated** — service-owned `async with session_factory.begin()` now in use for repositories; the old FastAPI dependency auto-commit is a documented gap.
-- **OANDA is deferred** — candle format differences documented (RFC3339, bid/ask/mid, tick-count volume).
-- **Production live trading requires a safety gate** — consistently documented.
-- **Risk configuration lives in YAML** — not a database table.
-- **GitHub Codespaces is the supported dev environment** — Docker Desktop not required.
-- **Docker Compose is the runtime topology** (API, worker, frontend, PostgreSQL).
-- **Single-worker deployment invariant** — lease removal was Feature 02.
+- Feature IDs are stable domain identifiers, not implementation sequence; the roadmap owns delivery order.
+- BotSupervisor ownership: Feature 02 (core lifecycle), Feature 09 (paper/testnet pipeline), Feature 12 (API/UI).
+- Paper Broker: shared algorithm with mode-specific price sources (next-candle open for backtests, current market for live paper).
+- Event payload ownership: Feature 04 owns SignalGenerated/StrategyError; Feature 06 owns RiskApproved/RiskRejected; Feature 07 owns execution events.
+- Execution realism defaults approved: 0.10% taker fee, 0.05% fixed adverse slippage, stop-loss-first candle ambiguity, complete fills by default, no synthetic candles, indefinite data retention, immutable strategy pins.
+- Metric formulas canonical in Feature 10; Feature 05 persists raw snapshots.
+- Atlas remains single-user, paper-first, broker-agnostic, single-worker for the MVP.
+- Backend identifiers use UUID; prices, quantities, fees, P&L, and signal strength use Decimal; timestamps are UTC.
+- Local Docker: 2 CPUs/~3 GiB normal, 3 CPUs/~4 GiB for heavier iteration.
 
 ## Problems solved
 
-*This session:*
+### From this session
 
-- **ccxt v2+ pagination** — ccxt `fetch_ohlcv` pagination uses `since` param with millisecond timestamps. Limit must be <= 1000 (Binance cap). The loop fetches until `since >= until` or empty response.
-- **Instrument resolution before candle fetch** — Binance provider must resolve/create instruments before fetching candles because candles reference `instrument_id`. The provider returns both identity and resolved instrument mapping.
-- **UUID migration for existing String(36) tables** — converting PK/FK columns in 7 tables required careful handling of existing row data (no data loss), Alembic `batch` mode for SQLite compatibility, and proper FK dependency ordering.
-- **Migration test dead code** — an obsolete test specifically for the old migration had to be removed after the real migration was implemented.
-- **Repository contract parity** — in-memory and SQLAlchemy implementations must match behavior exactly. Enforced via parametrized contract tests in `test_repository_contracts.py`.
-- **Event payload kw_only convention** — discovered during implementation that inherited default ordering in dataclass subclasses causes ValueError. `kw_only=True` resolves this.
-- **Live PostgreSQL validation in Codespaces** — migrations 005→006 upgrade→downgrade→re-upgrade round-trip confirmed working against a real PostgreSQL instance in the shared Codespace via Docker Compose.
+- **Event payload lockstep:** Adding `RiskApproved`/`RiskRejected` payload fields required simultaneous update of `tests/test_events.py` `EVENT_TYPES` parametrized assertion. The exploration phase flagged this blocker; the update was done in lockstep.
+- **`_optional_constraint` edge cases:** Missing `min_qty`/`min_notional` in per-instrument constraints defaults to `ZERO`, which could pass `>=` validation incorrectly. Handled with explicit `ZERO if name != "max_qty" else None` — correct for current constraint set, flagged as a cosmetic Minor observation.
+- **Mode filtering gap in position conflict check:** Initial implementation didn't scope reservation keys by `mode` (backtest vs paper). Fixed so mode is part of the key — different modes for the same account/instrument are independent.
+- **Post-rounding stop geometry:** After conservative rounding (e.g., BUY `ROUND_FLOOR` on stop), a rounded stop at entry is possible (zero distance). Added a post-rounding guard that rejects `invalid_stop` if the rounded distance isn't positive.
+- **295 → 294 test count:** One `pytest-asyncio` fixture running on non-async test was consuming the event loop without yielding — removed the unused async from that fixture.
 
-*Previous session (preserved):*
+### Preserved from previous sessions
 
-- Recontextualized entire doc set from speculative multi-user to actual single-user, paper-first, single-worker platform
-- Separated historical (Feature 03) from live streaming (Feature 08) responsibilities
-- Documented UUID identity gap before implementing the migration
-- Established provider-specific volume semantics to avoid conflating Binance and OANDA fields
-- Fixed Codespaces creation failures, Docker hostname issues, Alembic module resolution, and stale signing keys
+- Resolved stale Feature 04 contracts using `instrument: str`, `strength: float`, `candle_id`, and mutation of frozen Signals.
+- Documentation drift root cause addressed — ownership boundaries and approved defaults now explicit.
+- Transport timeouts vs domain-clock deadlines distinguished.
 
 ## Eureka moments
 
-*Preserved from previous session (still relevant):*
-
-- Separating historical from live data interfaces was the key insight that made the data layer design clean. Without this distinction, every provider would need to implement both bounded-batch and async-generator patterns simultaneously.
-- Provider-specific volume semantics (Binance `base_volume` vs OANDA `tick_volume`) are fundamentally different data — forcing them into a single `volume` field would be a design mistake that compounds across backtesting.
+- Choosing explicit stop sources over ATR eliminates indicator state, warm-up latency, and candle-sync complexity from the risk gate — the risk engine stays purely configuration-driven and deterministic.
+- Conservative tick/step rounding on both stop distance and quantity means the risk engine is always pessimistic about how much risk it's taking, which is the correct safety posture.
+- The `RiskContextProvider` protocol (callable or `RiskContext`-returning awaitable) decouples the risk engine from any DB/broker dependency without needing abstract base classes or dependency injection frameworks.
+- Documentation drift was the root cause of most architectural ambiguity — explicit ownership boundaries prevent entire classes of implementation errors.
 
 ## Current state
 
-- **Feature 03 is complete and validated.** All code committed on branch `feature/03-data-layer`. 218 tests passing, ruff clean, mypy clean (14 pre-existing test-only annotations excluded). Live Codespace PostgreSQL migration and repository smoke validation passed.
-- **Commits:** `ec70874` (feat: implement historical data layer), `78cf3bf` (docs: close feature 03 validation).
-- **Branch:** `feature/03-data-layer` (from `main`, 2026-08-02).
-- **Feature 02** is complete and committed on `main` (lease removal in `8b735ec`). Health monitor and Docker/Compose/PostgreSQL validation remain deferred.
-- **Dispatch state:** `.dispatch/PLAN.md` still holds the Feature 03 implementation plan. `.dispatch/TASKS.md` all marked done. `.dispatch/COMPLETED.md` updated with Feature 03 completion. `.dispatch/MODEL-LOG.md` records the full agent task history.
-- **Environment:** local `.venv` development; Codespace on `main` with feature branch checked out inside for validation.
-- **Migrations 005 and 006** are at head (`alembic current` = 006).
+- Feature 06 Risk Engine is **complete and reviewed** — 294 tests, Ruff clean, Feature 06 mypy clean, 98% coverage, final review PASS. Branch `feature/06-risk-engine` has uncommitted implementation files.
+- Context documentation reconciliation is complete and verified; `main` contains Feature 04 + reconciliation (locally ahead of `origin/main`).
+- Docker Compose is stopped; PostgreSQL volume preserved.
+- All dispatch files present with Feature 06 records in PLAN.md, TASKS.md, DECISIONS.md, EXPLORATION.md, REVIEW.md, COMPLETED.md, MODEL-LOG.md.
+- Next implementation slice: **Feature 07 — Execution Layer** (Phase 6), then Feature 05 (Backtesting).
 
 ## Next session starts with
 
-**Plan and implement Feature 04 — Strategy Engine.** This is the next vertical slice. The strategy engine owns package deployment, the Strategy runtime protocol, the strategy sandboxed execution context, and strategy lifecycle (start/stop/destroy). Key preparation:
-
-1. Read `context/features/04-strategy-engine.md` for acceptance criteria.
-2. Read `context/architecture.md` for strategy-engine component boundaries.
-3. Read `context/database.md` for the schema relevant to strategies, strategy_versions.
-4. Confirm whether the existing `StrategyRepository` protocols need updating for the strategy engine.
-5. Review decision to use version-pinned private Git deployments for strategy packages (from context/project-brief.md).
-6. Plan feature branch: `feature/04-strategy-engine` from `main`.
-7. Implement one vertical slice at a time; write tests with every slice.
-8. Run `ruff check`, `mypy`, and `pytest` after each slice.
+1. Restore memory and confirm this state.
+2. Commit and push the Feature 06 implementation on `feature/06-risk-engine` (or merge to `main`).
+3. Read Feature 07 (Execution Layer) acceptance criteria — `context/features/07-execution-layer.md`.
+4. Feature 07 requires: Order, Fill, Position, Trade domain models; migration 007; repository protocols; Broker interface; PaperBroker; execution events; paper-trade pipeline. Plan the implementation order (data models first, then broker, then execution engine).
 
 ## Open questions
 
-- Whether old `feature/02-*` and `chore/*` branches should be deleted after their work is fully merged/verified.
-- Whether the health monitor / Docker-Compose-PostgreSQL validation from Feature 02 should be addressed before or during Feature 04.
+- Exact Feature 05/07 replay mechanism for supplying warm-up candles while preserving deterministic timing.
+- Whether to push local `main` to remote before beginning Feature 07.
+- No remaining Feature 06 open questions — all edge cases from the initial exploration (ATR dependency, direction-conflict policy, CLOSE handling, bot_id filtering) were decided and implemented.
+
+---
+
+## Session: Feature 06 Risk Engine — 2026-08-04
+
+This session completed Feature 06 Risk Engine per the approved no-ATR blueprint.
+
+### What was done
+
+- Revised the ARCHITECTURE.md blueprint to incorporate the approved no-ATR stop policy and take-profit boundary.
+- Implemented RiskApproved/RiskRejected event payloads in `backend/core/events.py` and extended RiskConfig in `backend/config.py`.
+- Implemented the pure Risk Engine evaluator in `backend/risk/engine.py` — RiskContext, position sizing, stop resolution, constraint validation, conservative rounding, reservation tracking, CLOSE approval, direction-conflict rejection, fail-closed handler.
+- Implemented the EventBus adapter and complete test suite in `tests/test_risk_engine.py` (38 tests).
+- First review (GPT-5.6 Luna): **needs-retry** — 7 Important findings (coverage gaps, mode filtering, type suppressions).
+- Fix loop resolved all 7 findings: added missing rejection-path tests, fixed mode filtering in position conflict, removed `# type: ignore` from fixtures.
+- Re-review (GPT-5.6 Luna): **PASS** — 0 Critical, 0 Important, 3 Minor cosmetic observations.
+
+### Review summary
+
+| Review cycle | Model | Outcome |
+|---|---|---|
+| Initial Feature 06 review | GPT-5.6 Luna | needs-retry (7 Important findings) |
+| Post-fix re-review | GPT-5.6 Luna | success — PASS |
+
+### Key outcomes
+
+- The no-ATR stop design was validated through implementation and review — no indicator state or warm-up needed for the risk gate.
+- Every rejection path has a direct test (25 `_Reject` paths all covered).
+- Conservative rounding direction is confirmed safe for both BUY and SELL.
+- Risk engine is broker-agnostic, DB-independent, and ready to feed RiskApproved events to Feature 07.
+
+### Files created or modified
+
+**Created:**
+- `backend/risk/engine.py` — RiskEngine, RiskContext, PositionInfo, PositionStatus, RiskContextProvider
+- `backend/risk/__init__.py` — public exports
+- `tests/test_risk_engine.py` — 38 tests covering all rejection paths and lifecycle
+
+**Modified:**
+- `backend/core/events.py` — RiskApproved/RiskRejected payload fields
+- `backend/config.py` — RiskConfig extended with stop/tp/constraint fields
+- `config/default.yaml` — full risk section
+- `tests/test_events.py` — updated EVENT_TYPES assertions
+- `tests/test_config.py` — extended RiskConfig validation tests

@@ -1,3 +1,4 @@
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -61,6 +62,8 @@ def test_load_config_returns_typed_yaml_config():
     assert config.strategy.name == "sma_crossover"
     assert config.strategy.parameters["fast_period"] == 10
     assert config.risk.max_open_positions == 5
+    assert config.risk.per_trade_risk == Decimal("0.01")
+    assert config.risk.stop_source == "percentage_of_entry"
     assert config.broker.mode == Environment.PAPER
 
 
@@ -76,6 +79,8 @@ def test_load_config_expands_environment_variables(
 risk:
   max_open_positions: 1
   per_trade_risk: 0.01
+  stop_source: percentage_of_entry
+  stop_percentage: 0.02
 broker:
   name: paper
   mode: paper
@@ -96,6 +101,8 @@ def test_load_config_rejects_missing_environment_variable(tmp_path: Path) -> Non
 risk:
   max_open_positions: 1
   per_trade_risk: 0.01
+  stop_source: percentage_of_entry
+  stop_percentage: 0.02
 broker:
   name: paper
   mode: paper
@@ -137,6 +144,8 @@ def test_load_config_rejects_invalid_mode(tmp_path: Path) -> None:
 risk:
   max_open_positions: 1
   per_trade_risk: 0.01
+  stop_source: percentage_of_entry
+  stop_percentage: 0.02
 broker:
   name: paper
   mode: staging

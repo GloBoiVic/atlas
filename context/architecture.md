@@ -102,6 +102,13 @@ columns. Volume semantics are explicit: `base_volume`, `quote_volume`, `trade_co
 `tick_volume`. OANDA's `tick_volume` (price-update count) is not the same as Binance's
 `base_volume` (traded asset quantity).
 
+**Rate-limit awareness:** Binance Spot REST API enforces a 1200-weight-per-minute ceiling.
+The combination of REST candle fetching, streaming subscription management, and periodic
+reconciliation in one worker process may approach this limit. Safe backoff (exponential
+retry with jitter and circuit-breaker integration) is required for all REST calls; the
+exact backoff implementation is deferred to the Binance adapter (Feature 09). Adapters
+must not block async code during backoff.
+
 ### Strategy Engine
 
 Strategies evaluate completed candles and return a lightweight trading decision. The
@@ -158,13 +165,25 @@ Daily loss, maximum drawdown, and trading session controls are deferred follow-u
 
 The Execution Engine converts `RiskApproved` decisions into broker orders and owns order, fill, position, and trade transitions. The MVP uses one net position per account and instrument.
 
-The `Broker` interface exposes order submission, cancellation, account state, positions, and reconciliation. Paper execution is deterministic and supports the shared next-candle-open backtest fill model. Binance Spot testnet execution is added later through the same interface.
+The `Broker` interface exposes order submission, cancellation, account state, positions, and reconciliation. Paper execution is deterministic and uses the shared Broker fill algorithm for both backtests and live paper trading. The algorithm is identical in both modes; only the price source differs: in backtest replay the fill price comes from the next candle's open price, while in live paper mode it comes from the current executable market price supplied by the execution context. Binance Spot testnet execution is added later through the same interface.
 
 **Trade lifecycle:** A `Trade` entity is created when a position opens and finalized when the position closes. It aggregates fills and carries gross/net P&L, fees, and market context. Trades are the canonical source of truth for journaling and analytics.
+
+**Order-type scope:** MVP order types are market entries and execution-managed protective exits only. Limit, stop-limit, OCO, iceberg, and order-book-aware fill models are deferred.
+
+**Fees and slippage:** Configurable taker fee (default 0.10% per fill) and fixed adverse slippage (default 0.05% per fill). Both are recorded in `execution_config` on every backtest run. Maker/rebate tiers and OHLC-based spread/volume inference are deferred.
+
+**Partial fills:** The state contract supports partial fills, but the default Paper Broker fills complete. When partial fills are enabled, quantity-weighted average entry/exit prices are used with one net position per account/instrument.
+
+**Protective-trigger ambiguity:** When both stop-loss and take-profit levels could be touched in a single candle (high and low both exceeding limits), a conservative deterministic rule applies: stop-loss first. This rule is recorded in `execution_config`.
+
+**Unknown order state:** A broker timeout or non-deterministic response produces an `unknown` order state. The system fails closed — unknown orders are never retried until reconciliation resolves the state. The EventBus does not retry unknown broker operations; reconciliation decides whether retry is safe.
 
 ### Journal and Analytics
 
 Journal and Analytics consume completed Trade facts and read persisted repositories. They do not own execution state. Journal writes are idempotent and associate trades with the account, bot, strategy version, and market context.
+
+**Numeric policy:** Monetary metrics (P&L, fees, drawdown amounts) use `Decimal`/`NUMERIC`. Non-monetary ratios (Sharpe, profit factor) may use `Float`/`FLOAT` under coding-standards conventions, but the documentation must define serialization behavior and explicit undefined-value handling (e.g., zero variance, no losing trades).
 
 ## EventBus
 
