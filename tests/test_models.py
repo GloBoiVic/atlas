@@ -69,6 +69,10 @@ def test_metadata_registers_all_bot_foreign_key_targets() -> None:
         "reconciliation_runs",
         "strategies",
         "strategy_versions",
+        "orders",
+        "fills",
+        "positions",
+        "trades",
     }
     assert Strategy.__table__.c.name.unique is True
     assert StrategyVersion.__table__.c.strategy_id.foreign_keys

@@ -43,6 +43,7 @@ class PositionInfo:
     direction: SignalDirection
     quantity: Decimal
     status: PositionStatus
+    strategy_version_id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,7 +73,7 @@ class _Reject(Exception):
         self.reason = f"{code}: {detail}"
 
 
-ReservationKey = tuple[UUID, UUID, AccountMode]
+ReservationKey = tuple[UUID, UUID, UUID, AccountMode]
 ContextProviderLike = RiskContextProvider | Callable[[Signal], RiskContext | Awaitable[RiskContext]]
 
 
@@ -117,8 +118,13 @@ class RiskEngine:
                     occurred_at=context.clock_timestamp,
                 )
             self._validate_entry_context(context)
-            reservation_key = (context.account_id, signal.instrument_id, context.mode)
-            self._check_position_conflict(context, reservation_key)
+            reservation_key = (
+                context.account_id,
+                signal.instrument_id,
+                signal.strategy_version_id,
+                context.mode,
+            )
+            self._check_position_conflict(context, reservation_key, signal.strategy_version_id)
             stop = self._resolve_stop(signal.direction, context.entry_price)
             stop = self._round_stop(signal.direction, stop, context.instrument)
             if (
@@ -167,7 +173,12 @@ class RiskEngine:
                 isinstance(decision, RiskApproved)
                 and event.signal.direction is not SignalDirection.CLOSE
             ):
-                key = (self._account_id, event.signal.instrument_id, self._mode)
+                key = (
+                    self._account_id,
+                    event.signal.instrument_id,
+                    event.signal.strategy_version_id,
+                    self._mode,
+                )
                 self._reservations.add(key)
             await self._event_bus.publish(
                 replace(
@@ -233,13 +244,18 @@ class RiskEngine:
         if not _finite_positive(risk) or risk > Decimal("0.02"):
             raise _Reject("risk_limit_exceeded", "per-trade risk must be at most 0.02")
 
-    def _check_position_conflict(self, context: RiskContext, key: ReservationKey) -> None:
+    def _check_position_conflict(
+        self, context: RiskContext, key: ReservationKey, strategy_version_id: UUID
+    ) -> None:
         scoped_positions = {
             (context.account_id, context.mode, position.instrument_id)
             for position in context.open_positions
             if position.account_id == context.account_id
             and position.status in (PositionStatus.OPEN, PositionStatus.REDUCING)
-            and (position.bot_id is None or position.bot_id == context.bot_id)
+            and (
+                position.strategy_version_id == strategy_version_id
+                or (position.strategy_version_id is None and position.bot_id == context.bot_id)
+            )
         }
         # A RiskContext is a mode-scoped snapshot. Keep mode in the derived scope key rather
         # than treating positions from another execution mode as interchangeable state.
@@ -248,11 +264,10 @@ class RiskEngine:
             raise _Reject("direction_conflict", "an open net position already exists")
         if key in self._reservations:
             raise _Reject("pending_entry", "an entry for this instrument is pending")
-        pending = {
-            (account, mode, instrument)
-            for account, instrument, mode in self._reservations
-            if account == context.account_id and mode is context.mode
-        }
+        pending: set[tuple[UUID, AccountMode, UUID]] = set()
+        for account, instrument, _strategy, mode in self._reservations:
+            if account == context.account_id and mode is context.mode:
+                pending.add((account, mode, instrument))
         if len(scoped_positions | pending) >= self._config.max_open_positions:
             raise _Reject("max_open_positions", "maximum open positions reached")
 
@@ -353,9 +368,32 @@ class RiskEngine:
             )
         return result
 
-    def release_reservation(self, instrument_id: UUID, mode: AccountMode | None = None) -> None:
-        """Release a pending entry after a terminal downstream outcome."""
-        self._reservations.discard((self._account_id, instrument_id, mode or self._mode))
+    def release_reservation(
+        self,
+        instrument_id: UUID,
+        mode: AccountMode | None = None,
+        strategy_version_id: UUID | None = None,
+    ) -> None:
+        """Release a terminal reservation, scoped to strategy when identity is available.
+
+        ``strategy_version_id=None`` is an intentional full-scope fallback for lifecycle
+        callers that genuinely cannot recover strategy identity (for example, an old
+        un-attributed cancellation record).
+        """
+        selected_mode = mode or self._mode
+        retained: set[ReservationKey] = set()
+        for account, reserved_instrument, strategy, reserved_mode in self._reservations:
+            if not (
+                account == self._account_id
+                and reserved_instrument == instrument_id
+                and reserved_mode is selected_mode
+                and (
+                    strategy_version_id is None
+                    or strategy == strategy_version_id
+                )
+            ):
+                retained.add((account, reserved_instrument, strategy, reserved_mode))
+        self._reservations = retained
 
     def reset(self) -> None:
         """Clear transient reservations during pipeline reset or restart."""
@@ -365,9 +403,14 @@ class RiskEngine:
         """Explicit lifecycle alias for clearing transient pending entries."""
         self.reset()
 
-    def on_terminal_outcome(self, instrument_id: UUID, mode: AccountMode | None = None) -> None:
-        """Release the reservation for a terminal order rejection or cancellation."""
-        self.release_reservation(instrument_id, mode)
+    def on_terminal_outcome(
+        self,
+        instrument_id: UUID,
+        mode: AccountMode | None = None,
+        strategy_version_id: UUID | None = None,
+    ) -> None:
+        """Release a terminal order reservation with strategy-aware attribution."""
+        self.release_reservation(instrument_id, mode, strategy_version_id)
 
     def unsubscribe(self) -> None:
         """Remove the engine's EventBus subscription."""

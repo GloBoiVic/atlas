@@ -180,9 +180,9 @@ CREATE TABLE reconciliation_runs (
 
 ## Schema — Feature 03 Delivered and Feature 04+ Planned
 
-`instruments` and `candles` (documented below) were delivered by migration **006** and are
-part of the deployed schema, alongside the foundation tables. The remaining tables (Orders
-through Backtest Trades) document the target domain shape and are **not yet migrated**.
+`instruments` and `candles` (documented below) were delivered by migration **006**. Execution
+orders, fills, positions, and trades were added by migration **007**. Backtest and journal
+tables remain planned and are not yet migrated.
 
 ### Instruments
 
@@ -285,37 +285,36 @@ data is a deferred design concern.
 
 ### Orders
 
+Migration **007** adds the durable execution order table. It uses native UUID references,
+NUMERIC values for all trading quantities/prices, a unique client order ID, a unique broker
+order ID, and explicit one-way Futures fields (`reduce_only`, `leverage`, and `mode`).
+
 ```sql
 CREATE TABLE orders (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     account_id UUID NOT NULL REFERENCES accounts(id),
     bot_id UUID REFERENCES bots(id),
     strategy_version_id UUID REFERENCES strategy_versions(id),
+    instrument_id UUID NOT NULL REFERENCES instruments(id),
     broker_order_id VARCHAR(255),
     client_order_id VARCHAR(255) NOT NULL UNIQUE,
-    instrument_id UUID REFERENCES instruments(id),
-    symbol VARCHAR(50) NOT NULL,
     side VARCHAR(10) NOT NULL,
-    quantity NUMERIC(20, 8) NOT NULL,
+    quantity NUMERIC(28, 12) NOT NULL,
     order_type VARCHAR(20) NOT NULL,
-    price NUMERIC(20, 8),
-    stop_loss NUMERIC(20, 8),
-    take_profit NUMERIC(20, 8),
+    stop_loss NUMERIC(28, 12) NOT NULL DEFAULT 0,
+    take_profit NUMERIC(28, 12) NOT NULL DEFAULT 0,
+    reduce_only BOOLEAN NOT NULL DEFAULT false,
+    leverage NUMERIC(12, 6) NOT NULL DEFAULT 1,
     status VARCHAR(20) NOT NULL DEFAULT 'pending',
-    fill_price NUMERIC(20, 8),
-    filled_quantity NUMERIC(20, 8) NOT NULL DEFAULT 0,
-    filled_at TIMESTAMP WITH TIME ZONE,
-    strategy_name VARCHAR(255),
-    signal_metadata JSONB DEFAULT '{}',
-    broker VARCHAR(50) NOT NULL,
+    filled_quantity NUMERIC(28, 12) NOT NULL DEFAULT 0,
+    average_fill_price NUMERIC(28, 12),
     mode VARCHAR(20) NOT NULL,
-    error_message TEXT,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    UNIQUE (broker_order_id)
 );
 
 CREATE INDEX idx_orders_status ON orders(status);
-CREATE UNIQUE INDEX idx_orders_broker_id ON orders(broker_order_id) WHERE broker_order_id IS NOT NULL;
 ```
 
 ### Fills
@@ -327,18 +326,23 @@ CREATE TABLE fills (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     order_id UUID NOT NULL REFERENCES orders(id),
     account_id UUID NOT NULL REFERENCES accounts(id),
+    instrument_id UUID NOT NULL REFERENCES instruments(id),
     broker_fill_id VARCHAR(255),
-    quantity NUMERIC(20, 8) NOT NULL,
-    price NUMERIC(20, 8) NOT NULL,
-    fee NUMERIC(20, 8) NOT NULL DEFAULT 0,
-    filled_at TIMESTAMP WITH TIME ZONE NOT NULL,
-    UNIQUE(order_id, broker_fill_id)
+    side VARCHAR(10) NOT NULL,
+    quantity NUMERIC(28, 12) NOT NULL,
+    price NUMERIC(28, 12) NOT NULL,
+    fee NUMERIC(28, 12) NOT NULL DEFAULT 0,
+    filled_at TIMESTAMP WITH TIME ZONE NOT NULL
 );
+
+CREATE UNIQUE INDEX idx_fills_broker_execution
+    ON fills(broker_fill_id) WHERE broker_fill_id IS NOT NULL;
 ```
 
 ### Positions
 
-One net position per account and instrument.
+One active net position per account, instrument, and execution mode. Both `open` and
+`reducing` rows participate in the partial unique index; closed history is retained.
 
 ```sql
 CREATE TABLE positions (
@@ -346,27 +350,28 @@ CREATE TABLE positions (
     account_id UUID NOT NULL REFERENCES accounts(id),
     bot_id UUID REFERENCES bots(id),
     strategy_version_id UUID REFERENCES strategy_versions(id),
-    instrument_id UUID REFERENCES instruments(id),
-    symbol VARCHAR(50) NOT NULL,
+    instrument_id UUID NOT NULL REFERENCES instruments(id),
     side VARCHAR(10) NOT NULL,
-    entry_price NUMERIC(20, 8) NOT NULL,
-    current_price NUMERIC(20, 8),
-    quantity NUMERIC(20, 8) NOT NULL,
-    stop_loss NUMERIC(20, 8),
-    take_profit NUMERIC(20, 8),
-    unrealized_pnl NUMERIC(20, 8) DEFAULT 0,
-    realized_pnl NUMERIC(20, 8) DEFAULT 0,
+    quantity NUMERIC(28, 12) NOT NULL,
+    entry_price NUMERIC(28, 12) NOT NULL,
+    current_price NUMERIC(28, 12),
+    stop_loss NUMERIC(28, 12),
+    take_profit NUMERIC(28, 12),
+    unrealized_pnl NUMERIC(28, 12) NOT NULL DEFAULT 0,
+    realized_pnl NUMERIC(28, 12) NOT NULL DEFAULT 0,
+    leverage NUMERIC(12, 6) NOT NULL DEFAULT 1,
+    isolated_margin NUMERIC(28, 12) NOT NULL DEFAULT 0,
+    maintenance_margin NUMERIC(28, 12) NOT NULL DEFAULT 0,
+    liquidation_price NUMERIC(28, 12),
     status VARCHAR(20) NOT NULL DEFAULT 'open',
-    broker VARCHAR(50) NOT NULL,
     mode VARCHAR(20) NOT NULL,
-    opened_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    closed_at TIMESTAMP WITH TIME ZONE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    opened_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    closed_at TIMESTAMP WITH TIME ZONE
 );
 
-CREATE UNIQUE INDEX idx_one_open_net_position
-    ON positions(account_id, instrument_id, mode) WHERE status = 'open';
+CREATE UNIQUE INDEX idx_one_active_net_position
+    ON positions(account_id, instrument_id, mode)
+    WHERE status IN ('open', 'reducing');
 ```
 
 ### Trades
@@ -380,23 +385,20 @@ CREATE TABLE trades (
     account_id UUID NOT NULL REFERENCES accounts(id),
     bot_id UUID REFERENCES bots(id),
     strategy_version_id UUID REFERENCES strategy_versions(id),
-    position_id UUID REFERENCES positions(id),
-    instrument_id UUID REFERENCES instruments(id),
-    symbol VARCHAR(50) NOT NULL,
+    position_id UUID NOT NULL REFERENCES positions(id),
+    instrument_id UUID NOT NULL REFERENCES instruments(id),
     direction VARCHAR(10) NOT NULL,
-    entry_price NUMERIC(20, 8) NOT NULL,
-    exit_price NUMERIC(20, 8),
-    quantity NUMERIC(20, 8) NOT NULL,
-    gross_pnl NUMERIC(20, 8),
-    net_pnl NUMERIC(20, 8),
-    total_fees NUMERIC(20, 8) DEFAULT 0,
+    entry_price NUMERIC(28, 12) NOT NULL,
+    exit_price NUMERIC(28, 12),
+    quantity NUMERIC(28, 12) NOT NULL,
+    gross_pnl NUMERIC(28, 12),
+    net_pnl NUMERIC(28, 12),
+    total_fees NUMERIC(28, 12) NOT NULL DEFAULT 0,
     status VARCHAR(20) NOT NULL DEFAULT 'entered',
-    signal_metadata JSONB DEFAULT '{}',
-    market_context JSONB DEFAULT '{}',
+    signal_metadata JSONB NOT NULL DEFAULT '{}',
+    market_context JSONB NOT NULL DEFAULT '{}',
     entry_time TIMESTAMP WITH TIME ZONE NOT NULL,
-    exit_time TIMESTAMP WITH TIME ZONE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    exit_time TIMESTAMP WITH TIME ZONE
 );
 
 CREATE INDEX idx_trades_status ON trades(status);
@@ -620,7 +622,11 @@ rewritten or deleted.
   Requires upgrade/downgrade tests in Codespace PostgreSQL.
 - `006_create_instruments_and_candles` — Creates `instruments` and `candles` tables
   (native `UUID` columns, unique constraints, `idx_candles_lookup` index).
-  Requires upgrade/downgrade tests in Codespace PostgreSQL.
+   Requires upgrade/downgrade tests in Codespace PostgreSQL.
+- `007_execution_state` — Creates durable orders, append-only fills, one-way isolated
+  positions, and trade lifecycle aggregates. Client order IDs, broker order IDs, and broker
+  execution IDs are idempotency keys; the active position uniqueness is scoped by account,
+  instrument, and mode. Requires PostgreSQL migration upgrade/downgrade coverage.
 
 Existing migrations use `String(36)`. Migration 005 closes the UUID gap for the
 existing tables. Migration 006 creates all new tables with native PostgreSQL `UUID`

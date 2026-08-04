@@ -110,3 +110,48 @@
 - Final validation: `python3 -m pytest -q` — 256 passed; Ruff clean; mypy clean.
 - Feature 04 is complete at the component level. YAML → registry → engine wiring
   remains intentionally owned by Feature 05 Bot Supervisor.
+# Feature 07 — Contracts and Events
+
+- Implemented immutable execution Order, Fill, Position, and Trade contracts.
+- Added broker protocols/results/snapshots and typed execution event payloads.
+- Added focused contract and event tests.
+- Validation: 292 backend tests passed, Ruff clean, mypy clean.
+- Reviewer: spec compliance PASS; task quality PASS after documentation checkbox fix.
+
+## Feature 07 — Persistence and Futures Paper Broker
+
+- Added migration 007, SQLAlchemy execution models, and repository protocols/implementations.
+- Added isolated-margin Futures Paper Broker with 1x default/2x maximum leverage, configurable
+  taker fees, funding, bid/ask and next-open fills, mark-price P&L, protective triggers, and
+  deterministic liquidation.
+- Added idempotency and persistence-path tests; reconciled database documentation.
+- Validation: 304 tests passed; Ruff clean; slice mypy clean.
+- Reviewer: spec compliance PASS; task quality PASS after fixes.
+
+## Feature 07 — Reconciliation and Recovery
+
+- Added broker-authoritative reconciliation for startup, reconnect, and periodic recovery.
+- Added complete PaperBroker snapshots, unknown-order resolution, duplicate-fill handling,
+  orphan-position closure, mode scoping, persisted bot attribution, and explicit block/unblock.
+- Added comprehensive reconciliation tests.
+- Validation: 322 tests passed; Ruff clean; changed-slice mypy clean.
+- Reviewer: spec compliance PASS; task quality PASS; only minor edge-case guardrails remain.
+
+## Feature 07 — Final Validation
+
+- Whole-feature review: PASS with zero Critical or Important findings.
+- Backend pytest: 322 passed.
+- Ruff: clean.
+- Feature 07 source, tests, and migration mypy: clean.
+- Three pre-existing unrelated test mypy warnings remain documented and do not block Feature 07.
+- Feature 07 is complete; next scheduled feature is Feature 05 — Backtesting.
+
+## Feature 07 — Net Exposure Coordinator and Execution Engine
+
+- Added account-level net target coordination, per-strategy virtual exposure, deterministic
+  FIFO reduction allocation, and explicit close-then-open reversals.
+- Integrated `RiskApproved` with durable order/fill/position/trade transitions and typed events.
+- Updated RiskEngine reservations for strategy-aware multi-bot netting.
+- Added idempotency, partial-fill, unknown-state, bot-isolation, FIFO, and provenance tests.
+- Validation: 310 tests passed; Ruff clean; changed-slice mypy clean (unrelated legacy errors remain).
+- Reviewer: spec compliance PASS; task quality PASS after review fixes.

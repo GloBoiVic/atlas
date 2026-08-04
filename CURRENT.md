@@ -5,18 +5,18 @@ Last updated: 2026-08-04
 ## Status
 
 - [ ] Not started
-- [ ] In progress
-- [x] Complete
+- [x] In progress
+- [ ] Complete
 
 ## Feature
 
-- **Number:** 06
-- **Name:** Risk Engine
-- **File:** context/features/06-risk-engine.md
+- **Number:** 07
+- **Name:** Execution Layer
+- **File:** context/features/07-execution-layer.md
 
 ## Branch
 
-- **Name:** feature/06-risk-engine
+- **Name:** feature/07-execution-layer
 - **Created:** 2026-08-04
 
 ## Current session
@@ -123,7 +123,59 @@ Last updated: 2026-08-04
 
 ## What comes next
 
-- **Next scheduled feature:** Feature 07 — Execution Layer.
+- **Next scheduled feature:** Feature 05 — Backtesting.
+
+### Feature 07 — Contracts slice (2026-08-04)
+
+- [x] Added immutable Order, Fill, Position, and Trade domain contracts with UUID,
+      instrument_id, Decimal, UTC, and one-way Futures semantics.
+- [x] Added broker-facing OrderResult, AccountInfo, BrokerSnapshot, and Broker protocols.
+- [x] Added typed frozen keyword-only execution event payloads and focused tests.
+- [x] No persistence, Binance connectivity, or execution engine implemented.
+
+### Feature 07 — Persistence and paper broker slice (2026-08-04)
+
+- [x] Started implementation of the PostgreSQL execution persistence boundary and
+      Futures-aware Paper Broker.
+
+### Feature 07 — Persistence and paper broker slice complete (2026-08-04)
+
+- [x] Added migration 007 and SQLAlchemy execution models for orders, append-only fills,
+      active one-way positions, and trade lifecycle aggregates.
+- [x] Added UUID/NUMERIC repository protocols, SQLAlchemy implementation, and in-memory
+      deterministic implementation with client, broker-order, and broker-execution idempotency.
+- [x] Added isolated-margin Futures Paper Broker with 1x default/2x hard maximum leverage,
+      configurable 0.05% taker fee, separate funding, executable bid/ask and backtest prices,
+      mark-price P&L, protective triggers, maintenance margin, and non-negative liquidation.
+- [x] Added focused Paper Broker tests.
+- [x] Execution Engine and account-level net exposure coordinator remain deferred to the next
+      Feature 07 slice.
+- [x] Backend pytest: 300 passed
+- [x] Ruff: clean
+- [x] mypy: clean
+
+### Feature 07 — Net exposure coordinator and RiskApproved integration (2026-08-04)
+
+- [x] Added account/instrument serialization, strategy-keyed virtual exposures, deterministic
+      net target/delta calculation, explicit close-before-reversal, and FIFO allocation helper.
+- [x] Added ExecutionEngine RiskApproved subscription with durable client IDs before broker I/O,
+      persistence-before-event ordering, provenance propagation, duplicate-fill handling,
+      partial-fill handling, and unknown-state blocking.
+- [x] Reconciled Feature 06's former instrument-wide conflict rule to the approved
+      cross-strategy policy while retaining same-strategy no-scaling behavior.
+- [x] Added multi-strategy netting and reversal integration coverage.
+- [x] Added strategy-aware reservation tests, typed execution fixtures, coordinator idempotency/
+      FIFO/event coverage, and cumulative trade fee/P&L updates for partial fills.
+- [x] Focused validation: 57 passed; full backend suite: 308 passed; slice Ruff/mypy clean.
+
+### Slice 2 review fixes (2026-08-04)
+
+- [x] Fully annotated Paper Broker test helpers and async test signatures.
+- [x] Reconciled execution schema documentation with migration 007/ORM, including
+      NUMERIC(28, 12) precision and idempotency indexes.
+- [x] Added accumulation, weighted-average, partial/full close, protective trigger,
+      liquidation, re-marking, and repository-backed persistence/idempotency coverage.
+- [x] Validation: 304 pytest passed; Ruff and mypy clean.
 
 ### Feature 06 final validation (2026-08-04)
 
@@ -133,3 +185,29 @@ Last updated: 2026-08-04
 - [x] Backend pytest: 266 passed
 - [x] Ruff: clean
 - [x] mypy: clean
+
+### Feature 07 — Reconciliation and recovery slice (2026-08-04)
+
+- [x] Implemented broker-snapshot reconciliation behind broker/repository/coordinator protocols
+- [x] Added authoritative order, fill, and position comparison with provenance preservation,
+      unknown-order recovery, fill idempotency, durable reconciliation records, and fail-closed
+      coordinator blocking/unblocking
+- [x] Added startup, reconnect, periodic invocation methods and matching, missing-state,
+      mismatch, duplicate-execution, unblock, and restart-recovery tests
+
+### Feature 07 — Reconciliation review fixes (2026-08-04)
+
+- [x] Paper Broker reconciliation now returns its complete order/fill ledger plus positions
+- [x] Added real Paper Broker regression coverage, missing-local-fill recovery, orphan-position
+      closure, mode-scoped fills, lifecycle entry points, bot/account scope, and coordinator
+      blocking tests
+- [x] Reconciliation test helpers are fully typed; changed-slice mypy is clean
+- [x] Validation: 322 pytest passed; Ruff clean; mypy clean
+
+### Feature 07 — Final validation gate (2026-08-04)
+
+- [x] Whole-feature review passed with zero Critical or Important findings
+- [x] Backend pytest: 322 passed
+- [x] Ruff: clean
+- [x] Feature 07 source, tests, and migration mypy: clean
+- [x] Feature 07 complete; next scheduled feature is Feature 05 — Backtesting

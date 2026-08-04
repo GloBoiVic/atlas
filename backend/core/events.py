@@ -13,6 +13,7 @@ from backend.core.account_mode import AccountMode
 if TYPE_CHECKING:
     from backend.data.models import Candle as CandleModel
     from backend.data.models import Tick as TickModel
+    from backend.execution.models import Fill, Order, Position, Trade
     from backend.strategy.contracts import Signal
 
 logger = structlog.get_logger(__name__)
@@ -65,32 +66,34 @@ class RiskRejected(DomainEvent):
 
 @dataclass(frozen=True, slots=True)
 class OrderSubmitted(DomainEvent):
-    pass
+    order: "Order" = field(kw_only=True)
+    broker_order_id: str = field(kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)
 class OrderFilled(DomainEvent):
-    pass
+    order: "Order" = field(kw_only=True)
+    fill: "Fill" = field(kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)
 class PositionOpened(DomainEvent):
-    pass
+    position: "Position" = field(kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)
 class PositionUpdated(DomainEvent):
-    pass
+    position: "Position" = field(kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)
 class PositionClosed(DomainEvent):
-    pass
+    position: "Position" = field(kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)
 class TradeClosed(DomainEvent):
-    pass
+    trade: "Trade" = field(kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,12 +108,14 @@ class DataFeedError(DomainEvent):
 
 @dataclass(frozen=True, slots=True)
 class OrderRejected(DomainEvent):
-    pass
+    order_id: UUID = field(kw_only=True)
+    reason: str = field(kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)
 class OrderFailed(DomainEvent):
-    pass
+    order_id: UUID = field(kw_only=True)
+    error: str = field(kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)

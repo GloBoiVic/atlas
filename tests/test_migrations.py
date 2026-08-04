@@ -13,6 +13,7 @@ CONSTRAINT_MIGRATION_PATH = MIGRATIONS_PATH / "003_bot_run_unique_constraint.py"
 DROP_MIGRATION_PATH = MIGRATIONS_PATH / "004_drop_bot_runs.py"
 UUID_MIGRATION_PATH = MIGRATIONS_PATH / "005_uuid_identity_migration.py"
 INSTRUMENTS_MIGRATION_PATH = MIGRATIONS_PATH / "006_create_instruments_and_candles.py"
+EXECUTION_MIGRATION_PATH = MIGRATIONS_PATH / "007_execution_state.py"
 
 
 def load_migration(path: Path = MIGRATION_PATH):  # type: ignore[no-untyped-def]
@@ -285,3 +286,38 @@ def test_instruments_migration_downgrade_drops_in_correct_order() -> None:
     assert sql.index("DROP INDEX") < sql.index("DROP TABLE candles")
     # candles must be dropped before instruments (FK dependency)
     assert sql.index("DROP TABLE candles") < sql.index("DROP TABLE instruments")
+
+
+def test_execution_migration_follows_instruments_and_has_execution_tables() -> None:
+    migration = load_migration(EXECUTION_MIGRATION_PATH)
+
+    assert migration.revision == "007"
+    assert migration.down_revision == "006"
+    assert callable(migration.upgrade)
+    assert callable(migration.downgrade)
+
+
+def test_execution_migration_contains_idempotency_and_active_position_constraints() -> None:
+    output = StringIO()
+    context = MigrationContext.configure(
+        dialect_name="postgresql",
+        opts={"as_sql": True, "output_buffer": output},
+    )
+    operations = Operations(context)
+    migration = load_migration(EXECUTION_MIGRATION_PATH)
+    original_op = migration.op
+    migration.op = operations
+    try:
+        migration.upgrade()
+    finally:
+        migration.op = original_op
+    sql = output.getvalue()
+
+    assert "CREATE TABLE orders" in sql
+    assert "CREATE TABLE fills" in sql
+    assert "CREATE TABLE positions" in sql
+    assert "CREATE TABLE trades" in sql
+    assert "UNIQUE (client_order_id)" in sql
+    assert "idx_fills_broker_execution" in sql
+    assert "idx_one_active_net_position" in sql
+    assert "status IN ('open', 'reducing')" in sql

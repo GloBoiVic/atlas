@@ -171,7 +171,7 @@ The `Broker` interface exposes order submission, cancellation, account state, po
 
 **Order-type scope:** MVP order types are market entries and execution-managed protective exits only. Limit, stop-limit, OCO, iceberg, and order-book-aware fill models are deferred.
 
-**Fees and slippage:** Configurable taker fee (default 0.10% per fill) and fixed adverse slippage (default 0.05% per fill). Both are recorded in `execution_config` on every backtest run. Maker/rebate tiers and OHLC-based spread/volume inference are deferred.
+**Fees and slippage:** Configurable taker fee (default 0.05% per fill) and fixed adverse slippage (default 0.05% per fill). Both are recorded in `execution_config` on every backtest run. Maker/rebate tiers and OHLC-based spread/volume inference are deferred.
 
 **Partial fills:** The state contract supports partial fills, but the default Paper Broker fills complete. When partial fills are enabled, quantity-weighted average entry/exit prices are used with one net position per account/instrument.
 

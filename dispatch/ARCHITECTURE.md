@@ -1,9 +1,109 @@
-# Feature 06 — Risk Engine Implementation Blueprint
+# Feature 07 — Execution Layer Implementation Blueprint
 
 **Status:** Authoritative planning record — developer-approved decisions incorporated
 **Date:** 2026-08-04
-**Scope:** Feature 06 only; planning only. No application or context files are changed by
+**Scope:** Feature 07 only; planning only. No application or context files are changed by
 this blueprint.
+
+## 1. Purpose and governing principles
+
+Atlas executes a single-user, single-worker trading platform's net exposure through a
+broker-agnostic execution boundary. The initial product model is Binance USDⓈ-M Futures
+`BTCUSDT` perpetual, but the domain contracts must not hardcode Binance API details.
+
+The execution core owns durable order, fill, position, and trade transitions. PostgreSQL is
+the source of truth; the in-process EventBus publishes committed facts and is never treated
+as a durable queue. Unknown broker state fails closed and is resolved only by reconciliation.
+
+## 2. Approved vocabulary and product model
+
+- **Broker position:** The single net one-way Futures position for an account/instrument/mode.
+- **Virtual strategy exposure:** Atlas's per-bot signed exposure used for strategy attribution;
+  it is not an independent broker position.
+- **Net target:** The aggregate of active strategy exposures for one account/instrument/mode.
+- **Executable price:** Side-specific bid/ask context used for paper fills.
+- **Mark price:** Risk/trigger price used for protective exits and liquidation checks.
+- **Reversal:** A reduce-only close followed by a separately confirmed opening order.
+- **Unknown:** A broker outcome that cannot be safely classified; it is never retried before
+  reconciliation.
+
+## 3. Scope and boundaries
+
+Feature 07 includes domain contracts, persistence, state machines, net exposure coordination,
+FIFO allocation, Futures-aware Paper Broker, and reconciliation protocols. It excludes the
+Binance authenticated adapter, which belongs to Feature 09.
+
+The Execution Engine consumes only `RiskApproved`. Risk remains the authority for approval,
+but Feature 07 owns affordability, leverage/margin checks, order submission, fills, position
+and trade transitions, fees, funding, protective triggers, and durable persistence.
+
+## 4. Position and strategy coordination
+
+Active duplicate `(account_id, instrument_id, strategy_id, mode)` combinations are rejected.
+Different strategy identities may share an instrument. Each bot maintains virtual exposure,
+while an account-level coordinator calculates the aggregate net target and submits only the
+delta from the broker position. A fill reducing opposing virtual exposure is allocated FIFO
+by virtual-position opening time. The resulting trade remains attributed to the virtual
+position being reduced.
+
+The coordinator serializes one account/instrument transition at a time. A target crossing
+zero first creates a reduce-only close order; a new-direction order is eligible only after
+the close is confirmed. Unresolved or partially filled transitions block the new opening leg.
+
+## 5. Futures execution policy
+
+- USDⓈ-M linear perpetual; quantity is BTC contract units, not margin amount.
+- P&L, margin, fees, and funding are denominated in USDT.
+- Isolated margin, one-way mode, default leverage 1×, hard maximum 2×.
+- Market entries are taker executions; default paper fee is configurable at 0.05% of
+  notional. Funding is a separate configurable cash adjustment.
+- Paper state tracks wallet balance, available/used isolated margin, unrealized P&L,
+  maintenance margin, and liquidation. Insufficient margin rejects an order; liquidation is
+  deterministic, emits a forced-close fact, and cannot produce a negative paper balance.
+- Protective exits are Atlas-managed and reduce-only. Mark price triggers them; fills use
+  executable side-specific price plus configured adverse slippage.
+- Backtest mode uses next-candle-open fills. Live paper mode requires a fresh executable
+  bid/ask context. Missing or stale price context fails closed.
+
+## 6. Persistence and event ordering
+
+The client order ID is generated and persisted before broker submission. Every write path is
+idempotent on client order ID, broker order ID, and broker execution/fill ID where available.
+Order, fill, position, and trade facts are persisted and committed before corresponding
+EventBus notifications are published. A publish failure does not justify a broker retry;
+recovery reads durable state and reconciliation snapshots.
+
+The internal order state machine supports:
+
+```text
+pending → submitted → partially_filled → filled
+                         ↘ canceled / rejected / expired / unknown
+```
+
+Order status and individual fill events remain separate. Repeated broker updates cannot
+create duplicate fills.
+
+## 7. Reconciliation
+
+The broker stream supplies incremental updates. REST snapshots are authoritative during
+startup, reconnect, periodic reconciliation, and unknown-order recovery. Reconciliation
+records snapshots and differences, deduplicates executions, and leaves the account/bot
+blocked from new orders while discrepancies remain unresolved.
+
+## 8. Implementation and test gates
+
+Implement in vertical slices: contracts/events; persistence; paper broker; coordinator and
+engine; reconciliation and quality gates. Tests must cover state transition legality,
+idempotency, partial fills, fees/funding, margin rejection, liquidation, stale prices,
+reduce-only exits, close-then-open reversals, multi-strategy FIFO allocation, restart
+reconciliation, bot isolation, and deterministic backtest/paper behavior. Run backend pytest,
+Ruff, and mypy before review.
+
+## 9. Explicit non-goals
+
+No authenticated Binance adapter, production trading, cross-margin, Hedge Mode, leverage over
+2×, limit/smart-routing/OCO orders, broker-native protective orders, distributed messaging,
+or cross-worker leases.
 
 ## 1. Purpose and governing principles
 
