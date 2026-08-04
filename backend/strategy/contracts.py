@@ -3,12 +3,12 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
-from enum import Enum
-from typing import Any
+from enum import StrEnum
+from typing import Any, cast
 from uuid import UUID
 
 
-class SignalDirection(str, Enum):
+class SignalDirection(StrEnum):
     """The trading action represented by a strategy decision."""
 
     BUY = "buy"
@@ -16,14 +16,35 @@ class SignalDirection(str, Enum):
     CLOSE = "close"
 
 
-class DataType(str, Enum):
+class DataType(StrEnum):
     """Market data kinds a strategy may observe."""
 
     CANDLE = "candle"
     TICK = "tick"
 
 
-class _FrozenJsonDict(dict[str, Any]):
+type JsonValue = (
+    None
+    | str
+    | int
+    | bool
+    | Decimal
+    | dict[str, "JsonValue"]
+    | list["JsonValue"]
+    | tuple["JsonValue", ...]
+)
+type FrozenJsonValue = (
+    None
+    | str
+    | int
+    | bool
+    | Decimal
+    | "_FrozenJsonDict"
+    | tuple["FrozenJsonValue", ...]
+)
+
+
+class _FrozenJsonDict(dict[str, FrozenJsonValue]):
     """Dict-compatible JSON object that rejects mutation after construction."""
 
     def __setitem__(self, key: str, value: Any) -> None:
@@ -48,12 +69,12 @@ class _FrozenJsonDict(dict[str, Any]):
         raise TypeError("metadata is immutable")
 
 
-def _freeze_json(value: Any) -> Any:
+def _freeze_json(value: JsonValue) -> FrozenJsonValue:
     if isinstance(value, dict):
         frozen = _FrozenJsonDict()
         dict.update(frozen, {key: _freeze_json(item) for key, item in value.items()})
         return frozen
-    if isinstance(value, list):
+    if isinstance(value, (list, tuple)):
         return tuple(_freeze_json(item) for item in value)
     return value
 
@@ -76,7 +97,7 @@ class DataRequirement:
             raise ValueError("timeframe must end with a time unit")
 
 
-def _validate_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+def _validate_metadata(metadata: dict[str, Any]) -> _FrozenJsonDict:
     """Validate metadata while preserving Decimal indicator values at the domain boundary."""
 
     def validate(value: Any) -> None:
@@ -99,7 +120,10 @@ def _validate_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
         raise TypeError("metadata must contain JSON-compatible values or Decimal")
 
     validate(metadata)
-    return _freeze_json(metadata)
+    frozen = _freeze_json(cast("dict[str, JsonValue]", metadata))
+    if not isinstance(frozen, _FrozenJsonDict):
+        raise TypeError("metadata must be a JSON object")
+    return frozen
 
 
 def _validate_strength(strength: Decimal) -> None:

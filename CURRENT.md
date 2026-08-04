@@ -62,3 +62,9 @@ Last updated: 2026-08-04
 ## What comes next
 
 - Remaining Feature 04 deliverables
+
+### Contracts and registry quality fix (2026-08-04)
+
+- [x] Replaced string-mixin enums with Python 3.12 `StrEnum` while preserving values
+- [x] Typed metadata freezing/validation without weakening Decimal support or immutability
+- [x] Updated registry `Callable` import to `collections.abc`

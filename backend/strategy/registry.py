@@ -1,7 +1,8 @@
 """Trusted registry for explicitly deployed strategy factories."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 from uuid import UUID
 
 from backend.strategy.base import Strategy
