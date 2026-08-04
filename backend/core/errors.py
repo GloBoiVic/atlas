@@ -22,6 +22,10 @@ class DataError(AtlasError):
     """Market data retrieval error."""
 
 
+class HistoricalDataTimeoutError(DataError):
+    """Raised when a historical market-data request exceeds its timeout policy."""
+
+
 class ConfigError(AtlasError):
     """Configuration validation error."""
 

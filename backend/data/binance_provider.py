@@ -1,18 +1,34 @@
 """Binance Spot historical market-data provider backed by async ccxt."""
 
+import asyncio
 import re
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Protocol, cast
 
 import ccxt.async_support as ccxt  # type: ignore[import-untyped]
 
+from backend.core.clock import Clock, LiveClock
+from backend.core.errors import HistoricalDataTimeoutError
 from backend.data.interfaces import HistoricalDataProvider
 from backend.data.models import Candle, Instrument
 
 _MAX_PAGE_SIZE = 1000
 _TIMEFRAME = re.compile(r"^(?P<count>[1-9][0-9]*)(?P<unit>[mhdwM])$")
+
+
+@dataclass(frozen=True, slots=True)
+class BinanceTimeoutPolicy:
+    """Transport and operation timeouts for Binance historical requests."""
+
+    page_timeout_seconds: float = 10.0
+    overall_timeout_seconds: float = 600.0
+
+    def __post_init__(self) -> None:
+        if self.page_timeout_seconds <= 0 or self.overall_timeout_seconds <= 0:
+            raise ValueError("Binance timeout values must be positive")
 
 
 class _AsyncExchange(Protocol):
@@ -37,11 +53,18 @@ class BinanceHistoricalProvider(HistoricalDataProvider):
         self,
         exchange: _AsyncExchange | None = None,
         exchange_factory: ExchangeFactory | None = None,
+        clock: Clock | None = None,
+        timeout_policy: BinanceTimeoutPolicy | None = None,
     ) -> None:
         if exchange is not None and exchange_factory is not None:
             raise ValueError("provide exchange or exchange_factory, not both")
+        policy = timeout_policy or BinanceTimeoutPolicy()
         self._exchange = exchange
-        self._exchange_factory = exchange_factory or _create_binance
+        self._exchange_factory = exchange_factory or (
+            lambda: _create_binance(policy.page_timeout_seconds)
+        )
+        self._clock = clock or LiveClock()
+        self._timeout_policy = policy
 
     async def get_historical_candles(
         self,
@@ -63,6 +86,7 @@ class BinanceHistoricalProvider(HistoricalDataProvider):
 
         Raises:
             ValueError: If the request, symbol, or exchange response is invalid.
+            HistoricalDataTimeoutError: If a page or the overall historical request times out.
             asyncio.CancelledError: If the caller cancels the fetch.
         """
         start_utc, end_utc, interval = _validate_request(instrument, timeframe, start, end)
@@ -70,42 +94,98 @@ class BinanceHistoricalProvider(HistoricalDataProvider):
         exchange = self._exchange or self._exchange_factory()
         candles: dict[datetime, Candle] = {}
         since = _milliseconds(start_utc)
+        deadline = self._clock.now() + timedelta(
+            seconds=self._timeout_policy.overall_timeout_seconds
+        )
 
         try:
-            while since <= _milliseconds(end_utc):
-                rows = await exchange.fetch_ohlcv(symbol, timeframe, since, _MAX_PAGE_SIZE)
-                if not rows:
-                    break
-                page_last_timestamp: int | None = None
-                for row in rows:
-                    candle, timestamp_ms = _parse_row(row, instrument, timeframe, interval)
-                    if page_last_timestamp is not None and timestamp_ms < page_last_timestamp:
-                        raise ValueError("Binance returned OHLCV rows out of order")
-                    page_last_timestamp = timestamp_ms
-                    if start_utc <= candle.open_time <= end_utc:
-                        previous = candles.get(candle.open_time)
-                        if previous is not None and previous != candle:
-                            raise ValueError(
-                                "conflicting duplicate Binance candle at "
-                                f"{candle.open_time.isoformat()}"
-                            )
-                        candles[candle.open_time] = candle
-                if page_last_timestamp is None or page_last_timestamp < since:
-                    raise ValueError("Binance returned a page with no forward timestamp progress")
-                next_since = page_last_timestamp + _milliseconds(interval)
-                if next_since <= since:
-                    raise ValueError("Binance pagination timestamp overflow")
-                since = int(next_since)
-                if len(rows) < _MAX_PAGE_SIZE:
-                    break
+            await asyncio.wait_for(
+                self._fetch_pages(
+                    exchange,
+                    symbol,
+                    timeframe,
+                    start_utc,
+                    end_utc,
+                    interval,
+                    since,
+                    deadline,
+                    candles,
+                    instrument,
+                ),
+                timeout=self._timeout_policy.overall_timeout_seconds,
+            )
+        except TimeoutError as error:
+            raise HistoricalDataTimeoutError(
+                "Binance historical request exceeded its overall timeout"
+            ) from error
         finally:
             await exchange.close()
 
         return [candles[open_time] for open_time in sorted(candles)]
 
+    async def _fetch_pages(
+        self,
+        exchange: _AsyncExchange,
+        symbol: str,
+        timeframe: str,
+        start: datetime,
+        end: datetime,
+        interval: timedelta,
+        since: int,
+        deadline: datetime,
+        candles: dict[datetime, Candle],
+        instrument: Instrument,
+    ) -> None:
+        while since <= _milliseconds(end):
+            if self._clock.now() >= deadline:
+                raise HistoricalDataTimeoutError(
+                    "Binance historical request exceeded its overall timeout"
+                )
+            try:
+                rows = await asyncio.wait_for(
+                    exchange.fetch_ohlcv(symbol, timeframe, since, _MAX_PAGE_SIZE),
+                    timeout=self._timeout_policy.page_timeout_seconds,
+                )
+            except TimeoutError as error:
+                raise HistoricalDataTimeoutError(
+                    "Binance historical page request exceeded its timeout"
+                ) from error
+            if not rows:
+                break
+            page_last_timestamp: int | None = None
+            for row in rows:
+                candle, timestamp_ms = _parse_row(row, instrument, timeframe, interval)
+                if page_last_timestamp is not None and timestamp_ms < page_last_timestamp:
+                    raise ValueError("Binance returned OHLCV rows out of order")
+                page_last_timestamp = timestamp_ms
+                if start <= candle.open_time <= end:
+                    previous = candles.get(candle.open_time)
+                    if previous is not None and previous != candle:
+                        raise ValueError(
+                            "conflicting duplicate Binance candle at "
+                            f"{candle.open_time.isoformat()}"
+                        )
+                    candles[candle.open_time] = candle
+            if page_last_timestamp is None or page_last_timestamp < since:
+                raise ValueError("Binance returned a page with no forward timestamp progress")
+            next_since = page_last_timestamp + _milliseconds(interval)
+            if next_since <= since:
+                raise ValueError("Binance pagination timestamp overflow")
+            since = int(next_since)
+            if len(rows) < _MAX_PAGE_SIZE:
+                break
 
-def _create_binance() -> _AsyncExchange:
-    return cast("_AsyncExchange", ccxt.binance({"options": {"defaultType": "spot"}}))
+
+def _create_binance(page_timeout_seconds: float = 10.0) -> _AsyncExchange:
+    return cast(
+        "_AsyncExchange",
+        ccxt.binance(
+            {
+                "timeout": int(page_timeout_seconds * 1000),
+                "options": {"defaultType": "spot"},
+            }
+        ),
+    )
 
 
 def _milliseconds(value: datetime | timedelta) -> int:

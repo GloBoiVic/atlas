@@ -193,8 +193,10 @@ class CSVDataProvider(HistoricalDataProvider):
 
 ```python
 class BinanceHistoricalProvider(HistoricalDataProvider):
-    def __init__(self):
-        self.exchange = ccxt.async_support.binance()
+    def __init__(self, *, clock: Clock, timeout_policy: BinanceTimeoutPolicy):
+        self.clock = clock
+        self.timeout_policy = timeout_policy
+        self.exchange = ccxt.async_support.binance({"timeout": 10000})
 
     async def get_historical_candles(
         self, instrument: Instrument, timeframe: str,
@@ -217,6 +219,16 @@ class BinanceHistoricalProvider(HistoricalDataProvider):
 - Instrument constraints from `exchangeInfo` include `LOT_SIZE` (minQty, maxQty, stepSize),
   `PRICE_FILTER` (minPrice, maxPrice, tickSize), `MIN_NOTIONAL`. These are stored as the
   `constraints` JSONB metadata on the `Instrument` model.
+
+### Binance historical timeout contract
+
+- The provider receives a `Clock`; production composition supplies `LiveClock`, while tests may
+  supply a controllable clock. The clock is used for observable/domain-time deadline decisions.
+- Actual async transport cancellation is independent of `SimulationClock`: each ccxt page request
+  has a 10-second default timeout, and the complete pagination operation has a 600-second default
+  timeout. Both values are constructor-injected through `BinanceTimeoutPolicy`.
+- Timeout and cancellation paths close the ccxt exchange in the existing `finally` block and never
+  return candles collected before a failed operation.
 
 ### OANDA (Deferred)
 
@@ -413,6 +425,8 @@ remain stubs owned by later features.
 - [x] Live streaming interface is defined but not implemented (Feature 08)
 - [x] Event payload types are populated (CandleClosed carries candle field) before 03/04
       integration
+- [x] Binance historical pagination has constructor-injected 10-second page and 600-second
+      overall timeouts, with Clock-based domain deadlines kept separate from transport cancellation
 
 ## Done when
 
