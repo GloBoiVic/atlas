@@ -44,6 +44,14 @@ Last updated: 2026-08-04
 - [x] Updated `CURRENT.md` for Feature 04 planning/document reconciliation
 - [x] No application source code, dependencies, migrations, or `.env` modified
 
+### Task 2 — Strategy contracts and trusted registry (2026-08-04)
+
+- [x] Implemented immutable strategy contracts with UUID, Decimal, UTC, and metadata validation
+- [x] Implemented synchronous Strategy base contract and timeframe-aware data requirements
+- [x] Implemented fail-closed trusted registry for explicitly deployed factories
+- [x] Added focused contract and registry tests
+- [ ] StrategyEngine/EventBus integration remains for the next task
+
 ## What comes next
 
 - Implementation of strategy contracts, base class, engine, registry, and examples

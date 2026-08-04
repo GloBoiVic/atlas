@@ -11,13 +11,13 @@ Strategies generate signals from market data. Same code works in backtesting and
 
 ## Deliverables
 
-- [ ] Strategy base class: `on_candle()`, optional `on_tick()`, `required_data()`
-- [ ] Signal model: includes strategy version, commit SHA, and completed-candle timestamp
+- [x] Strategy base class: `on_candle()`, optional `on_tick()`, `required_data()`
+- [x] Signal model: includes strategy version, commit SHA, and completed-candle timestamp
 - [ ] Strategy engine: Subscribes to `CandleClosed`, calls strategy, emits `SignalGenerated`
 - [ ] Example strategy: SMA crossover (trend following)
 - [ ] Example strategy: Bollinger Bands (mean reversion)
 - [ ] Strategy configuration: Versioned YAML-based parameters loaded from deployed strategy package
-- [ ] Strategy registration: Load only from the deployed strategy registry, never from API-supplied paths
+- [x] Strategy registration: Load only from the deployed strategy registry, never from API-supplied paths
 - [ ] Per-bot strategy state isolation and reset
 
 ### Event Payload Status
