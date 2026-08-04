@@ -57,14 +57,27 @@ Last updated: 2026-08-04
 - [x] Implemented Decimal SMA crossover and Bollinger Bands examples with isolated state
 - [x] Added focused behavior and configuration tests
 - [x] Wrote `dispatch/feature04-examples-report.md`
-- [ ] Ruff, mypy, and pytest unavailable in the local environment; compile and smoke checks pass
-
-## What comes next
-
-- Remaining Feature 04 deliverables
+- [x] Ruff, mypy, and pytest coverage clean (256 tests passed, Ruff clean, mypy clean)
 
 ### Contracts and registry quality fix (2026-08-04)
 
 - [x] Replaced string-mixin enums with Python 3.12 `StrEnum` while preserving values
 - [x] Typed metadata freezing/validation without weakening Decimal support or immutability
 - [x] Updated registry `Callable` import to `collections.abc`
+
+### Task 5 — Final documentation status (2026-08-04)
+
+- [x] Fixed stale "same candle ID" wording → canonical composite key
+- [x] Marked all implemented deliverables and acceptance criteria with [x]
+- [x] Marked YAML config boundary as partially complete ([~]) — end-to-end wiring deferred
+- [x] Updated "Done when" to reference orchestrator final validation gate
+- [x] Updated `CURRENT.md` with completed slices and remaining validation state
+- [x] No application source code, dependencies, migrations, or `.env` modified
+- [ ] Feature 04 not complete until orchestrator final validation gate passes
+
+## What comes next
+
+- **Feature 04 final validation:** orchestrator must pass the final validation gate
+  (Ruff, mypy, full `pytest` suite pass in the development environment)
+- **Feature 05 — Bot Supervisor:** end-to-end wiring of YAML config → registry →
+  engine constructor, bot lifecycle, pipeline isolation

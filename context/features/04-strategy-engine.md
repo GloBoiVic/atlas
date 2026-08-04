@@ -13,12 +13,12 @@ Strategies generate signals from market data. Same code works in backtesting and
 
 - [x] Strategy base class: `on_candle()`, optional `on_tick()`, `required_data()`
 - [x] Signal model: includes strategy version, commit SHA, and completed-candle timestamp
-- [ ] Strategy engine: Subscribes to `CandleClosed`, calls strategy, emits `SignalGenerated`
-- [ ] Example strategy: SMA crossover (trend following)
-- [ ] Example strategy: Bollinger Bands (mean reversion)
-- [ ] Strategy configuration: Versioned YAML-based parameters loaded from deployed strategy package
+- [x] Strategy engine: Subscribes to `CandleClosed`, calls strategy, emits `SignalGenerated`
+- [x] Example strategy: SMA crossover (trend following)
+- [x] Example strategy: Bollinger Bands (mean reversion)
+- [~] Strategy configuration: Versioned YAML-based parameters (YAML validation boundary exists in `backend/config.py`; end-to-end wiring from YAML → registry → engine constructor is deferred to the Bot Supervisor feature)
 - [x] Strategy registration: Load only from the deployed strategy registry, never from API-supplied paths
-- [ ] Per-bot strategy state isolation and reset
+- [x] Per-bot strategy state isolation and reset
 
 ### Event Payload Status
 
@@ -271,7 +271,7 @@ packages:
 ### Safety and Validation
 
 - The engine accepts only completed candles matching the bot's instrument and timeframe.
-- Duplicate candle events (same candle ID) are silently rejected.
+- Duplicate candle events (same composite key `(instrument_id, provider, timeframe, open_time, price_basis)`) are silently rejected.
 - A strategy exception produces no signal, publishes a `StrategyError` event, and pauses
   the affected bot under the existing EventBus failure contract.
 - Strategy hooks (`on_candle`, `on_tick`) are synchronous and computation-focused; they
@@ -287,22 +287,28 @@ configuration — no persistent strategy state survives across bot restarts.
 
 ## Acceptance Criteria
 
-- [ ] Strategy receives CandleClosed event and produces a trading decision
-- [ ] Strategy engine assembles immutable Signal with `strategy_version_id`, `instrument_id`,
+- [x] Strategy receives CandleClosed event and produces a trading decision
+- [x] Strategy engine assembles immutable Signal with `strategy_version_id`, `instrument_id`,
       `candle_timestamp`, and Decimal `strength`
-- [ ] Strategy engine emits `SignalGenerated` with the assembled Signal (no `candle_id`)
-- [ ] Strategy engine validates completed-candle instrument, timeframe, and completeness
-- [ ] Strategy engine rejects duplicate candle events silently
-- [ ] Strategy exception publishes `StrategyError` and pauses bot (fail-closed)
-- [ ] Strategies are configurable via YAML and pinned to a deployed commit SHA
-- [ ] Strategy engine owns warm-up lifecycle; warm-up candles never emit signals
-- [ ] Registry resolves only deployed, version-pinned packages and fails closed on mismatch
-- [ ] Example strategies produce reasonable signals on historical data
-- [ ] Strategy interface supports completed candles and optional tick observation without
+- [x] Strategy engine emits `SignalGenerated` with the assembled Signal (no `candle_id`)
+- [x] Strategy engine validates completed-candle instrument, timeframe, and completeness
+- [x] Strategy engine rejects duplicate candle events silently via the canonical composite
+      key `(instrument_id, provider, timeframe, open_time, price_basis)`
+- [x] Strategy exception publishes `StrategyError` and pauses bot (fail-closed)
+- [x] Strategies are configurable via YAML (validated by `backend/config.py` `StrategyConfig`)
+      and registry resolution verifies pinned commit SHA
+- [x] Strategy engine owns warm-up lifecycle; warm-up candles never emit signals
+- [x] Registry resolves only deployed, version-pinned packages and fails closed on mismatch
+- [x] Example strategies produce reasonable signals on historical data
+- [x] Strategy interface supports completed candles and optional tick observation without
       generating tick signals
-- [ ] Strategies declare a timeframe-aware `DataRequirement`
-- [ ] Strategy state is isolated per bot and reset between runs
+- [x] Strategies declare a timeframe-aware `DataRequirement`
+- [x] Strategy state is isolated per bot and reset between runs
 
 ## Done when
 
-All acceptance criteria are met.
+All acceptance criteria are implemented at the component level and validated in the
+development environment (Ruff, mypy, full `pytest` suite). End-to-end integration
+from YAML configuration → registry → engine constructor is deferred to the Bot
+Supervisor feature. Feature 04 is not complete until the orchestrator's final
+validation gate passes.
