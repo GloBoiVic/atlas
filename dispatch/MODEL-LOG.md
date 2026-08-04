@@ -8,3 +8,7 @@
 | Feature 06 review | reviewer | GPT-5.6 Luna | needs-retry (coverage findings) |
 | Feature 06 review fixes | backend | default backend model | success |
 | Feature 06 re-review | reviewer | GPT-5.6 Luna | success |
+| Feature 07 contracts | backend/reviewer | cheaper specialist model sufficient; no premium model used | success |
+| Feature 07 persistence/paper broker | backend/reviewer | cheaper specialist model sufficient; no premium model used | success |
+| Feature 07 coordinator/engine | backend/reviewer | cheaper specialist model sufficient; no premium model used | success |
+| Feature 07 reconciliation | backend/reviewer | cheaper specialist model sufficient; no premium model used | success |

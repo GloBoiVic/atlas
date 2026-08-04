@@ -2,6 +2,9 @@
 
 | Task | Agent | Status |
 |---|---|---|
-| Revise Feature 06 blueprint | architect | done |
-| Implement Risk Engine | backend | done |
-| Review Feature 06 | reviewer | done |
+| Feature 07 authoritative blueprint | architect | done |
+| Execution domain contracts and events | backend + reviewer | done |
+| Persistence and Futures Paper Broker | backend + reviewer | done |
+| Net exposure coordinator and Execution Engine | backend + reviewer | done |
+| Broker reconciliation and recovery | backend + reviewer | done |
+| Feature 07 review | reviewer | done |

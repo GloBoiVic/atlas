@@ -222,3 +222,178 @@ class Candle(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
+
+
+class ExecutionOrder(Base):
+    """Durable market order state and all broker idempotency keys."""
+
+    __tablename__ = "orders"
+    __table_args__ = (Index("idx_orders_status", "status"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    account_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("accounts.id"), nullable=False
+    )
+    bot_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("bots.id"))
+    strategy_version_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("strategy_versions.id")
+    )
+    instrument_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("instruments.id"), nullable=False
+    )
+    client_order_id: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    broker_order_id: Mapped[str | None] = mapped_column(String(255), unique=True)
+    side: Mapped[str] = mapped_column(String(10), nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(28, 12), nullable=False)
+    order_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    stop_loss: Mapped[Decimal] = mapped_column(
+        Numeric(28, 12), nullable=False, default=Decimal("0")
+    )
+    take_profit: Mapped[Decimal] = mapped_column(
+        Numeric(28, 12), nullable=False, default=Decimal("0")
+    )
+    reduce_only: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    leverage: Mapped[Decimal] = mapped_column(Numeric(12, 6), nullable=False, default=Decimal("1"))
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    filled_quantity: Mapped[Decimal] = mapped_column(
+        Numeric(28, 12), nullable=False, default=Decimal("0")
+    )
+    average_fill_price: Mapped[Decimal | None] = mapped_column(Numeric(28, 12))
+    mode: Mapped[str] = mapped_column(String(20), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
+class ExecutionFill(Base):
+    """Append-only fill fact; broker execution IDs are globally idempotent."""
+
+    __tablename__ = "fills"
+    __table_args__ = (
+        Index(
+            "idx_fills_broker_execution",
+            "broker_fill_id",
+            unique=True,
+            postgresql_where=text("broker_fill_id IS NOT NULL"),
+            sqlite_where=text("broker_fill_id IS NOT NULL"),
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    order_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("orders.id"), nullable=False)
+    account_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("accounts.id"), nullable=False
+    )
+    instrument_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("instruments.id"), nullable=False
+    )
+    broker_fill_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    side: Mapped[str] = mapped_column(String(10), nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(28, 12), nullable=False)
+    price: Mapped[Decimal] = mapped_column(Numeric(28, 12), nullable=False)
+    fee: Mapped[Decimal] = mapped_column(
+        Numeric(28, 12), nullable=False, default=Decimal("0")
+    )
+    filled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ExecutionPosition(Base):
+    """One active one-way isolated position per account/instrument/mode."""
+
+    __tablename__ = "positions"
+    __table_args__ = (
+        Index(
+            "idx_one_active_net_position",
+            "account_id",
+            "instrument_id",
+            "mode",
+            unique=True,
+            postgresql_where=text("status IN ('open', 'reducing')"),
+            sqlite_where=text("status IN ('open', 'reducing')"),
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    account_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("accounts.id"), nullable=False
+    )
+    bot_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("bots.id"))
+    strategy_version_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("strategy_versions.id")
+    )
+    instrument_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("instruments.id"), nullable=False
+    )
+    side: Mapped[str] = mapped_column(String(10), nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(28, 12), nullable=False)
+    entry_price: Mapped[Decimal] = mapped_column(Numeric(28, 12), nullable=False)
+    current_price: Mapped[Decimal | None] = mapped_column(Numeric(28, 12))
+    stop_loss: Mapped[Decimal | None] = mapped_column(Numeric(28, 12))
+    take_profit: Mapped[Decimal | None] = mapped_column(Numeric(28, 12))
+    unrealized_pnl: Mapped[Decimal] = mapped_column(
+        Numeric(28, 12), nullable=False, default=Decimal("0")
+    )
+    realized_pnl: Mapped[Decimal] = mapped_column(
+        Numeric(28, 12), nullable=False, default=Decimal("0")
+    )
+    leverage: Mapped[Decimal] = mapped_column(Numeric(12, 6), nullable=False, default=Decimal("1"))
+    isolated_margin: Mapped[Decimal] = mapped_column(
+        Numeric(28, 12), nullable=False, default=Decimal("0")
+    )
+    maintenance_margin: Mapped[Decimal] = mapped_column(
+        Numeric(28, 12), nullable=False, default=Decimal("0")
+    )
+    liquidation_price: Mapped[Decimal | None] = mapped_column(Numeric(28, 12))
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="open")
+    mode: Mapped[str] = mapped_column(String(20), nullable=False)
+    opened_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ExecutionTrade(Base):
+    """Position lifecycle aggregate used by journal and analytics."""
+
+    __tablename__ = "trades"
+    __table_args__ = (Index("idx_trades_status", "status"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    account_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("accounts.id"), nullable=False
+    )
+    bot_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("bots.id"))
+    strategy_version_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("strategy_versions.id")
+    )
+    position_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("positions.id"), nullable=False
+    )
+    instrument_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("instruments.id"), nullable=False
+    )
+    direction: Mapped[str] = mapped_column(String(10), nullable=False)
+    entry_price: Mapped[Decimal] = mapped_column(Numeric(28, 12), nullable=False)
+    exit_price: Mapped[Decimal | None] = mapped_column(Numeric(28, 12))
+    quantity: Mapped[Decimal] = mapped_column(Numeric(28, 12), nullable=False)
+    gross_pnl: Mapped[Decimal | None] = mapped_column(Numeric(28, 12))
+    net_pnl: Mapped[Decimal | None] = mapped_column(Numeric(28, 12))
+    total_fees: Mapped[Decimal] = mapped_column(
+        Numeric(28, 12), nullable=False, default=Decimal("0")
+    )
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="entered")
+    signal_metadata: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, default=dict)
+    market_context: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, default=dict)
+    entry_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    exit_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+# Persistence names remain explicit internally to avoid confusing ORM rows with the
+# immutable execution-domain contracts; these aliases provide the conventional public names.
+Order = ExecutionOrder
+Fill = ExecutionFill
+Position = ExecutionPosition
+Trade = ExecutionTrade

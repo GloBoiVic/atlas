@@ -1,8 +1,16 @@
+from __future__ import annotations
+
 import asyncio
-from datetime import datetime
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from backend.data.models import Candle as CandleDomain
+from backend.core.account_mode import AccountMode
+
+if TYPE_CHECKING:
+    from datetime import datetime
+
+    from backend.data.models import Candle as CandleDomain
+    from backend.execution.models import Fill, Order, Position, Trade
 from backend.persistence.repositories.protocols import (
     BotRecord,
     CandleRepository,
@@ -22,9 +30,7 @@ class InMemorySupervisorRepositories:
         reconciliations: list[ReconciliationRecord] | None = None,
     ) -> None:
         self._bots = {bot.id: bot for bot in bots or []}
-        self._reconciliations = {
-            result.id: result for result in reconciliations or []
-        }
+        self._reconciliations = {result.id: result for result in reconciliations or []}
         self._bot_lock = asyncio.Lock()
 
     async def get_restore_candidates(self) -> list[BotRecord]:
@@ -213,3 +219,125 @@ class InMemoryCandleRepository(CandleRepository):
     def contains(self, candle: CandleDomain) -> bool:
         """Check whether a specific candle was persisted (for test inspection)."""
         return self._make_key(candle) in self._candles
+
+
+class InMemoryExecutionRepository:
+    """Concurrency-safe execution repository used by broker and repository tests."""
+
+    def __init__(self) -> None:
+        self._orders: dict[str, Order] = {}
+        self._broker_orders: dict[str, Order] = {}
+        self._fills: dict[str, Fill] = {}
+        self._positions: dict[tuple[UUID, UUID, AccountMode], Position] = {}
+        self._trades: dict[UUID, Trade] = {}
+        self._reconciliations: dict[UUID, ReconciliationRecord] = {}
+        self._lock = asyncio.Lock()
+
+    async def create_order(self, order: Order) -> Order:
+        async with self._lock:
+            existing = self._orders.get(order.client_order_id)
+            if existing is not None:
+                return existing
+            self._orders[order.client_order_id] = order
+            if order.broker_order_id:
+                self._broker_orders[order.broker_order_id] = order
+            return order
+
+    async def get_order_by_client_id(self, client_order_id: str) -> Order | None:
+        async with self._lock:
+            return self._orders.get(client_order_id)
+
+    async def get_order_by_broker_id(self, broker_order_id: str) -> Order | None:
+        async with self._lock:
+            return self._broker_orders.get(broker_order_id)
+
+    async def get_non_terminal_orders(
+        self, *, account_id: UUID, mode: AccountMode
+    ) -> list[Order]:
+        async with self._lock:
+            return [
+                order
+                for order in self._orders.values()
+                if order.account_id == account_id
+                and (order.mode or mode) == mode
+                and order.status.value not in {"filled", "canceled", "rejected", "expired"}
+            ]
+
+    async def update_order(self, order: Order) -> Order:
+        async with self._lock:
+            self._orders[order.client_order_id] = order
+            if order.broker_order_id:
+                self._broker_orders[order.broker_order_id] = order
+            return order
+
+    async def append_fill(self, fill: Fill) -> Fill:
+        async with self._lock:
+            if fill.broker_fill_id is not None:
+                existing = self._fills.get(fill.broker_fill_id)
+                if existing is not None:
+                    return existing
+                self._fills[fill.broker_fill_id] = fill
+            return fill
+
+    async def get_fill_by_broker_id(self, broker_fill_id: str) -> Fill | None:
+        async with self._lock:
+            return self._fills.get(broker_fill_id)
+
+    async def get_fills(self, *, account_id: UUID, mode: AccountMode) -> list[Fill]:
+        async with self._lock:
+            order_modes = {
+                order.id: order.mode or AccountMode.PAPER for order in self._orders.values()
+            }
+            return [
+                fill
+                for fill in self._fills.values()
+                if fill.account_id == account_id and order_modes.get(fill.order_id) == mode
+            ]
+
+    async def get_positions(self, *, account_id: UUID, mode: AccountMode) -> list[Position]:
+        async with self._lock:
+            return [
+                position
+                for position in self._positions.values()
+                if position.account_id == account_id and position.mode == mode
+            ]
+
+    async def get_position(
+        self, *, account_id: UUID, instrument_id: UUID, mode: AccountMode
+    ) -> Position | None:
+        async with self._lock:
+            return self._positions.get((account_id, instrument_id, mode))
+
+    async def save_position(self, position: Position) -> Position:
+        async with self._lock:
+            key = (position.account_id, position.instrument_id, position.mode)
+            if position.status.value == "closed":
+                self._positions.pop(key, None)
+            else:
+                self._positions[key] = position
+            return position
+
+    async def save_trade(self, trade: Trade) -> Trade:
+        async with self._lock:
+            self._trades[trade.id] = trade
+            return trade
+
+    async def get_trade_by_position(self, position_id: UUID) -> Trade | None:
+        async with self._lock:
+            return next(
+                (
+                    trade
+                    for trade in self._trades.values()
+                    if trade.position_id == position_id and trade.status.value == "entered"
+                ),
+                None,
+            )
+
+    async def record(self, result: ReconciliationRecord) -> ReconciliationRecord:
+        async with self._lock:
+            self._reconciliations.setdefault(result.id, result)
+            return self._reconciliations[result.id]
+
+    async def get_reconciliation(self, reconciliation_id: UUID) -> ReconciliationRecord | None:
+        async with self._lock:
+            return self._reconciliations.get(reconciliation_id)

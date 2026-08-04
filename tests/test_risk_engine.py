@@ -331,7 +331,7 @@ def test_max_open_positions_rejects_exact_boundary_with_pending_reservations(
     third = make_instrument(third_instrument_id, tick_size="1", step_size="1")
     config = RiskConfig(max_open_positions=2)
     engine = make_engine(account_id, bot_id, first, config)
-    engine._reservations.add((account_id, other_instrument_id, AccountMode.PAPER))
+    engine._reservations.add((account_id, other_instrument_id, uuid4(), AccountMode.PAPER))
     position = PositionInfo(
         account_id=account_id,
         bot_id=bot_id,
@@ -590,8 +590,40 @@ async def test_reset_reservations_and_terminal_outcome_release(
     signal = make_signal(instrument_id)
     context = make_context(account_id, bot_id, instrument)
     assert isinstance(engine.evaluate(signal, context), RiskApproved)
-    engine._reservations.add((account_id, instrument_id, AccountMode.PAPER))
+    engine._reservations.add(
+        (account_id, instrument_id, signal.strategy_version_id, AccountMode.PAPER)
+    )
     engine.reset_reservations()
-    engine._reservations.add((account_id, instrument_id, AccountMode.PAPER))
+    engine._reservations.add(
+        (account_id, instrument_id, signal.strategy_version_id, AccountMode.PAPER)
+    )
     engine.on_terminal_outcome(instrument_id)
-    assert (account_id, instrument_id, AccountMode.PAPER) not in engine._reservations
+    assert (
+        account_id,
+        instrument_id,
+        signal.strategy_version_id,
+        AccountMode.PAPER,
+    ) not in engine._reservations
+
+
+def test_terminal_outcome_release_is_strategy_scoped(
+    identity: tuple[UUID, UUID, UUID, UUID],
+) -> None:
+    account_id, bot_id, instrument_id, _ = identity
+    instrument = make_instrument(instrument_id, tick_size="1", step_size="1")
+    engine = make_engine(account_id, bot_id, instrument)
+    strategy_a, strategy_b = uuid4(), uuid4()
+    engine._reservations.update(
+        {
+            (account_id, instrument_id, strategy_a, AccountMode.PAPER),
+            (account_id, instrument_id, strategy_b, AccountMode.PAPER),
+        }
+    )
+
+    engine.on_terminal_outcome(
+        instrument_id,
+        strategy_version_id=strategy_a,
+    )
+
+    assert (account_id, instrument_id, strategy_a, AccountMode.PAPER) not in engine._reservations
+    assert (account_id, instrument_id, strategy_b, AccountMode.PAPER) in engine._reservations

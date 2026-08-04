@@ -33,6 +33,7 @@ from backend.core.events import (
     TradeClosed,
 )
 from backend.data.models import Candle, Tick
+from backend.execution.models import Fill, Order, OrderSide, Position, PositionSide, Trade
 from backend.strategy.contracts import Signal, SignalDirection
 
 # CandleClosed and TickReceived now require keyword-only payload fields.
@@ -80,18 +81,10 @@ def _make_tick_received(**kwargs: object) -> TickReceived:
     return TickReceived(**{**extra, **kwargs})  # type: ignore[arg-type]
 
 
-# Event types that remain metadata-only (no payload fields yet)
+# Event types that remain metadata-only (their payloads belong to later slices).
 EVENT_TYPES: tuple[type[DomainEvent], ...] = (
-    OrderSubmitted,
-    OrderFilled,
-    PositionOpened,
-    PositionUpdated,
-    PositionClosed,
-    TradeClosed,
     ApiError,
     DataFeedError,
-    OrderRejected,
-    OrderFailed,
     ConnectionLost,
     ConnectionRestored,
     CircuitBreakerOpen,
@@ -374,6 +367,71 @@ def test_risk_rejection_carries_typed_signal_payload() -> None:
     event = RiskRejected(signal=_FIXTURE_SIGNAL, reason="invalid_stop: bad geometry")
     assert event.signal is _FIXTURE_SIGNAL
     assert event.reason.startswith("invalid_stop")
+
+
+def _execution_fixtures() -> tuple[Order, Fill, Position, Trade]:
+    account_id = uuid4()
+    instrument_id = uuid4()
+    order = Order(
+        account_id=account_id,
+        instrument_id=instrument_id,
+        side=OrderSide.BUY,
+        quantity=Decimal("1"),
+        client_order_id="atlas-test-order",
+        bot_id=uuid4(),
+        mode=AccountMode.PAPER,
+    )
+    fill = Fill(
+        order_id=order.id,
+        account_id=account_id,
+        instrument_id=instrument_id,
+        side=OrderSide.BUY,
+        quantity=Decimal("1"),
+        price=Decimal("100"),
+        fee=Decimal("0.1"),
+        filled_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    position = Position(
+        account_id=account_id,
+        instrument_id=instrument_id,
+        side=PositionSide.LONG,
+        quantity=Decimal("1"),
+        entry_price=Decimal("100"),
+        mode=AccountMode.PAPER,
+    )
+    trade = Trade(
+        account_id=account_id,
+        instrument_id=instrument_id,
+        position_id=position.id,
+        direction=PositionSide.LONG,
+        entry_price=Decimal("100"),
+        quantity=Decimal("1"),
+        total_fees=Decimal("0.1"),
+        entry_time=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    return order, fill, position, trade
+
+
+def test_execution_events_have_frozen_keyword_only_payloads() -> None:
+    order, fill, position, trade = _execution_fixtures()
+    events = (
+        OrderSubmitted(order=order, broker_order_id="broker-1"),
+        OrderFilled(order=order, fill=fill),
+        PositionOpened(position=position),
+        PositionUpdated(position=position),
+        PositionClosed(position=position),
+        TradeClosed(trade=trade),
+        OrderRejected(order_id=order.id, reason="insufficient_margin: test"),
+        OrderFailed(order_id=order.id, error="timeout"),
+    )
+
+    for event in events:
+        payloads = set(event.__dataclass_fields__) - set(DomainEvent.__dataclass_fields__)
+        assert payloads
+        assert all(event.__dataclass_fields__[name].kw_only for name in payloads)
+
+    with pytest.raises((AttributeError, TypeError)):
+        events[0].broker_order_id = "changed"  # type: ignore[misc]
 
 
 @pytest.mark.asyncio

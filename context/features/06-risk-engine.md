@@ -47,12 +47,23 @@ class RiskRejected(DomainEvent):
 
 ## Technical Details
 
+### Feature 07 policy discovery
+
+Feature 06 originally rejected every existing same-instrument net position. That rule is
+not authoritative for Feature 07's approved account-level netting model: different strategy
+identities may share an account/instrument while the coordinator owns one broker position.
+The minimal change is strategy-aware conflict checking and reservations. Same-strategy
+no-scaling behavior remains unchanged; execution rejects duplicate active combinations.
+
 ### Risk Engine
 
 `RiskEngine.evaluate(signal, context)` is a synchronous, side-effect-free evaluator. The
 EventBus adapter filters the engine's bot, asks the pipeline-owned context provider for a fresh
 snapshot, evaluates it, and publishes exactly one typed decision. The engine has no repository,
 broker, fill, or P&L dependency and retains only transient pending-entry reservations.
+Terminal lifecycle callbacks release reservations by `strategy_version_id` when identity is
+available. Missing identity is an explicit full-scope fallback for legacy or unattributed
+terminal records; normal execution callbacks provide the strategy identity.
 
 ### Risk Configuration (YAML)
 
