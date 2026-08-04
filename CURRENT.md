@@ -52,6 +52,13 @@ Last updated: 2026-08-04
 - [x] Added focused contract and registry tests
 - [x] Implemented per-bot StrategyEngine, warm-up gating, event payloads, and focused tests
 
+### Task 4 — Example strategies (2026-08-04)
+
+- [x] Implemented Decimal SMA crossover and Bollinger Bands examples with isolated state
+- [x] Added focused behavior and configuration tests
+- [x] Wrote `dispatch/feature04-examples-report.md`
+- [ ] Ruff, mypy, and pytest unavailable in the local environment; compile and smoke checks pass
+
 ## What comes next
 
-- Example strategies and remaining Feature 04 deliverables
+- Remaining Feature 04 deliverables

@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from enum import Enum
-from json import dumps
 from typing import Any
 from uuid import UUID
 
@@ -78,12 +77,28 @@ class DataRequirement:
 
 
 def _validate_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
-    """Validate and copy JSON-compatible metadata so callers cannot mutate input state."""
+    """Validate metadata while preserving Decimal indicator values at the domain boundary."""
 
-    try:
-        dumps(metadata, allow_nan=False)
-    except (TypeError, ValueError) as error:
-        raise TypeError("metadata must be JSON-compatible") from error
+    def validate(value: Any) -> None:
+        if isinstance(value, Decimal):
+            if not value.is_finite():
+                raise ValueError("metadata Decimal values must be finite")
+            return
+        if value is None or isinstance(value, (str, int, bool)):
+            return
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if not isinstance(key, str):
+                    raise TypeError("metadata keys must be strings")
+                validate(item)
+            return
+        if isinstance(value, (list, tuple)):
+            for item in value:
+                validate(item)
+            return
+        raise TypeError("metadata must contain JSON-compatible values or Decimal")
+
+    validate(metadata)
     return _freeze_json(metadata)
 
 
