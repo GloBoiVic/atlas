@@ -5,13 +5,13 @@ Last updated: 2026-08-04
 ## Status
 
 - [ ] Not started
-- [x] In progress
-- [ ] Complete
+- [ ] In progress
+- [x] Complete
 
 ## Feature
 
 - **Number:** 04
-- **Name:** Strategy Engine — documentation reconciliation
+- **Name:** Strategy Engine
 - **File:** context/features/04-strategy-engine.md
 
 ## Branch
@@ -73,11 +73,9 @@ Last updated: 2026-08-04
 - [x] Updated "Done when" to reference orchestrator final validation gate
 - [x] Updated `CURRENT.md` with completed slices and remaining validation state
 - [x] No application source code, dependencies, migrations, or `.env` modified
-- [ ] Feature 04 not complete until orchestrator final validation gate passes
+- [x] Feature 04 final validation gate passed: 256 tests, Ruff clean, mypy clean
 
 ## What comes next
 
-- **Feature 04 final validation:** orchestrator must pass the final validation gate
-  (Ruff, mypy, full `pytest` suite pass in the development environment)
 - **Feature 05 — Bot Supervisor:** end-to-end wiring of YAML config → registry →
   engine constructor, bot lifecycle, pipeline isolation
