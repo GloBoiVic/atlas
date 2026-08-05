@@ -11,6 +11,7 @@ from backend.data.binance_usdm import (
     parse_binance_usdm_mark_price,
 )
 from backend.data.csv_provider import CSVDataProvider
+from backend.data.feed_monitor import DataFeedMonitor
 from backend.data.interfaces import HistoricalDataProvider, LiveDataProvider
 from backend.data.loader import (
     HistoricalDataLoader,
@@ -51,6 +52,7 @@ __all__ = [
     "Instrument",
     "MarketContext",
     "MarketContextAggregator",
+    "DataFeedMonitor",
     "LiveDataProvider",
     "Tick",
     "MarkPriceUpdate",

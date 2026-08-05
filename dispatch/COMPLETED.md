@@ -1,5 +1,50 @@
 # Completed Work
 
+## Feature 08 — Task 1 contracts and deterministic Futures parsers — 2026-08-05
+
+- Implemented `binance_usdm` identity and non-secret public fstream configuration.
+- Added typed keyword-only `DataFeedError`, provider-neutral `MarketContext`, and
+  `MarketContextUpdated` foundations.
+- Added deterministic Decimal/UTC parsers and validation for Futures kline, aggTrade,
+  bookTicker, and markPrice payloads; historical Spot behavior remained unchanged.
+- Validation: 57 focused tests, Ruff clean, changed-slice mypy clean; full suite 389
+  passed with one pre-existing frontend Dockerfile assertion failure.
+- Commit: `493fc1a`; task review: PASS with no Critical or Important findings.
+
+## Feature 08 — Task 2 Futures subscriptions and candle deduplication — 2026-08-05
+
+- Implemented USDⓈ-M fstream subscriptions for kline, aggTrade, bookTicker, and
+  markPrice streams with injectable connection/test seams.
+- Added k.x completion gating, composite-key candle deduplication across reconnects,
+  and provider-local subscription cleanup/isolation.
+- Updated Binance's current category routing: `/public/ws/` for bookTicker and
+  `/market/ws/` for kline/aggTrade/markPrice; tightened connection-factory typing.
+- Validation: focused 24 tests, Ruff clean, changed-slice mypy clean; full suite 393
+  passed with one pre-existing frontend Dockerfile assertion failure.
+- Commits: `8987dda`, `2305517`; task review: PASS after fix, no remaining findings.
+
+## Feature 08 — Task 3 market-context aggregation — 2026-08-05
+
+- Added immutable provider-neutral `MarketContextAggregator` combining valid
+  book-ticker and mark-price updates into coherent snapshots/events.
+- Added injectable freshness thresholds and Clock, partial/stale/future/out-of-order
+  suppression, crossed-book validation, recovery behavior, and Decimal/UTC tests.
+- Validation: focused 56 tests, Ruff clean, changed-slice mypy clean; full suite 400
+  passed with one pre-existing frontend Dockerfile assertion failure.
+- Commit: `eb61be8`; task review: PASS with no Critical or Important findings.
+
+## Feature 08 — Task 4 reconnect, gaps, and health — 2026-08-05
+
+- Added bounded injectable exponential reconnect backoff with transient transport versus fatal
+  protocol/configuration/cancellation handling and explicit subscription cleanup.
+- Preserved logical subscriptions and completed-candle deduplication across reconnects; surfaced
+  typed `DataFeedError` payloads for retry exhaustion, protocol errors, and candle gaps.
+- Added completed-candle open-time gap detection without synthetic or REST-backfilled candles.
+- Added timer-free, Clock-injected candle/book/context freshness monitoring with one timeout per
+  stale episode and reset on recovery.
+- Focused validation: 15 Feature 08 tests passed; changed-slice mypy clean. Full suite: 404
+  passed with the pre-existing frontend Dockerfile assertion failure.
+
 ## Feature 06 Risk Engine — 2026-08-04
 
 - Implemented the deterministic Risk Engine on branch `feature/06-risk-engine`.

@@ -1,6 +1,6 @@
 # Current Feature
 
-## Feature 08 — Task 3 market-context aggregation — complete (2026-08-05)
+## Feature 08 — Task 4 reconnect, gaps, and health — complete (2026-08-05)
 
 - [x] Created `feature/08-live-data-streaming` from current `main`.
 - [x] Added USDⓈ-M Futures provider identity and typed non-secret public-stream configuration.
@@ -12,8 +12,11 @@
       reconnect-preserving completed-candle deduplication.
 - [x] Added deterministic provider-neutral book/mark context aggregation with injectable
       freshness thresholds and clock, immutable snapshots/events, and recovery behavior.
-- [ ] Retry policy, feed runner, PaperBroker integration, bot pipeline,
-      API, frontend, and registry remain deferred to later Feature 08 tasks.
+- [x] Added bounded injectable reconnect backoff, typed exhaustion/invalid-message feed errors,
+      cancellation-safe cleanup, completed-candle gap detection, and deterministic feed health
+      monitoring with stale-episode recovery.
+- [ ] Feed runner, PaperBroker integration, bot pipeline, API, frontend, and registry remain
+      deferred to later Feature 08 tasks.
 
 ### Task 2 review fixes — complete (2026-08-05)
 

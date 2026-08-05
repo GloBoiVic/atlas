@@ -28,6 +28,9 @@ class BinanceUsdMStreamingConfig:
     ping_interval_seconds: float = 20.0
     ping_timeout_seconds: float = 20.0
     close_timeout_seconds: float = 10.0
+    max_reconnect_attempts: int = 3
+    reconnect_backoff_seconds: float = 1.0
+    reconnect_backoff_max_seconds: float = 30.0
 
     @property
     def public_ws_base_url(self) -> str:
@@ -60,6 +63,16 @@ class BinanceUsdMStreamingConfig:
             )
         ):
             raise ValueError("Binance USDⓈ-M stream timeouts must be finite")
+        if self.max_reconnect_attempts < 0:
+            raise ValueError("max_reconnect_attempts must not be negative")
+        if self.reconnect_backoff_seconds <= 0 or self.reconnect_backoff_max_seconds <= 0:
+            raise ValueError("Binance USDⓈ-M reconnect backoff must be positive")
+        if not isfinite(self.reconnect_backoff_seconds) or not isfinite(
+            self.reconnect_backoff_max_seconds
+        ):
+            raise ValueError("Binance USDⓈ-M reconnect backoff must be finite")
+        if self.reconnect_backoff_max_seconds < self.reconnect_backoff_seconds:
+            raise ValueError("reconnect_backoff_max_seconds must not be smaller than base")
 
 
 @dataclass(frozen=True, slots=True)

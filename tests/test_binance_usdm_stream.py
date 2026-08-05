@@ -17,9 +17,11 @@ from backend.data.binance_usdm import (
     BookTicker,
     MarkPriceUpdate,
 )
+from backend.data.binance_usdm_stream import StreamRetryExhaustedError
 from backend.data.models import Instrument
 
 if TYPE_CHECKING:
+    from backend.core.events import DataFeedError
     from backend.data.binance_usdm_stream import ConnectionFactory
 
 
@@ -253,3 +255,58 @@ async def test_duplicate_active_subscription_is_rejected_and_cleanup_releases_ke
     # Cancellation must release the logical key.
     gate.set()
     assert [value async for value in provider.subscribe_ticks(instrument)] == []
+
+
+@pytest.mark.asyncio
+async def test_retry_exhaustion_publishes_typed_error_and_raises(
+    instrument: Instrument,
+) -> None:
+    errors: list[object] = []
+
+    def factory(
+        _url: str,
+        *,
+        ping_interval: float,
+        ping_timeout: float,
+        close_timeout: float,
+    ) -> FakeConnection:
+        return FakeConnection(
+            ClosingWebSocket([{"e": "aggTrade", "p": "100", "q": "1", "T": 1_000}])
+        )
+
+    provider = BinanceUsdMStreamingProvider(
+        connection_factory=cast("ConnectionFactory", factory),
+        max_reconnect_attempts=0,
+        error_publisher=errors.append,
+    )
+
+    with pytest.raises(StreamRetryExhaustedError):
+        [value async for value in provider.subscribe_ticks(instrument)]
+    assert len(errors) == 1
+    assert cast("DataFeedError", errors[0]).error.startswith("retry_exhausted:")
+
+
+@pytest.mark.asyncio
+async def test_gap_is_reported_without_synthesizing_missing_candles(
+    instrument: Instrument,
+) -> None:
+    errors: list[object] = []
+    socket = FakeWebSocket([kline(True, 1_000), kline(True, 121_000)])
+
+    def factory(
+        _url: str,
+        *,
+        ping_interval: float,
+        ping_timeout: float,
+        close_timeout: float,
+    ) -> FakeConnection:
+        return FakeConnection(socket)
+
+    provider = BinanceUsdMStreamingProvider(
+        connection_factory=cast("ConnectionFactory", factory),
+        error_publisher=errors.append,
+    )
+    candles = [candle async for candle in provider.subscribe_candles(instrument, "1m")]
+
+    assert [candle.open_time.timestamp() for candle in candles] == [1.0, 121.0]
+    assert cast("DataFeedError", errors[0]).error.startswith("gap_detected:")

@@ -24,6 +24,8 @@ interval are logged and surfaced via `DataFeedError`.
       provider-neutral market context contracts, and deterministic Binance parsers (Task 1)
 - [x] Provider-neutral book/mark context aggregation with injectable freshness and clock
       policy (Task 3)
+- [x] Bounded reconnect/backoff, cancellation-safe cleanup, completed-candle gap detection,
+      and deterministic candle/book/mark freshness monitoring (Task 4)
 - [ ] Binance USDⓈ-M Futures streaming: WebSocket connection for live klines and trades
 - [ ] CandleClosed emission: Only completed candles produce events (Binance `k.x` flag)
 - [ ] TickReceived emission: Real-time trade stream
