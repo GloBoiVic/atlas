@@ -3,6 +3,7 @@ from backend.data.binance_usdm import (
     BINANCE_USDM_FSTREAM_BASE_URL,
     BINANCE_USDM_PROVIDER,
     BinanceUsdMStreamingConfig,
+    BinanceUsdMStreamingProvider,
     BookTicker,
     MarkPriceUpdate,
     parse_binance_usdm_agg_trade,
@@ -14,6 +15,14 @@ from backend.data.csv_provider import CSVDataProvider
 from backend.data.feed_monitor import DataFeedMonitor
 from backend.data.interfaces import HistoricalDataProvider, LiveDataProvider
 from backend.data.live_feed_runner import LiveFeedRunner, LiveFeedSession, LiveMarketContextProvider
+from backend.data.live_registry import (
+    DuplicateLiveProviderError,
+    LiveProviderFactory,
+    LiveProviderRegistry,
+    UnknownLiveProviderError,
+    build_live_provider_registry,
+    create_live_provider_registry,
+)
 from backend.data.loader import (
     HistoricalDataLoader,
     build_dataset_identity,
@@ -43,6 +52,7 @@ __all__ = [
     "BINANCE_USDM_FSTREAM_BASE_URL",
     "BINANCE_USDM_PROVIDER",
     "BinanceUsdMStreamingConfig",
+    "BinanceUsdMStreamingProvider",
     "BookTicker",
     "CSVDataProvider",
     "DatasetIdentity",
@@ -55,6 +65,8 @@ __all__ = [
     "MarketContextAggregator",
     "DataFeedMonitor",
     "LiveDataProvider",
+    "LiveProviderFactory",
+    "LiveProviderRegistry",
     "LiveFeedRunner",
     "LiveFeedSession",
     "LiveMarketContextProvider",
@@ -66,6 +78,10 @@ __all__ = [
     "DuplicateHistoricalProviderError",
     "HistoricalProviderRegistry",
     "UnknownHistoricalProviderError",
+    "DuplicateLiveProviderError",
+    "UnknownLiveProviderError",
+    "build_live_provider_registry",
+    "create_live_provider_registry",
     "parse_binance_usdm_agg_trade",
     "parse_binance_usdm_book_ticker",
     "parse_binance_usdm_kline",

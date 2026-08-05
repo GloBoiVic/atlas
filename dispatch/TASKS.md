@@ -6,8 +6,8 @@
 | 2. Fstream subscriptions, completion gating, and candle deduplication | backend | COMPLETE |
 | 3. Market-context aggregation and freshness | backend | COMPLETE |
 | 4. Reconnect, cancellation, gaps, and health monitoring | backend | COMPLETE |
-| 5. EventBus feed runner and integration tests | backend | PENDING |
-| 6. Live-provider registry and documentation gate | backend | PENDING |
+| 5. EventBus feed runner and integration tests | backend | COMPLETE |
+| 6. Live-provider registry and documentation gate | backend | COMPLETE |
 | 7. Final validation and whole-branch review | reviewer | PENDING |
 
 ### Task 1 brief
@@ -81,3 +81,38 @@ Do not implement EventBus feed runner orchestration beyond the contracts needed 
 deterministic tests, PaperBroker, Feature 09 pipeline, API, frontend, or historical
 changes. Add comprehensive deterministic tests, run focused tests/Ruff/changed-
 slice mypy, commit, and report status/commit/tests/concerns/files.
+
+### Task 5 brief
+
+Implement the Feature 08 EventBus feed runner/session only. Continue on
+`feature/08-live-data-streaming` after `7b1d7e5`. The runner must be the sole
+publication owner: drain the existing USDⓈ-M provider generators, publish typed
+`CandleClosed`, `TickReceived`, `DataFeedError`, and `MarketContextUpdated` events
+in correct order, own/await child tasks, propagate cancellation safely, and
+isolate failures to the affected feed/session. Integrate with existing
+`StrategyEngine` only through tests/EventBus; do not create a concrete BotPipeline,
+modify BotSupervisor, import PaperBroker/ExecutableMarket, apply funding, calculate
+P&L/liquidation/triggers/fills, or add API/frontend/persistence/history behavior.
+Preserve event metadata and UTC semantics; do not publish incomplete candles or
+duplicate already-provider-deduplicated candles. Add lifecycle, ordering, metadata,
+failure-isolation, and no-orphan-task tests. Run focused tests, Ruff, changed-slice
+mypy, and full suite if feasible. Commit and report status, commit, tests, concerns,
+and changed files.
+
+### Task 6 brief
+
+Implement the separate broker-agnostic `LiveProviderRegistry` and complete the
+Feature 08 documentation/acceptance gate. Continue on `feature/08-live-data-streaming`
+after `9ddbcf4`. Registry responsibilities: map distinct provider names to
+side-effect-free factories, reject duplicate/unknown providers deterministically,
+and preserve provider instance scoping/isolation for future per-bot feed sessions.
+Register `binance_usdm` without changing historical provider registry or Spot
+identity. Do not construct network connections at registration. Reconcile the
+Feature 08 source-of-truth documentation with the confirmed USDⓈ-M architecture,
+current Binance category routes, optional market-context capability, explicit
+Feature 09/12 boundaries, acceptance checkboxes, and known deferred items. Do not
+implement authenticated execution, PaperBroker changes, bot pipeline, API,
+frontend, persistence, COIN-M, or historical Spot changes. Add registry and
+documentation consistency tests where appropriate. Run focused tests, Ruff,
+changed-slice mypy, and full suite if feasible. Commit and report status, commit,
+tests, concerns, and changed files.

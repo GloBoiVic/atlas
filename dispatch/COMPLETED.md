@@ -33,6 +33,40 @@
   passed with one pre-existing frontend Dockerfile assertion failure.
 - Commit: `eb61be8`; task review: PASS with no Critical or Important findings.
 
+## Feature 08 — Task 4 reconnect, gaps, and feed health — 2026-08-05
+
+- Added bounded injectable reconnect/backoff and failure classification with typed
+  retry-exhaustion errors, cancellation-safe cleanup, and subscription/dedup state
+  preservation.
+- Added candle gap detection without synthesis/backfill and Clock-injected candle,
+  book-ticker, and mark/context freshness monitoring with stale-episode recovery.
+- Validation: focused 15 tests, Ruff clean, changed-slice mypy clean; full suite 404
+  passed with one pre-existing frontend Dockerfile assertion failure.
+- Commit: `7b1d7e5`; task review: PASS with only non-blocking Minor observations.
+
+## Feature 08 — Task 5 EventBus feed runner — 2026-08-05
+
+- Added `LiveFeedRunner`/`LiveFeedSession` as the sole EventBus publication owner,
+  draining candle/tick/context streams with UTC metadata and typed events.
+- Added explicit child-task ownership, cancellation-safe shutdown, failure isolation,
+  duplicate/incomplete candle suppression, and runner lifecycle tests.
+- Fixed formatting and added book/mark drain capability, metadata, failure, and
+  cancellation coverage during review.
+- Validation: focused 53 tests, Ruff lint/format clean, changed-slice mypy clean;
+  full suite 411 passed with one pre-existing frontend Dockerfile assertion failure.
+- Commits: `ba6e465`, `9ddbcf4`; task review: PASS after fixes, no remaining findings.
+
+## Feature 08 — Task 6 live provider registry and documentation gate — 2026-08-05
+
+- Added a separate factory-based `LiveProviderRegistry` with deterministic duplicate and
+  unknown-provider errors, fresh provider instances, and deferred transport construction.
+- Registered `binance_usdm` without changing historical Spot's `binance` identity.
+- Reconciled Feature 08 source-of-truth documentation with current fstream category routes,
+  optional market-context capability, Feature 09/12 boundaries, acceptance status, and deferred
+  authenticated execution, PaperBroker changes, COIN-M, persistence, API, and frontend work.
+- Validation: focused registry/documentation/provider tests 14 passed; Ruff and changed-slice
+  mypy clean; full backend suite 419 passed with one pre-existing frontend Dockerfile assertion.
+
 ## Feature 08 — Task 4 reconnect, gaps, and health — 2026-08-05
 
 - Added bounded injectable exponential reconnect backoff with transient transport versus fatal

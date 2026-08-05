@@ -26,11 +26,12 @@ interval are logged and surfaced via `DataFeedError`.
       policy (Task 3)
 - [x] Bounded reconnect/backoff, cancellation-safe cleanup, completed-candle gap detection,
       and deterministic candle/book/mark freshness monitoring (Task 4)
-- [ ] Binance USDⓈ-M Futures streaming: WebSocket connection for live klines and trades
-- [ ] CandleClosed emission: Only completed candles produce events (Binance `k.x` flag)
-- [ ] TickReceived emission: Real-time trade stream
-- [ ] Data feed management: Reconnection, subscription deduplication, health monitoring
-- [ ] Live data integration: Live data feeds into strategy engine via EventBus
+- [x] Binance USDⓈ-M Futures streaming: WebSocket connections for live klines and trades
+- [x] CandleClosed emission: Only completed candles produce events (Binance `k.x` flag)
+- [x] TickReceived emission: Real-time aggregate-trade stream
+- [x] Data feed management: Reconnection, subscription deduplication, health monitoring
+- [x] Live data integration: Live data feeds the strategy boundary through EventBus
+- [x] Separate broker-agnostic `LiveProviderRegistry` with isolated provider factories
 
 ### Task 5 completion
 
@@ -46,6 +47,21 @@ pair it with `stop()` during shutdown.
 
 Binance Spot live streaming, OANDA streaming, and COIN-M Futures are deferred. The provider
 interface remains broker-agnostic.
+
+### Provider registry and ownership
+
+`LiveProviderRegistry` is separate from `HistoricalProviderRegistry` and maps provider names to
+side-effect-free factories. The built-in `binance_usdm` factory creates a fresh
+`BinanceUsdMStreamingProvider` for each lookup, preserving per-session subscriptions and candle
+deduplication state. Registration does not construct a WebSocket or any other network resource.
+The registry does not change historical Spot's `binance` identity. Providers with futures-only
+book/mark streams expose them through the optional live-market-context capability; the base
+`LiveDataProvider` candle/tick contract remains sufficient for providers without that capability.
+
+Feature 09 owns mode-specific pipeline assembly, translation of `MarketContext` to execution
+context, funding settlement, PaperBroker integration, and authenticated execution. Feature 12
+owns bot configuration, CRUD, lifecycle controls, and UI. Feature 08 does not implement those
+boundaries, persistence, API/frontend behavior, COIN-M, or authenticated execution.
 
 ### Event Payload Status
 
@@ -87,42 +103,16 @@ P&L, liquidation, trigger, and fill behavior.
 
 ### Binance Streaming
 
-```python
-class BinanceStreamingProvider(LiveDataProvider):
-    def __init__(self, event_bus: EventBus):
-        self.event_bus = event_bus
+The `BinanceUsdMStreamingProvider` uses the current raw public fstream category routes:
 
-    async def subscribe_candles(self, instrument: Instrument, timeframe: str) -> AsyncGenerator[Candle, None]:
-        symbol = self._to_binance_symbol(instrument.symbol)
-        interval = self._to_binance_interval(timeframe)
-        ws_url = f"wss://fstream.binance.com/market/ws/{symbol.lower()}@kline_{interval}"
-        async with websockets.connect(ws_url) as ws:
-            async for message in ws:
-                data = json.loads(message)
-                kline = data["k"]
-                candle = self._parse_kline(kline, instrument, timeframe)
+- `wss://fstream.binance.com/public/ws/{symbol}@bookTicker` for best bid/ask.
+- `wss://fstream.binance.com/market/ws/{symbol}@kline_{interval}` for klines.
+- `wss://fstream.binance.com/market/ws/{symbol}@aggTrade` for aggregate trades.
+- `wss://fstream.binance.com/market/ws/{symbol}@markPrice@1s` for mark/index/funding context.
 
-                # Emit CandleClosed only when the kline's closed flag is true
-                # and the candle hasn't been emitted before.
-                if kline["x"] and self._is_new_candle(candle):
-                    await self.event_bus.publish(CandleClosed(
-                        candle=candle,
-                    ))
-
-                yield candle
-
-    async def subscribe_ticks(self, instrument: Instrument) -> AsyncGenerator[Tick, None]:
-        symbol = self._to_binance_symbol(instrument.symbol)
-        ws_url = f"wss://stream.binance.com:9443/ws/{symbol.lower()}@trade"
-        async with websockets.connect(ws_url) as ws:
-            async for message in ws:
-                data = json.loads(message)
-                tick = self._parse_tick(data)
-                await self.event_bus.publish(TickReceived(
-                    tick=tick,
-                ))
-                yield tick
-```
+The provider parses and yields normalized values but never publishes directly to EventBus.
+`LiveFeedRunner` is the sole publication owner. `@bookTicker` and `@markPrice@1s` are optional
+market-context capabilities and are not required of every live provider.
 
 **Binance kline parsing details:**
 - The `k` object contains: `t` (open time, ms), `T` (close time, ms), `o` (open, string),
@@ -204,10 +194,10 @@ must be designed when OANDA is scheduled. The provider interface remains broker-
 ## Acceptance Criteria
 
 - [x] Only completed, deduplicated candles are emitted as CandleClosed events
-- [x] Live ticks are received and emitted as TickReceived events
-- [ ] Data feed reconnection works automatically without duplicate subscriptions
+- [x] Live aggregate trades are received and emitted as TickReceived events
+- [x] Data feed reconnection works automatically without duplicate subscriptions
 - [x] Data feed errors are handled gracefully (DataFeedError event)
-- [ ] Data feed health is monitored (timeout detection)
+- [x] Data feed health is monitored (timeout detection)
 - [x] Feed timestamps are normalized to UTC and use the shared Clock for timeout decisions
 - [x] Binance `k.x` flag is the authoritative candle completion signal
 - [x] Candle deduplication prevents duplicate CandleClosed events

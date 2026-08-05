@@ -1,5 +1,19 @@
 # Current Feature
 
+## Feature 08 — Task 6 LiveProviderRegistry and documentation gate — complete (2026-08-05)
+
+- [x] Add separate broker-agnostic live-provider factory registry with deterministic duplicate/
+      unknown errors and fresh per-session provider instances.
+- [x] Register `binance_usdm` without constructing transport resources or changing historical
+      Spot's `binance` registry/provider identity.
+- [x] Reconcile Feature 08 source-of-truth documentation and add focused registry/doc tests.
+- [x] Run focused tests, full suite, Ruff, and changed-slice mypy; commit the completed slice.
+
+Validation: focused registry/documentation/provider tests 14 passed; changed-slice Ruff and
+mypy clean. Full backend suite: 419 passed, 1 pre-existing frontend Dockerfile assertion failed.
+
+Last updated: 2026-08-05
+
 ## Feature 08 — Task 5 EventBus feed runner — complete (2026-08-05)
 
 - [x] Added isolated `LiveFeedSession` and `LiveFeedRunner` with explicit child-task ownership,
