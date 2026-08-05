@@ -100,13 +100,15 @@ class MarketContext:
             self.mark_at,
             self.index_at,
             self.funding_at,
+            self.next_funding_time,
         )
         if any(
             timestamp.tzinfo is None or timestamp.utcoffset() != timedelta(0)
             for timestamp in timestamps
         ):
             raise ValueError("market context timestamps must be UTC")
-        if self.bid <= 0 or self.ask <= 0 or self.mark_price <= 0 or self.index_price <= 0:
+        prices = (self.bid, self.ask, self.mark_price, self.index_price)
+        if any(not price.is_finite() or price <= 0 for price in prices):
             raise ValueError("market context prices must be positive")
         if self.bid > self.ask:
             raise ValueError("market context bid must not exceed ask")

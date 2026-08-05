@@ -22,6 +22,8 @@ interval are logged and surfaced via `DataFeedError`.
 
 - [x] USDⓈ-M Futures provider identity, non-secret stream configuration, typed feed errors,
       provider-neutral market context contracts, and deterministic Binance parsers (Task 1)
+- [x] Provider-neutral book/mark context aggregation with injectable freshness and clock
+      policy (Task 3)
 - [ ] Binance USDⓈ-M Futures streaming: WebSocket connection for live klines and trades
 - [ ] CandleClosed emission: Only completed candles produce events (Binance `k.x` flag)
 - [ ] TickReceived emission: Real-time trade stream
@@ -53,7 +55,19 @@ The USDⓈ-M provider now opens injectable raw `fstream` sessions for klines, ag
 book tickers, and mark-price updates. Logical subscriptions are provider-local and release their
 keys on generator exit or cancellation. Klines are yielded only after `k.x` completion and use
 the mandated composite candle key for deduplication across the minimal reconnect session seam.
-EventBus publication, context aggregation, and bounded retry policy remain deferred.
+EventBus publication and bounded retry policy remain deferred.
+
+### Task 3 completion
+
+`MarketContextAggregator` retains the newest valid book and mark components and returns
+`MarketContextUpdated` only when both components belong to the same instrument, are UTC,
+positive/non-crossed where applicable, non-future, and fresh under injected thresholds.
+Missing or stale pairs are suppressed; invalid and out-of-order updates do not replace
+valid retained state, so a newer component recovers publication deterministically. The
+aggregator is synchronous and creates no background tasks. `as_of` records the injected
+clock reading and component timestamps are carried separately. Feature 08 transports
+index/funding facts only; Feature 09 owns execution-context translation and all funding,
+P&L, liquidation, trigger, and fill behavior.
 
 ## Technical Details
 

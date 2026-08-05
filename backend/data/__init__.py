@@ -17,6 +17,7 @@ from backend.data.loader import (
     build_dataset_identity,
     load_historical_data,
 )
+from backend.data.market_context import MarketContextAggregator
 from backend.data.models import (
     Candle,
     DatasetIdentity,
@@ -49,6 +50,7 @@ __all__ = [
     "load_historical_data",
     "Instrument",
     "MarketContext",
+    "MarketContextAggregator",
     "LiveDataProvider",
     "Tick",
     "MarkPriceUpdate",

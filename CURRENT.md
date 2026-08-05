@@ -1,6 +1,6 @@
 # Current Feature
 
-## Feature 08 — Task 2 fstream subscriptions — complete (2026-08-05)
+## Feature 08 — Task 3 market-context aggregation — complete (2026-08-05)
 
 - [x] Created `feature/08-live-data-streaming` from current `main`.
 - [x] Added USDⓈ-M Futures provider identity and typed non-secret public-stream configuration.
@@ -10,7 +10,9 @@
       `@bookTicker`, and `@markPrice@1s` payloads.
 - [x] Added injectable fstream sessions, logical subscription cleanup, completion gating, and
       reconnect-preserving completed-candle deduplication.
-- [ ] Retry policy, context aggregation, feed runner, PaperBroker integration, bot pipeline,
+- [x] Added deterministic provider-neutral book/mark context aggregation with injectable
+      freshness thresholds and clock, immutable snapshots/events, and recovery behavior.
+- [ ] Retry policy, feed runner, PaperBroker integration, bot pipeline,
       API, frontend, and registry remain deferred to later Feature 08 tasks.
 
 ### Task 2 review fixes — complete (2026-08-05)
