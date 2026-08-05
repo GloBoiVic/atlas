@@ -13,6 +13,15 @@
 - [ ] Retry policy, context aggregation, feed runner, PaperBroker integration, bot pipeline,
       API, frontend, and registry remain deferred to later Feature 08 tasks.
 
+### Task 2 review fixes — complete (2026-08-05)
+
+- [x] Replaced retired `/ws` routing with explicit `/public/ws/` book-ticker and `/market/ws/`
+      kline, aggregate-trade, and mark-price routes.
+- [x] Tightened the injected connection factory contract with typed async-context-manager and
+      transport-setting signatures.
+- [x] Added route-specific configuration and stream URL coverage; historical Spot behavior is
+      unchanged.
+
 Last updated: 2026-08-05
 
 ## Frontend standalone asset serving fix — complete (2026-08-04)

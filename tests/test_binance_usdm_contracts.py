@@ -33,6 +33,8 @@ def test_streaming_config_is_public_and_typed() -> None:
     config = BinanceUsdMStreamingConfig()
 
     assert config.base_url == BINANCE_USDM_FSTREAM_BASE_URL
+    assert config.public_ws_base_url == "wss://fstream.binance.com/public/ws/"
+    assert config.market_ws_base_url == "wss://fstream.binance.com/market/ws/"
     assert config.ping_interval_seconds == 20.0
 
 

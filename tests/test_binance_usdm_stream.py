@@ -1,7 +1,10 @@
 import asyncio
 import json
 from collections.abc import AsyncIterator
+from contextlib import AbstractAsyncContextManager
 from decimal import Decimal
+from types import TracebackType
+from typing import TYPE_CHECKING, cast
 from uuid import uuid4
 
 import pytest
@@ -15,6 +18,9 @@ from backend.data.binance_usdm import (
     MarkPriceUpdate,
 )
 from backend.data.models import Instrument
+
+if TYPE_CHECKING:
+    from backend.data.binance_usdm_stream import ConnectionFactory
 
 
 class FakeWebSocket:
@@ -42,14 +48,19 @@ class ClosingWebSocket(FakeWebSocket):
         return messages()
 
 
-class FakeConnection:
+class FakeConnection(AbstractAsyncContextManager[FakeWebSocket]):
     def __init__(self, websocket: FakeWebSocket) -> None:
         self.websocket = websocket
 
     async def __aenter__(self) -> FakeWebSocket:
         return self.websocket
 
-    async def __aexit__(self, *_args: object) -> None:
+    async def __aexit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        _exc_value: BaseException | None,
+        _traceback: TracebackType | None,
+    ) -> None:
         await self.websocket.close()
 
 
@@ -83,8 +94,18 @@ async def test_candles_gate_incomplete_and_deduplicate_final_messages(
     instrument: Instrument,
 ) -> None:
     fake = FakeWebSocket([kline(False), kline(True), kline(True)])
+
+    def factory(
+        _url: str,
+        *,
+        ping_interval: float,
+        ping_timeout: float,
+        close_timeout: float,
+    ) -> FakeConnection:
+        return FakeConnection(fake)
+
     provider = BinanceUsdMStreamingProvider(
-        connection_factory=lambda _url, **_kwargs: FakeConnection(fake),
+        connection_factory=cast("ConnectionFactory", factory),
     )
 
     candles = [candle async for candle in provider.subscribe_candles(instrument, "1m")]
@@ -104,11 +125,17 @@ async def test_completed_candle_deduplication_survives_reconnect(
     async def sleeper(delay: float) -> None:
         sleeps.append(delay)
 
-    def factory(_url: str, **_kwargs: object) -> FakeConnection:
+    def factory(
+        _url: str,
+        *,
+        ping_interval: float,
+        ping_timeout: float,
+        close_timeout: float,
+    ) -> FakeConnection:
         return FakeConnection(sockets.pop(0))
 
     provider = BinanceUsdMStreamingProvider(
-        connection_factory=factory,
+        connection_factory=cast("ConnectionFactory", factory),
         sleeper=sleeper,
         max_reconnect_attempts=1,
     )
@@ -123,6 +150,10 @@ async def test_completed_candle_deduplication_survives_reconnect(
 async def test_stream_selection_and_url_are_provider_specific(instrument: Instrument) -> None:
     urls: list[str] = []
     sockets = {
+        "kline": FakeWebSocket([kline(True)]),
+        "agg": FakeWebSocket(
+            [{"e": "aggTrade", "p": "100", "q": "1", "T": 1_000}]
+        ),
         "book": FakeWebSocket(
             [{"e": "bookTicker", "E": 1_000, "b": "100", "a": "101"}]
         ),
@@ -140,19 +171,42 @@ async def test_stream_selection_and_url_are_provider_specific(instrument: Instru
         ),
     }
 
-    def factory(url: str, **_kwargs: object) -> FakeConnection:
+    def factory(
+        url: str,
+        *,
+        ping_interval: float,
+        ping_timeout: float,
+        close_timeout: float,
+    ) -> FakeConnection:
         urls.append(url)
-        return FakeConnection(sockets["book" if "bookTicker" in url else "mark"])
+        stream_kind = (
+            "book"
+            if "bookTicker" in url
+            else "mark"
+            if "markPrice" in url
+            else "kline"
+            if "kline" in url
+            else "agg"
+        )
+        return FakeConnection(sockets[stream_kind])
 
-    provider = BinanceUsdMStreamingProvider(connection_factory=factory)
+    provider = BinanceUsdMStreamingProvider(
+        connection_factory=cast("ConnectionFactory", factory)
+    )
+    candles = [value async for value in provider.subscribe_candles(instrument, "1m")]
+    ticks = [value async for value in provider.subscribe_ticks(instrument)]
     book = [value async for value in provider.subscribe_book_tickers(instrument)]
     mark = [value async for value in provider.subscribe_mark_prices(instrument)]
 
+    assert candles[0].is_complete
+    assert ticks[0].price == Decimal("100")
     assert isinstance(book[0], BookTicker)
     assert isinstance(mark[0], MarkPriceUpdate)
     assert urls == [
-        f"{BINANCE_USDM_FSTREAM_BASE_URL}/btcusdt@bookTicker",
-        f"{BINANCE_USDM_FSTREAM_BASE_URL}/btcusdt@markPrice@1s",
+        f"{BINANCE_USDM_FSTREAM_BASE_URL}/market/ws/btcusdt@kline_1m",
+        f"{BINANCE_USDM_FSTREAM_BASE_URL}/market/ws/btcusdt@aggTrade",
+        f"{BINANCE_USDM_FSTREAM_BASE_URL}/public/ws/btcusdt@bookTicker",
+        f"{BINANCE_USDM_FSTREAM_BASE_URL}/market/ws/btcusdt@markPrice@1s",
     ]
 
 
@@ -171,8 +225,18 @@ async def test_duplicate_active_subscription_is_rejected_and_cleanup_releases_ke
             return wait_forever()
 
     waiting = WaitingSocket([])
+
+    def factory(
+        _url: str,
+        *,
+        ping_interval: float,
+        ping_timeout: float,
+        close_timeout: float,
+    ) -> FakeConnection:
+        return FakeConnection(waiting)
+
     provider = BinanceUsdMStreamingProvider(
-        connection_factory=lambda _url, **_kwargs: FakeConnection(waiting),
+        connection_factory=cast("ConnectionFactory", factory),
     )
     first = provider.subscribe_ticks(instrument)
     task = asyncio.create_task(first.__anext__())

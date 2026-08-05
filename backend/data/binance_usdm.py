@@ -15,7 +15,9 @@ from uuid import UUID
 from backend.data.models import Candle, Instrument, Tick
 
 BINANCE_USDM_PROVIDER = "binance_usdm"
-BINANCE_USDM_FSTREAM_BASE_URL = "wss://fstream.binance.com/ws"
+BINANCE_USDM_FSTREAM_BASE_URL = "wss://fstream.binance.com"
+BINANCE_USDM_PUBLIC_WS_PATH = "/public/ws/"
+BINANCE_USDM_MARKET_WS_PATH = "/market/ws/"
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,9 +29,19 @@ class BinanceUsdMStreamingConfig:
     ping_timeout_seconds: float = 20.0
     close_timeout_seconds: float = 10.0
 
+    @property
+    def public_ws_base_url(self) -> str:
+        """Return the current high-frequency public-stream route."""
+        return f"{self.base_url}{BINANCE_USDM_PUBLIC_WS_PATH}"
+
+    @property
+    def market_ws_base_url(self) -> str:
+        """Return the current regular market-stream route."""
+        return f"{self.base_url}{BINANCE_USDM_MARKET_WS_PATH}"
+
     def __post_init__(self) -> None:
         if self.base_url != BINANCE_USDM_FSTREAM_BASE_URL:
-            raise ValueError("Binance USDⓈ-M base_url must be the public fstream endpoint")
+            raise ValueError("Binance USDⓈ-M base_url must be the public fstream endpoint host")
         if any(
             value <= 0
             for value in (
@@ -231,6 +243,8 @@ from backend.data.binance_usdm_stream import BinanceUsdMStreamingProvider  # noq
 
 __all__ = [
     "BINANCE_USDM_FSTREAM_BASE_URL",
+    "BINANCE_USDM_MARKET_WS_PATH",
+    "BINANCE_USDM_PUBLIC_WS_PATH",
     "BINANCE_USDM_PROVIDER",
     "BinanceUsdMStreamingConfig",
     "BinanceUsdMStreamingProvider",

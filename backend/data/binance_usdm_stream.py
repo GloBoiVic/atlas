@@ -5,7 +5,7 @@ import json
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import AbstractAsyncContextManager
 from datetime import datetime
-from typing import Any, Protocol, cast
+from typing import Protocol, TypedDict, cast
 from uuid import UUID
 
 from websockets.asyncio.client import connect
@@ -31,9 +31,29 @@ class _WebSocket(Protocol):
     async def __anext__(self) -> str | bytes: ...
 
 
-type ConnectionFactory = Callable[..., Any]
 type Sleeper = Callable[[float], Awaitable[None]]
 type CandleKey = tuple[UUID, str, str, datetime, str]
+
+
+class ConnectionSettings(TypedDict):
+    """Transport settings passed to an injected WebSocket connection factory."""
+
+    ping_interval: float
+    ping_timeout: float
+    close_timeout: float
+
+
+class ConnectionFactory(Protocol):
+    """Create one typed async WebSocket context for a stream URL."""
+
+    def __call__(
+        self,
+        url: str,
+        *,
+        ping_interval: float,
+        ping_timeout: float,
+        close_timeout: float,
+    ) -> AbstractAsyncContextManager[_WebSocket]: ...
 
 
 class BinanceUsdMStreamingProvider(LiveDataProvider):
@@ -49,7 +69,9 @@ class BinanceUsdMStreamingProvider(LiveDataProvider):
         if max_reconnect_attempts < 0:
             raise ValueError("max_reconnect_attempts must not be negative")
         self._config = config or BinanceUsdMStreamingConfig()
-        self._connection_factory = connection_factory or _default_connection_factory
+        self._connection_factory: ConnectionFactory = (
+            connection_factory or _default_connection_factory
+        )
         self._sleeper = sleeper or asyncio.sleep
         self._max_reconnect_attempts = max_reconnect_attempts
         self._active_subscriptions: set[tuple[str, UUID, str | None]] = set()
@@ -130,12 +152,12 @@ class BinanceUsdMStreamingProvider(LiveDataProvider):
         reconnect_attempt = 0
         while True:
             try:
-                async with self._connection_factory(
-                    stream,
-                    ping_interval=self._config.ping_interval_seconds,
-                    ping_timeout=self._config.ping_timeout_seconds,
-                    close_timeout=self._config.close_timeout_seconds,
-                ) as websocket:
+                settings: ConnectionSettings = {
+                    "ping_interval": self._config.ping_interval_seconds,
+                    "ping_timeout": self._config.ping_timeout_seconds,
+                    "close_timeout": self._config.close_timeout_seconds,
+                }
+                async with self._connection_factory(stream, **settings) as websocket:
                     async for raw_message in websocket:
                         message = (
                             raw_message.decode()
@@ -155,7 +177,12 @@ class BinanceUsdMStreamingProvider(LiveDataProvider):
 
     def _stream(self, instrument: Instrument, stream: str) -> str:
         symbol = instrument.symbol.replace("/", "").lower()
-        return f"{self._config.base_url}/{symbol}@{stream}"
+        route = (
+            self._config.public_ws_base_url
+            if stream == "bookTicker"
+            else self._config.market_ws_base_url
+        )
+        return f"{route}{symbol}@{stream}"
 
     def _claim(
         self, kind: str, instrument_id: UUID, timeframe: str | None
@@ -173,6 +200,18 @@ class BinanceUsdMStreamingProvider(LiveDataProvider):
 
 
 def _default_connection_factory(
-    url: str, **kwargs: object
+    url: str,
+    *,
+    ping_interval: float,
+    ping_timeout: float,
+    close_timeout: float,
 ) -> AbstractAsyncContextManager[_WebSocket]:
-    return cast("AbstractAsyncContextManager[_WebSocket]", cast("Any", connect)(url, **kwargs))
+    return cast(
+        "AbstractAsyncContextManager[_WebSocket]",
+        connect(
+            url,
+            ping_interval=ping_interval,
+            ping_timeout=ping_timeout,
+            close_timeout=close_timeout,
+        ),
+    )

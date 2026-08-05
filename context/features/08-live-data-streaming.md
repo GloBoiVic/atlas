@@ -67,7 +67,7 @@ class BinanceStreamingProvider(LiveDataProvider):
     async def subscribe_candles(self, instrument: Instrument, timeframe: str) -> AsyncGenerator[Candle, None]:
         symbol = self._to_binance_symbol(instrument.symbol)
         interval = self._to_binance_interval(timeframe)
-        ws_url = f"wss://stream.binance.com:9443/ws/{symbol.lower()}@kline_{interval}"
+        ws_url = f"wss://fstream.binance.com/market/ws/{symbol.lower()}@kline_{interval}"
         async with websockets.connect(ws_url) as ws:
             async for message in ws:
                 data = json.loads(message)
