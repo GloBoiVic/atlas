@@ -155,3 +155,54 @@
 - Added idempotency, partial-fill, unknown-state, bot-isolation, FIFO, and provenance tests.
 - Validation: 310 tests passed; Ruff clean; changed-slice mypy clean (unrelated legacy errors remain).
 - Reviewer: spec compliance PASS; task quality PASS after review fixes.
+
+## Feature 05 — Backtesting — 2026-08-04
+
+- Implemented deterministic backtesting on branch `feature/05-backtesting`.
+- Added CandleRepository read protocol (`get_candles`) with inclusive UTC, complete-only,
+  chronological semantics across SQLAlchemy and in-memory implementations.
+- Established `BacktestRun`/`BacktestTrade` domain models, ORM models, and Alembic
+  migration 008 with native UUID, `NUMERIC(28,12)`, JSONB, and `ON DELETE CASCADE`.
+- Implemented isolated replay engine (`BacktesterEngine`) with `SimulationClock`,
+  warm-up (strategy-state only, no signals), next-candle-open fill semantics,
+  protective stops, `ExecutableMarket` context per candle, and deterministic dataset
+  identity via `build_dataset_identity` — no wall-clock timestamps, no production
+  table contamination.
+- Added `BacktestService` with full lifecycle (`PENDING→RUNNING→COMPLETED/FAILED/CANCELLED`),
+  trusted resolution via `StrategyRegistry`, atomic persistence with bounded terminal-failure
+  fallback, and `asyncio.CancelledError` handling.
+- Implemented `BacktestRepository` protocol with `SqlAlchemyBacktestRepository` and
+  `InMemoryBacktestRepository` parity implementations.
+- Delivered four API endpoints (`POST /backtests`, `GET /backtests`, `GET /backtests/{id}`,
+  `GET /backtests/{id}/trades`) with Decimal-as-string serialization, trusted-config
+  `_FORBIDDEN_KEYS` validation, env-configured CORS without wildcard credentials, and
+  404/409/422/500 error mapping.
+- Built complete frontend backtests UI (form, list, detail, 8-metric grid, trades table)
+  with string-only percentage formatting (`formatPercentRatio`), UTC datetime-local with
+  `Z`-suffix, `end>=start` validation, semantic `StatusBadge`/`StatusMessage` components,
+  design-system tokens (`bg-atlas-*`, `font-atlas-mono`, `rounded-atlas-*`), and
+  accessibility conventions (`aria-labelledby`, `role="alert"`, `aria-describedby`) —
+  no metric recalculation in the UI.
+- Reused shared `StrategyEngine`/`RiskEngine`/`ExecutionEngine`/`PaperBroker` contracts;
+  no new strategy, risk, or execution semantics introduced.
+- Validation: 371 backend tests passed, Ruff clean, backtest-feature mypy 0 errors,
+  full-repo mypy 14 pre-existing test-only errors unchanged, coverage 90% (above 80% min),
+  `tsc --noEmit` zero errors, ESLint zero errors, `next build` compiled successfully.
+  Migration isolation test (`test_backtest_models_are_registered_for_alembic_metadata`)
+  passes standalone after explicit ORM model import fix.
+- Final whole-feature review: **PASS** 🟢 with zero Critical, Important, or Minor findings.
+- Three environment limitations accepted: PostgreSQL/Docker integration testing deferred
+  (daemon unavailable), no frontend test runner (infrastructure gap), and 14 pre-existing
+  unrelated test mypy errors.
+
+## Design-system reconciliation — 2026-08-04
+
+- **Token source/projections reconciled**: design CSS `token()` references match static `.atlas-*` values; compiled Tailwind projections verified against Atlas button/typography design tokens — all core and extended palette tokens account for every reference in source. JSON → design CSS → Tailwind `@theme` projection chain confirmed correct with zero value drift across 65+ tokens.
+- **Layout/z-index/font-weight fixes**: layout tokens (`container`, `container-narrow`, `topnav-height`, `page-gutter`) and z-index stack (`sticky`, `modal`, `toast`, `tooltip`) added to Tailwind `@theme` with `atlas-` prefix. Font-weight projection fixed from non-functional `--fw-atlas-*` to standard `--font-weight-atlas-*`, generating working `font-atlas-regular/medium/semibold/bold` utilities.
+- **Base-style cleanup**: `body` reset removed from `design/tokens/atlas-tokens.css` (design CSS now token-only, 89 lines, no font `@import`, no `.mono` class). `globals.css` confirmed as sole owner of font loading, base reset, and Tailwind entry — single Google Fonts `@import`, single `@layer base` body reset, correct `@import` ordering.
+- **Existing backtests utility migration**: all `/backtests` components migrated from standard Tailwind utilities to semantic Atlas tokens — 10 legacy `font-fw-atlas-semibold` instances replaced with `font-atlas-semibold`; `tracking-tight` corrected to `tracking-atlas-tight`; 13+ text-size instances migrated to `text-atlas-*`; 30+ spacing instances migrated to `*-atlas-*`; `leading-atlas-tight/snug/normal` deployed; `duration-atlas-base` and `ease-atlas-out` applied to transitions. No route scope leakage — only existing backtests files and shared styles touched.
+- **56px topnav decision**: header height maintained at 56px in JSON, design CSS, and Tailwind theme pending human provenance confirmation of the 57px `dashboard-topnav.png` screenshot. Token left unchanged per ARCHITECTURE.md §10.
+- **Validation**: lint (`next lint --quiet`) PASS, typecheck (`tsc --noEmit`) PASS, build (`next build`) PASS (14.9s, 4 routes generated), JSON token projection diff PASS, compiled CSS utility audit confirms all `bg-atlas-*`, `text-atlas-*`, `font-atlas-*`, `rounded-atlas-*`, `leading-atlas-*`, `tracking-atlas-*`, `spacing-atlas-*`, `ease-atlas-*`, and `duration-atlas-*` utilities resolve correctly. No raw design CSS import, no duplicate font import, zero legacy `font-fw-atlas-*` or `tracking-tight` instances remain.
+- **Intentional exceptions documented**: `control-height-[40px]` (form inputs), `h-12` (empty-state illustrations), and 8 documented standard-utility exceptions (`py-[10px]`, `px-[10px]`, `min-h-11`, `py-[56px]`, `max-w-7xl/2xl/xs`, `mt-[2px]`) preserved with rationale in `ui-registry.md`. Structural/layout utilities (`size-4`, `min-h-screen`, `flex`, `grid`, `overflow-*`, etc.) recognised as non-token standard utilities.
+- **Deferred screenshot comparisons**: visual regression testing via pixelmatch/Playwright screenshots intentionally deferred — not a code-quality gate. Dashboard and landing references remain future acceptance artifacts. Topnav 57px provenance deferred for human confirmation.
+- **Final review**: **PASS** 🟢 — zero Critical, Important, or Minor findings in reconciliation scope. All 10 architecture conflicts (C1–C10) resolved or explicitly deferred. All 5 prior review findings (F1–F5, 2 Critical + 3 Important) fixed.

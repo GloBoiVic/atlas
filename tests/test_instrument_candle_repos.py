@@ -5,8 +5,10 @@ Covers both the SQLAlchemy (PostgreSQL-aware) and in-memory implementations.
 """
 
 from collections.abc import AsyncGenerator
+from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Any, TypedDict
 from uuid import UUID
 
 import pytest
@@ -15,6 +17,13 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
+from backend.backtester.models import (
+    BacktestConfig,
+    BacktestResult,
+    BacktestRun,
+    BacktestStatus,
+    BacktestTrade,
+)
 from backend.data.models import Candle as CandleDomain
 from backend.persistence.models import Candle as OrmCandle
 from backend.persistence.models import Instrument as OrmInstrument
@@ -34,6 +43,20 @@ from backend.persistence.repositories.sqlalchemy import (
 
 _INSTRUMENT_ID = UUID("a0000000-0000-0000-0000-000000000001")
 _OTHER_ID = UUID("a0000000-0000-0000-0000-000000000002")
+_STRATEGY_VERSION_ID = UUID("a0000000-0000-0000-0000-000000000003")
+
+
+class BacktestConfigValues(TypedDict):
+    instrument_id: UUID
+    account_id: UUID
+    strategy_version_id: UUID
+    timeframe: str
+    start_date: datetime
+    end_date: datetime
+    strategy_parameters: dict[str, Any]
+    risk_config: dict[str, Any]
+    execution_config: dict[str, Any]
+    initial_balance: Decimal
 
 
 def make_candle(
@@ -371,6 +394,58 @@ class TestInMemoryCandleRepository:
         other = make_candle(open_time=datetime(2026, 1, 1, 5, 0, tzinfo=UTC))
         assert repo.contains(other) is False
 
+    @pytest.mark.asyncio
+    async def test_get_candles_applies_inclusive_bounds_order_and_complete_only(self, repo) -> None:
+        candles = [
+            make_candle(open_time=datetime(2026, 1, 1, hour, tzinfo=UTC))
+            for hour in (2, 0, 1)
+        ]
+        incomplete = replace(
+            candles[0],
+            open_time=datetime(2026, 1, 1, 3, tzinfo=UTC),
+            is_complete=False,
+        )
+        await repo.save_many(candles + [incomplete])
+
+        result = await repo.get_candles(
+            _INSTRUMENT_ID,
+            "1m",
+            datetime(2026, 1, 1, 0, tzinfo=UTC),
+            datetime(2026, 1, 1, 1, tzinfo=UTC),
+        )
+
+        assert [candle.open_time.hour for candle in result] == [0, 1]
+
+    @pytest.mark.asyncio
+    async def test_get_candles_selects_price_basis_and_deduplicates_identity(self, repo) -> None:
+        trade = make_candle()
+        mid = replace(trade, price_basis="mid", close=Decimal("50100"))
+        await repo.save_many([trade, replace(trade, close=Decimal("99999")), mid])
+
+        result = await repo.get_candles(
+            _INSTRUMENT_ID, "1m", trade.open_time, trade.open_time, price_basis="mid"
+        )
+
+        assert result == [mid]
+
+    @pytest.mark.asyncio
+    async def test_get_candles_rejects_non_utc_bounds_and_allows_empty_range(self, repo) -> None:
+        with pytest.raises(ValueError, match="start must be UTC"):
+            await repo.get_candles(
+                _INSTRUMENT_ID,
+                "1m",
+                datetime(2026, 1, 1),
+                datetime(2026, 1, 1, tzinfo=UTC),
+            )
+
+        result = await repo.get_candles(
+            _INSTRUMENT_ID,
+            "1m",
+            datetime(2025, 1, 1, tzinfo=UTC),
+            datetime(2025, 1, 2, tzinfo=UTC),
+        )
+        assert result == []
+
 
 # ---------------------------------------------------------------------------
 # 4. SqlAlchemyCandleRepository SQLite fixture coverage
@@ -451,3 +526,253 @@ class TestSqlAlchemyCandleRepository:
     @pytest.mark.asyncio
     async def test_save_many_returns_zero_for_empty_batch(self, repo) -> None:
         assert await repo.save_many([]) == 0
+
+    @pytest.mark.asyncio
+    async def test_get_candles_matches_in_memory_read_semantics(self, repo) -> None:
+        first = make_candle(open_time=datetime(2026, 1, 1, 0, tzinfo=UTC))
+        second = make_candle(open_time=datetime(2026, 1, 1, 1, tzinfo=UTC))
+        mid = replace(second, price_basis="mid")
+        incomplete = replace(
+            first,
+            open_time=datetime(2026, 1, 1, 2, tzinfo=UTC),
+            is_complete=False,
+        )
+        await repo.save_many([second, first, incomplete, mid])
+
+        result = await repo.get_candles(
+            _INSTRUMENT_ID,
+            "1m",
+            first.open_time,
+            second.open_time,
+        )
+
+        assert [candle.open_time for candle in result] == [first.open_time, second.open_time]
+        assert all(candle.is_complete for candle in result)
+
+    @pytest.mark.asyncio
+    async def test_get_candles_matches_in_memory_repository_for_identical_data(self, repo) -> None:
+        candles = [
+            make_candle(open_time=datetime(2026, 1, 1, hour, tzinfo=UTC))
+            for hour in (3, 0, 2, 1)
+        ]
+        candles.extend(
+            [
+                replace(
+                    candles[0],
+                    is_complete=False,
+                    open_time=datetime(2026, 1, 1, 4, tzinfo=UTC),
+                ),
+                replace(candles[0], price_basis="mid"),
+            ]
+        )
+        memory_repo = InMemoryCandleRepository()
+        await repo.save_many(candles)
+        await memory_repo.save_many(candles)
+
+        sql_result = await repo.get_candles(
+            _INSTRUMENT_ID,
+            "1m",
+            datetime(2026, 1, 1, 1, tzinfo=UTC),
+            datetime(2026, 1, 1, 3, tzinfo=UTC),
+        )
+        memory_result = await memory_repo.get_candles(
+            _INSTRUMENT_ID,
+            "1m",
+            datetime(2026, 1, 1, 1, tzinfo=UTC),
+            datetime(2026, 1, 1, 3, tzinfo=UTC),
+        )
+
+        assert sql_result == memory_result
+
+    @pytest.mark.asyncio
+    async def test_get_candles_uses_price_basis_and_validates_utc(self, repo) -> None:
+        candle = make_candle()
+        await repo.save_many([candle, replace(candle, price_basis="mid")])
+
+        result = await repo.get_candles(
+            _INSTRUMENT_ID,
+            "1m",
+            candle.open_time,
+            candle.open_time,
+            price_basis="mid",
+        )
+        assert [item.price_basis for item in result] == ["mid"]
+
+        with pytest.raises(ValueError, match="end must be UTC"):
+            await repo.get_candles(
+                _INSTRUMENT_ID,
+                "1m",
+                candle.open_time,
+                datetime(2026, 1, 1),
+            )
+
+        assert (
+            await repo.get_candles(
+                _INSTRUMENT_ID,
+                "1m",
+                datetime(2025, 1, 1, tzinfo=UTC),
+                datetime(2025, 1, 2, tzinfo=UTC),
+            )
+            == []
+        )
+
+
+class TestBacktestContracts:
+    def test_config_validates_utc_and_decimal_execution_values(self) -> None:
+        values: BacktestConfigValues = {
+            "instrument_id": _INSTRUMENT_ID,
+            "account_id": _OTHER_ID,
+            "strategy_version_id": _STRATEGY_VERSION_ID,
+            "timeframe": "1m",
+            "start_date": datetime(2026, 1, 1, tzinfo=UTC),
+            "end_date": datetime(2026, 1, 2, tzinfo=UTC),
+            "strategy_parameters": {"period": 5},
+            "risk_config": {},
+            "execution_config": {
+                "fee_rate": Decimal("0.0005"),
+                "slippage_rate": Decimal("0.0005"),
+                "fill_model": "next_candle_open",
+                "protective_trigger_rule": "stop_loss_first",
+            },
+            "initial_balance": Decimal("1000"),
+        }
+        config = BacktestConfig(**values)
+        assert config.execution_config["fee_rate"] == Decimal("0.0005")
+
+        with pytest.raises(TypeError, match="fee_rate must be a Decimal"):
+            BacktestConfig(
+                instrument_id=values["instrument_id"],
+                account_id=values["account_id"],
+                strategy_version_id=values["strategy_version_id"],
+                timeframe=values["timeframe"],
+                start_date=values["start_date"],
+                end_date=values["end_date"],
+                strategy_parameters=values["strategy_parameters"],
+                risk_config=values["risk_config"],
+                execution_config={**values["execution_config"], "fee_rate": 0.1},
+                initial_balance=values["initial_balance"],
+            )
+
+    def test_trade_validates_fields_and_freezes_signal_metadata(self) -> None:
+        trade = BacktestTrade(
+            backtest_run_id=_OTHER_ID,
+            instrument_id=_INSTRUMENT_ID,
+            symbol="BTCUSDT",
+            direction="buy",
+            entry_price=Decimal("50000"),
+            quantity=Decimal("0.1"),
+            entry_time=datetime(2026, 1, 1, tzinfo=UTC),
+            exit_price=Decimal("50100"),
+            pnl=Decimal("10"),
+            exit_time=datetime(2026, 1, 1, 1, tzinfo=UTC),
+            signal_metadata={"reason": "breakout"},
+        )
+
+        assert trade.net_pnl == Decimal("10")
+        with pytest.raises(TypeError, match="metadata is immutable"):
+            trade.signal_metadata["reason"] = "other"
+
+        open_trade = BacktestTrade(
+            backtest_run_id=_OTHER_ID,
+            instrument_id=_INSTRUMENT_ID,
+            symbol="BTCUSDT",
+            direction="buy",
+            entry_price=Decimal("50000"),
+            quantity=Decimal("0.1"),
+            entry_time=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        assert open_trade.exit_price is None
+        assert open_trade.exit_time is None
+        assert open_trade.net_pnl is None
+
+    @pytest.mark.parametrize(
+        ("field_name", "value", "error"),
+        [
+            ("quantity", Decimal("0"), "quantity must be positive"),
+            ("entry_time", datetime(2026, 1, 1), "entry_time must be UTC"),
+            ("entry_price", 50000, "entry_price must be a Decimal"),
+            ("backtest_run_id", "not-a-uuid", "backtest_run_id must be a UUID"),
+        ],
+    )
+    def test_trade_rejects_invalid_values(
+        self, field_name: str, value: object, error: str
+    ) -> None:
+        trade_values: dict[str, Any] = {
+            "backtest_run_id": _OTHER_ID,
+            "instrument_id": _INSTRUMENT_ID,
+            "symbol": "BTCUSDT",
+            "direction": "buy",
+            "entry_price": Decimal("50000"),
+            "quantity": Decimal("0.1"),
+            "entry_time": datetime(2026, 1, 1, tzinfo=UTC),
+        }
+        trade_values[field_name] = value
+
+        with pytest.raises((TypeError, ValueError), match=error):
+            BacktestTrade(**trade_values)
+
+    def test_run_validates_status_timestamps_and_freezes_config(self) -> None:
+        run = BacktestRun(
+            id=UUID("a0000000-0000-0000-0000-000000000004"),
+            strategy_name="breakout",
+            strategy_version="1.0.0",
+            strategy_commit_sha="a" * 40,
+            strategy_parameters={"period": 20},
+            instrument_id=_INSTRUMENT_ID,
+            symbol="BTCUSDT",
+            timeframe="1m",
+            data_source="database",
+            dataset_id="dataset-1",
+            start_date=datetime(2026, 1, 1, tzinfo=UTC),
+            end_date=datetime(2026, 1, 2, tzinfo=UTC),
+            risk_config={"risk_per_trade": Decimal("0.01")},
+            execution_config={"fee_rate": Decimal("0.0005")},
+            fill_model="next_candle_open",
+            status=BacktestStatus.PENDING,
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+
+        assert run.result is None
+        assert run.last_processed_timestamp is None
+        with pytest.raises(TypeError, match="metadata is immutable"):
+            run.strategy_parameters["period"] = 10
+
+    def test_run_rejects_invalid_status_and_timestamp(self) -> None:
+        run_values: dict[str, Any] = {
+            "id": UUID("a0000000-0000-0000-0000-000000000004"),
+            "strategy_name": "breakout",
+            "strategy_version": "1.0.0",
+            "strategy_commit_sha": "a" * 40,
+            "strategy_parameters": {},
+            "instrument_id": _INSTRUMENT_ID,
+            "symbol": "BTCUSDT",
+            "timeframe": "1m",
+            "data_source": "database",
+            "dataset_id": "dataset-1",
+            "start_date": datetime(2026, 1, 1, tzinfo=UTC),
+            "end_date": datetime(2026, 1, 2, tzinfo=UTC),
+            "risk_config": {},
+            "execution_config": {},
+            "fill_model": "next_candle_open",
+            "status": BacktestStatus.PENDING,
+            "created_at": datetime(2026, 1, 1, tzinfo=UTC),
+        }
+
+        run_values["status"] = "pending"
+        with pytest.raises(TypeError, match="status must be a BacktestStatus"):
+            BacktestRun(**run_values)
+
+        run_values["status"] = BacktestStatus.PENDING
+        run_values["created_at"] = datetime(2026, 1, 1)
+        with pytest.raises(ValueError, match="created_at must be UTC"):
+            BacktestRun(**run_values)
+
+    def test_status_and_result_contracts_preserve_decimal_metrics(self) -> None:
+        result = BacktestResult(
+            total_return=Decimal("0.125"),
+            total_pnl=Decimal("125"),
+            starting_equity=Decimal("1000"),
+            ending_equity=Decimal("1125"),
+        )
+        assert BacktestStatus.PENDING.value == "pending"
+        assert result.total_return == Decimal("0.125")

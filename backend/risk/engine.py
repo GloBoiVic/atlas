@@ -184,6 +184,7 @@ class RiskEngine:
                 replace(
                     decision,
                     event_id=uuid4(),
+                    occurred_at=event.occurred_at,
                     account_id=event.account_id,
                     bot_id=event.bot_id,
                     mode=event.mode,
@@ -214,6 +215,7 @@ class RiskEngine:
                 account_id=event.account_id,
                 bot_id=event.bot_id,
                 mode=event.mode,
+                occurred_at=event.occurred_at,
                 correlation_id=event.correlation_id,
             )
         )

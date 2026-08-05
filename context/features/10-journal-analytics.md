@@ -99,11 +99,19 @@ class AnalyticsService:
         # Profit factor: gross_profit / gross_loss
         ...
 
-        # Monetary values (total_return, max_drawdown) serialized as decimal strings
-        # to preserve precision across the API boundary. Ratios (win_rate, sharpe_ratio,
-        # profit_factor) are float by policy.
+        # Serialization policy across the API boundary:
+        #   Monetary values (total_pnl, max_drawdown)    → decimal strings
+        #   Decimal ratios  (total_return)               → decimal strings (exact precision)
+        #   Float ratios    (win_rate, sharpe_ratio,      → float
+        #                    profit_factor)
+        #
+        # starting_equity and ending_equity are the configured starting balance and
+        # the computed ending balance (starting_equity + total_pnl). Both are Decimal.
         return PerformanceMetrics(
-            total_return=str(total_pnl) if total_pnl is not None else None,
+            total_return=str(total_return) if total_return is not None else None,
+            total_pnl=str(total_pnl) if total_pnl is not None else None,
+            starting_equity=str(starting_equity) if starting_equity is not None else None,
+            ending_equity=str(ending_equity) if ending_equity is not None else None,
             win_rate=winning_trades / total_trades if total_trades else 0.0,
             sharpe_ratio=sharpe_ratio,
             max_drawdown=str(max_drawdown) if max_drawdown is not None else None,
@@ -119,9 +127,17 @@ class AnalyticsService:
 Feature 10 owns the canonical metric formulas. Feature 05 may store raw run-level snapshots
 but must cite these definitions and must not invent alternate formulas.
 
-- **Total return:** `(ending_equity - starting_equity) / starting_equity`. Also persist
-  absolute net P&L. Both include fees and slippage. Starting equity is the configured
-  initial balance; ending equity is the sum of starting equity plus closed-trade net P&L.
+- **Total return:** Normalized cumulative return as an exact Decimal ratio
+  (`0.125` = 12.5%). Formula: `(ending_equity - starting_equity) / starting_equity`.
+  Includes fees and slippage.
+
+- **Total P&L (`total_pnl`):** Absolute net realised P&L (`ending_equity - starting_equity`).
+  A Decimal monetary value. Includes fees and slippage.
+
+- **Starting equity:** The configured initial balance at the start of the period. Decimal.
+
+- **Ending equity:** The computed balance at the end of the period
+  (`starting_equity + total_pnl`). Decimal.
 
 - **Win rate:** closed winning trades / all closed trades. Zero when there are no closed
   trades. Open trades are excluded.
@@ -140,9 +156,13 @@ but must cite these definitions and must not invent alternate formulas.
   Require a minimum-observation rule (e.g., at least 30 daily returns). Explicitly
   report `undefined` for zero variance or insufficient samples.
 
-- **Numeric storage:** Monetary metrics (P&L, drawdown amounts) use `NUMERIC`/`Decimal`.
-  Non-monetary ratios (Sharpe, profit factor) may use `FLOAT` but must define
-  serialization and undefined-value behavior explicitly.
+- **Numeric storage:** Three categories:
+  - **Monetary values** (P&L, drawdown amounts, starting_equity, ending_equity) — `NUMERIC`/`Decimal`.
+  - **Decimal ratios** (total_return) — `NUMERIC`/`Decimal`. Ratios, not monetary values,
+    but stored as Decimal for exact precision.
+  - **Float ratios** (win_rate, Sharpe, profit factor) — `FLOAT` per coding-standards policy.
+
+  Each category must define serialization and undefined-value behavior explicitly.
 
 - **Fees and slippage:** Deducted at the fill level and reflected in trade `net_pnl`.
   The configured fee and slippage values are recorded per run.

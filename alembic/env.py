@@ -7,6 +7,8 @@ from backend.config import settings
 from backend.persistence.database import Base
 from backend.persistence.models import (  # noqa: F401
     Account,
+    BacktestRunModel,
+    BacktestTradeModel,
     Bot,
     Candle,
     ExecutionFill,

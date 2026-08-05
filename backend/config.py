@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 import structlog
 import yaml  # type: ignore[import-untyped]
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from backend.core.errors import ConfigError
@@ -45,6 +45,16 @@ class Settings(BaseSettings):
     # API
     API_HOST: str = "0.0.0.0"
     API_PORT: int = 8000
+    API_CORS_ORIGINS: list[str] = ["http://localhost:3000"]
+
+    @field_validator("API_CORS_ORIGINS")
+    @classmethod
+    def _validate_cors_origins(cls, origins: list[str]) -> list[str]:
+        if not origins:
+            raise ValueError("API_CORS_ORIGINS must contain at least one origin")
+        if "*" in origins:
+            raise ValueError("API_CORS_ORIGINS must not contain '*' when credentials are enabled")
+        return origins
 
     @property
     def is_paper(self) -> bool:

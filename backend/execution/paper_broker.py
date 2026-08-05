@@ -19,6 +19,8 @@ from backend.execution.models import (
     Position,
     PositionSide,
     PositionStatus,
+    Trade,
+    TradeStatus,
 )
 
 if TYPE_CHECKING:
@@ -108,6 +110,8 @@ class PaperBroker(Broker):
         self._fills: dict[str, Fill] = {}
         self._results: dict[str, OrderResult] = {}
         self._funding: list[FundingAdjustment] = []
+        self._entry_fees: dict[UUID, Decimal] = {}
+        self._protective_trades: list[Trade] = []
 
     @staticmethod
     def _non_negative(value: Decimal, name: str) -> Decimal:
@@ -295,6 +299,7 @@ class PaperBroker(Broker):
                 opened_at=fill.filled_at,
             )
             self._positions[key] = self._marked(created, market)
+            self._entry_fees[created.id] = fill.fee
             return
         if position.side is side:
             quantity = position.quantity + fill.quantity
@@ -310,6 +315,9 @@ class PaperBroker(Broker):
                 ),
             )
             self._positions[key] = self._marked(updated, market)
+            self._entry_fees[position.id] = (
+                self._entry_fees.get(position.id, Decimal("0")) + fill.fee
+            )
             return
         pnl = (
             fill.price - position.entry_price
@@ -320,6 +328,32 @@ class PaperBroker(Broker):
         remaining = position.quantity - fill.quantity
         if remaining == 0:
             self._positions.pop(key)
+            entry_fee = self._entry_fees.pop(position.id, Decimal("0"))
+            if order.client_order_id.startswith(("protective-", "liquidation-")):
+                gross = (
+                    (fill.price - position.entry_price) * fill.quantity
+                    if position.side is PositionSide.LONG
+                    else (position.entry_price - fill.price) * fill.quantity
+                )
+                self._protective_trades.append(
+                    Trade(
+                        account_id=position.account_id,
+                        instrument_id=position.instrument_id,
+                        position_id=position.id,
+                        direction=position.side,
+                        entry_price=position.entry_price,
+                        quantity=position.quantity,
+                        total_fees=entry_fee + fill.fee,
+                        entry_time=position.opened_at,
+                        bot_id=position.bot_id,
+                        strategy_version_id=position.strategy_version_id,
+                        exit_price=fill.price,
+                        gross_pnl=gross,
+                        net_pnl=gross - entry_fee - fill.fee,
+                        status=TradeStatus.EXITED,
+                        exit_time=fill.filled_at,
+                    )
+                )
         else:
             updated = replace(
                 position,
@@ -348,6 +382,12 @@ class PaperBroker(Broker):
 
     async def get_positions(self) -> list[Position]:
         return list(self._positions.values())
+
+    def consume_protective_trades(self) -> tuple[Trade, ...]:
+        """Return broker facts for protective closes without publishing execution events."""
+        trades = tuple(self._protective_trades)
+        self._protective_trades.clear()
+        return trades
 
     async def get_account(self) -> AccountInfo:
         unrealized = sum(position.unrealized_pnl for position in self._positions.values())

@@ -1,155 +1,89 @@
-/* ============================================================================
-   Atlas Design Tokens
-   ----------------------------------------------------------------------------
-   Dark, mono-numeric, calm command center.
-   Inter for prose, JetBrains Mono for numbers.
-   One accent (blue), three statuses (positive / negative / warn), one info.
-   ----------------------------------------------------------------------------
-   Usage:
-     @import url('./atlas-tokens.css');
-     -- or copy the :root block into your global stylesheet --
-
-     body {
-       background: var(--color-bg);
-       color: var(--color-fg);
-       font: var(--text-md) / var(--leading-normal) var(--font-sans);
-       font-feature-settings: 'cv11', 'ss01', 'tnum';
-     }
-
-     .number { font-family: var(--font-mono); }
-     .pnl    { color: var(--color-positive); }
-   ----------------------------------------------------------------------------
-   Conventions:
-     - All hex values are sRGB. If your target uses oklch(), convert at the
-       edge of your build (e.g. with a Lightning CSS or PostCSS plugin).
-     - "dim" variants of a color are the same hue at 10% alpha — use them as
-       background fills (chips, badges, soft tints) so text on top stays AA.
-     - "soft" / "glow" are 8–12% alpha — use them as decorative tints only.
-   ========================================================================== */
-
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
-
+/* Atlas design token projection from atlas-tokens.json. */
 :root {
-  /* ── Surface ─────────────────────────────────────────────────────────── */
-  --color-bg:           #0a0b0f;   /* page canvas — deepest */
-  --color-bg-elevated:  #111219;   /* sticky bars, table headers */
-  --color-surface:      #16171f;   /* cards, panels, sections */
-  --color-surface-2:    #1c1d27;   /* hovered surface / secondary card */
-  --color-surface-hover:#1a1b24;   /* row hover, list item hover */
-
-  /* ── Border ──────────────────────────────────────────────────────────── */
-  --color-border:        #23242f;  /* default 1px divider */
-  --color-border-subtle: #1a1b24;  /* hairline between rows */
-  --color-border-strong: #2e2f3c;  /* emphasized rule, button border */
-
-  /* ── Text ────────────────────────────────────────────────────────────── */
-  --color-fg:           #e8e9ed;   /* primary text */
-  --color-fg-secondary: #9496a1;   /* secondary text, labels in tables */
-  --color-fg-muted:     #5c5e6a;   /* meta, hints, timestamps */
-
-  /* ── Accent (one brand color — use twice per screen max) ─────────────── */
-  --color-accent:      #4e8eff;
-  --color-accent-dim:  #3a6fd4;             /* hover / pressed */
-  --color-accent-glow: rgba(78, 142, 255, 0.12);  /* focus halo, soft fills */
-  --color-accent-soft: rgba(78, 142, 255, 0.08);  /* selected row tint */
-
-  /* ── Status ──────────────────────────────────────────────────────────── */
-  --color-positive:     #34d399;             /* win, gain, running */
+  --color-bg: #0a0b0f;
+  --color-bg-elevated: #111219;
+  --color-surface: #16171f;
+  --color-surface-2: #1c1d27;
+  --color-surface-hover: #1a1b24;
+  --color-border: #23242f;
+  --color-border-subtle: #1a1b24;
+  --color-border-strong: #2e2f3c;
+  --color-fg: #e8e9ed;
+  --color-fg-secondary: #9496a1;
+  --color-fg-muted: #5c5e6a;
+  --color-accent: #4e8eff;
+  --color-accent-dim: #3a6fd4;
+  --color-accent-glow: rgba(78, 142, 255, 0.12);
+  --color-accent-soft: rgba(78, 142, 255, 0.08);
+  --color-positive: #34d399;
   --color-positive-dim: rgba(52, 211, 153, 0.1);
-  --color-negative:     #f87171;             /* loss, drop, stopped */
+  --color-negative: #f87171;
   --color-negative-dim: rgba(248, 113, 113, 0.1);
-  --color-warn:         #fbbf24;             /* paused, attention */
-  --color-warn-dim:     rgba(251, 191, 36, 0.1);
-  --color-info:         #60a5fa;             /* signal, neutral highlight */
-  --color-info-dim:     rgba(96, 165, 250, 0.1);
+  --color-warn: #fbbf24;
+  --color-warn-dim: rgba(251, 191, 36, 0.1);
+  --color-info: #60a5fa;
+  --color-info-dim: rgba(96, 165, 250, 0.1);
 
-  /* ── Typography ──────────────────────────────────────────────────────── */
   --font-sans: 'Inter', -apple-system, system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, monospace;
-
-  --text-xs:     10px;  /* tiny labels, badges, uppercase meta */
-  --text-sm:     11px;  /* table meta, secondary caption */
-  --text-base:   13px;  /* table body, small body */
-  --text-md:     14px;  /* default body */
-  --text-lg:     15px;  /* input, button */
-  --text-xl:     18px;  /* emphasized body */
-  --text-2xl:    22px;  /* page title */
-  --text-3xl:    26px;  /* metric value */
-  --text-4xl:    30px;  /* metric value (large, e.g. P&L hero) */
-  --text-display:clamp(36px, 5vw, 56px);  /* hero headlines only */
-
-  --fw-regular:  400;
-  --fw-medium:   500;
+  --text-xs: 10px;
+  --text-sm: 11px;
+  --text-base: 13px;
+  --text-md: 14px;
+  --text-lg: 15px;
+  --text-xl: 18px;
+  --text-2xl: 22px;
+  --text-3xl: 26px;
+  --text-4xl: 30px;
+  --text-display: clamp(36px, 5vw, 56px);
+  --fw-regular: 400;
+  --fw-medium: 500;
   --fw-semibold: 600;
-  --fw-bold:     700;
+  --fw-bold: 700;
+  --leading-tight: 1.1;
+  --leading-snug: 1.3;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.6;
+  --tracking-tighter: -0.03em;
+  --tracking-tight: -0.02em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.04em;
+  --tracking-wider: 0.06em;
+  --tracking-widest: 0.1em;
 
-  --leading-tight:   1.1;  /* big numbers, headlines */
-  --leading-snug:    1.3;  /* table rows */
-  --leading-normal:  1.5;  /* body */
-  --leading-relaxed: 1.6;  /* marketing, hero sub */
-
-  --tracking-tighter: -0.03em;  /* hero h1 */
-  --tracking-tight:   -0.02em;  /* large numbers, h2 */
-  --tracking-normal:   0;
-  --tracking-wide:     0.04em;  /* small caps */
-  --tracking-wider:    0.06em;  /* eyebrow, badge */
-  --tracking-widest:   0.1em;   /* section label */
-
-  /* ── Spacing (4px base) ──────────────────────────────────────────────── */
-  --space-1:   4px;
-  --space-2:   8px;
-  --space-3:  12px;
-  --space-4:  16px;
-  --space-5:  20px;
-  --space-6:  24px;
-  --space-7:  28px;
-  --space-8:  32px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 28px;
+  --space-8: 32px;
   --space-10: 40px;
   --space-12: 48px;
   --space-16: 64px;
   --space-20: 80px;
   --space-24: 96px;
+  --radius-sm: 3px;
+  --radius: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-pill: 100px;
 
-  /* ── Radius ──────────────────────────────────────────────────────────── */
-  --radius-sm:   3px;   /* tiny pill, tag */
-  --radius:      6px;   /* default — buttons, inputs, cards */
-  --radius-md:   8px;
-  --radius-lg:  10px;   /* sections, large cards, modal */
-  --radius-pill: 100px; /* status pills, badges */
-
-  /* ── Motion ──────────────────────────────────────────────────────────── */
-  --duration-fast:    120ms;  /* row hover */
-  --duration-base:    150ms;  /* color, border */
-  --duration-slow:    200ms;  /* chart, transform */
-  --duration-slower:  400ms;  /* page-level transition */
-  --duration-pulse:  2000ms;  /* live indicator */
-
-  --ease-out:    cubic-bezier(0.16, 1, 0.3, 1);
+  --duration-fast: 120ms;
+  --duration-base: 150ms;
+  --duration-slow: 200ms;
+  --duration-slower: 400ms;
+  --duration-pulse: 2000ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
 
-  /* ── Layout ──────────────────────────────────────────────────────────── */
-  --container:          1440px;  /* max content width */
-  --container-narrow:   1200px;  /* marketing pages */
-  --topnav-height:        56px;
-  --page-gutter:          32px;  /* horizontal page padding at 1440 */
-
-  /* ── Z-index ─────────────────────────────────────────────────────────── */
-  --z-sticky:  50;   /* top nav */
-  --z-modal:  100;   /* modal, dialog */
-  --z-toast:  200;   /* toast, snackbar */
-  --z-tooltip:300;
-}
-
-/* ── Base reset (optional — remove if your app has its own) ─────────────── */
-body {
-  background: var(--color-bg);
-  color: var(--color-fg);
-  font: var(--text-md) / var(--leading-normal) var(--font-sans);
-  font-feature-settings: 'cv11', 'ss01', 'tnum';
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-.mono, code, kbd, samp, pre {
-  font-family: var(--font-mono);
-  font-feature-settings: 'tnum';
+  --container: 1440px;
+  --container-narrow: 1200px;
+  --topnav-height: 56px;
+  --page-gutter: 32px;
+  --z-sticky: 50;
+  --z-modal: 100;
+  --z-toast: 200;
+  --z-tooltip: 300;
 }

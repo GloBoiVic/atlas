@@ -14,9 +14,9 @@ from backend.persistence.models import (
 
 
 def test_account_mode_values() -> None:
-    assert AccountMode.PAPER == "paper"
-    assert AccountMode.TESTNET == "testnet"
-    assert AccountMode.PRODUCTION == "production"
+    assert AccountMode.PAPER.value == "paper"
+    assert AccountMode.TESTNET.value == "testnet"
+    assert AccountMode.PRODUCTION.value == "production"
 
 
 def test_account_has_required_fields() -> None:
@@ -73,6 +73,8 @@ def test_metadata_registers_all_bot_foreign_key_targets() -> None:
         "fills",
         "positions",
         "trades",
+        "backtest_runs",
+        "backtest_trades",
     }
     assert Strategy.__table__.c.name.unique is True
     assert StrategyVersion.__table__.c.strategy_id.foreign_keys

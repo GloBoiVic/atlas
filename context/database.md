@@ -456,10 +456,13 @@ CREATE TABLE backtest_runs (
     execution_config JSONB NOT NULL,   -- includes fee config, slippage config, fill model, protective-trigger rule
     status VARCHAR(20) NOT NULL DEFAULT 'pending',
     fill_model VARCHAR(100) NOT NULL DEFAULT 'next_candle_open',
-    total_return NUMERIC(20, 8),       -- Decimal monetary metric
+    total_return NUMERIC(20, 8),       -- Decimal ratio (0.125 = 12.5%, not monetary)
+    total_pnl NUMERIC(20, 8),          -- Decimal monetary value (absolute net P&L)
+    starting_equity NUMERIC(20, 8),    -- Decimal monetary value (configured initial balance)
+    ending_equity NUMERIC(20, 8),      -- Decimal monetary value (starting_equity + total_pnl)
     win_rate FLOAT,                    -- Non-monetary ratio; FLOAT is acceptable
     sharpe_ratio FLOAT,                -- Non-monetary ratio; FLOAT is acceptable
-    max_drawdown NUMERIC(20, 8),       -- Decimal monetary metric
+    max_drawdown NUMERIC(20, 8),       -- Decimal monetary value
     profit_factor FLOAT,               -- Non-monetary ratio; FLOAT is acceptable
     total_trades INT,
     winning_trades INT,
@@ -473,12 +476,16 @@ CREATE TABLE backtest_runs (
 CREATE INDEX idx_backtest_status ON backtest_runs(status);
 ```
 
-**Numeric policy for metric columns:** Monetary values (total_return, max_drawdown) use
-`NUMERIC`/`Decimal`. Non-monetary ratios (win_rate, sharpe_ratio, profit_factor) use
-`FLOAT` — these are ratios derived from Decimal inputs, not primary money amounts. The
-application layer must define and enforce undefined-value handling (zero variance for
-Sharpe, no losing trades for profit factor) rather than allowing the database to store
-misleading zero or infinity values.
+**Numeric policy for metric columns:** Three categories:
+- **Monetary values** (total_pnl, starting_equity, ending_equity, max_drawdown) — `NUMERIC`/`Decimal`.
+- **Decimal ratios** (total_return) — `NUMERIC`/`Decimal`. A ratio, not a monetary value,
+  but stored as Decimal for exact precision (e.g., `0.125` = 12.5%).
+- **Float ratios** (win_rate, sharpe_ratio, profit_factor) — `FLOAT`. These are ratios
+  derived from Decimal inputs, not primary money amounts.
+
+All categories must define and enforce undefined-value handling (zero variance for Sharpe,
+no losing trades for profit factor) rather than allowing the database to store misleading
+zero or infinity values.
 
 ### Backtest Trades
 

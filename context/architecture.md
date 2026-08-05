@@ -183,7 +183,7 @@ The `Broker` interface exposes order submission, cancellation, account state, po
 
 Journal and Analytics consume completed Trade facts and read persisted repositories. They do not own execution state. Journal writes are idempotent and associate trades with the account, bot, strategy version, and market context.
 
-**Numeric policy:** Monetary metrics (P&L, fees, drawdown amounts) use `Decimal`/`NUMERIC`. Non-monetary ratios (Sharpe, profit factor) may use `Float`/`FLOAT` under coding-standards conventions, but the documentation must define serialization behavior and explicit undefined-value handling (e.g., zero variance, no losing trades).
+**Numeric policy:** Monetary metrics (P&L, fees, drawdown amounts, account equity) use `Decimal`/`NUMERIC`. Non-monetary ratios (Sharpe, profit factor) may use `Float`/`FLOAT`. A third category — **Decimal ratios** (total_return: normalized cumulative return as an exact Decimal, e.g. 0.125 = 12.5%) — uses `Decimal`/`NUMERIC` for precision but is not a monetary value. The canonical metric definition authority is `context/features/10-journal-analytics.md`. All categories must define serialization behavior and explicit undefined-value handling (e.g., zero variance, no losing trades).
 
 ## EventBus
 

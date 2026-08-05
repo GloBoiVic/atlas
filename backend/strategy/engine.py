@@ -129,6 +129,7 @@ class StrategyEngine:
                 account_id=self._account_id,
                 bot_id=self._bot_id,
                 mode=event.mode,
+                occurred_at=event.occurred_at,
                 correlation_id=event.correlation_id,
             )
         )

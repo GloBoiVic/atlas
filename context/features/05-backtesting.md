@@ -17,15 +17,16 @@ Run a strategy against historical data and get performance results. Deterministi
 
 ## Deliverables
 
-- [ ] Backtester engine: Replays historical candles through the strategy pipeline
-- [ ] Simulation clock integration: Controls time progression deterministically
-- [ ] Simulated execution: Paper fills on historical data via the same Paper Broker used in live mode
-- [ ] Historical replay: Loads candles from database (not from provider), emits CandleClosed events
+- [x] Backtester engine: Replays historical candles through the strategy pipeline
+- [x] Simulation clock integration: Controls time progression deterministically
+- [x] Simulated execution: Paper fills on historical data via the same Paper Broker used in live mode
+- [x] Historical replay: Loads candles from database (not from provider), emits CandleClosed events
 - [ ] Dataset identity: Every backtest stores a dataset fingerprint for reproducibility
 - [ ] BacktestRun and BacktestTrade models with run-level raw metrics persisted on BacktestRun
 - [ ] Backtest persistence: Results stored in PostgreSQL (logically isolated from live/paper records)
 - [ ] Run-level raw metrics stored on BacktestRun; canonical metric formulas owned by Feature 10
-- [ ] Backtest API endpoints: POST /backtests, GET /backtests, GET /backtests/{id}
+- [x] Backtest API endpoints: POST /backtests, GET /backtests, GET /backtests/{id},
+      GET /backtests/{id}/trades (synchronous MVP; frontend deferred)
 - [ ] Backtest UI: Run backtest, view results, compare runs
 
 ### Event Payload Status
@@ -165,9 +166,12 @@ are owned by Feature 10 (Journal & Analytics). Feature 05 may calculate and stor
 same raw run metrics, but must cite Feature 10 for definitions and must not invent
 alternate formulas.
 
-**Numeric storage:** Monetary run metrics (total return absolute, max drawdown amount) use
-`NUMERIC`/`Decimal`. Non-monetary ratios (Sharpe, profit factor) may use `FLOAT` but must
-handle undefined cases (zero variance, no losing trades) explicitly.
+**Numeric storage:** Three categories — see `context/features/10-journal-analytics.md` for
+canonical metric definitions. The `backtest_runs` table stores `total_return` (Decimal
+ratio: 0.125 = 12.5%), `total_pnl` (Decimal monetary value: absolute net P&L), and other
+per-run aggregates. Monetary values and Decimal ratios use `NUMERIC`/`Decimal`; float
+ratios (Sharpe, profit factor) use `FLOAT`. All categories must handle undefined cases
+(zero variance, no losing trades) explicitly.
 
 **Recorded execution assumptions:** Every backtest run records its fee config, slippage
 config, fill model (`next_candle_open`), protective-trigger ambiguity rule (stop-loss

@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -8,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.data.models import Candle as CandleDomain
 from backend.persistence.models import Bot, Candle, Instrument, ReconciliationRun
+from backend.persistence.repositories.candle_semantics import validate_candle_query
 from backend.persistence.repositories.protocols import (
     BotRecord,
     InstrumentRecord,
@@ -75,6 +77,40 @@ def _bot_record(bot: Bot) -> BotRecord:
         last_error=bot.last_error,
         started_at=bot.started_at,
         stopped_at=bot.stopped_at,
+    )
+
+
+def _candle_domain(candle: Candle) -> CandleDomain:
+    open_time = (
+        candle.open_time
+        if candle.open_time.tzinfo
+        else candle.open_time.replace(tzinfo=UTC)
+    )
+    close_time = (
+        None
+        if candle.close_time is None
+        else candle.close_time
+        if candle.close_time.tzinfo
+        else candle.close_time.replace(tzinfo=UTC)
+    )
+    return CandleDomain(
+        instrument_id=candle.instrument_id,
+        provider=candle.provider,
+        timeframe=candle.timeframe,
+        open_time=open_time,
+        close_time=close_time,
+        price_basis=candle.price_basis,
+        open=candle.open,
+        high=candle.high,
+        low=candle.low,
+        close=candle.close,
+        base_volume=candle.base_volume,
+        quote_volume=candle.quote_volume,
+        trade_count=candle.trade_count,
+        taker_buy_base_volume=candle.taker_buy_base_volume,
+        taker_buy_quote_volume=candle.taker_buy_quote_volume,
+        tick_volume=candle.tick_volume,
+        is_complete=candle.is_complete,
     )
 
 
@@ -220,6 +256,11 @@ class SqlAlchemyInstrumentRepository:
             row_after = existing_after.scalar_one()
             return _instrument_record(row_after)
 
+    async def get(self, instrument_id: UUID) -> InstrumentRecord | None:
+        async with self._session_factory() as session:
+            row = await session.get(Instrument, instrument_id)
+            return _instrument_record(row) if row is not None else None
+
     async def upsert(
         self,
         *,
@@ -303,3 +344,30 @@ class SqlAlchemyCandleRepository:
             # RETURNING is reliable across the supported PostgreSQL/SQLite dialects;
             # unlike rowcount it remains correct when drivers report -1/unknown.
             return len(result.all())
+
+    async def get_candles(
+        self,
+        instrument_id: UUID,
+        timeframe: str,
+        start: datetime,
+        end: datetime,
+        price_basis: str = "trade",
+    ) -> list[CandleDomain]:
+        validate_candle_query(instrument_id, timeframe, start, end, price_basis)
+        stmt = (
+            select(Candle)
+            .join(Instrument, Instrument.id == Candle.instrument_id)
+            .where(
+                Candle.instrument_id == instrument_id,
+                Instrument.provider == Candle.provider,
+                Candle.timeframe == timeframe,
+                Candle.price_basis == price_basis,
+                Candle.is_complete.is_(True),
+                Candle.open_time >= start,
+                Candle.open_time <= end,
+            )
+            .order_by(Candle.open_time, Candle.id)
+        )
+        async with self._session_factory() as session:
+            result = await session.execute(stmt)
+            return [_candle_domain(candle) for candle in result.scalars().all()]

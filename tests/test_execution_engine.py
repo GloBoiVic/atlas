@@ -41,6 +41,7 @@ def approval(
     strategy_id: UUID,
     direction: SignalDirection,
     quantity: str,
+    occurred_at: datetime = datetime(2026, 1, 1, 0, 1, tzinfo=UTC),
 ) -> RiskApproved:
     signal = Signal(
         instrument_id=instrument_id,
@@ -60,6 +61,7 @@ def approval(
         account_id=account_id,
         bot_id=bot_id,
         mode=AccountMode.PAPER,
+        occurred_at=occurred_at,
     )
 
 
@@ -218,3 +220,6 @@ async def test_engine_emits_open_close_and_trade_closed_facts() -> None:
     assert len(opened) == 1
     assert len(closed) == 1
     assert len(trades) == 1
+    assert opened[0].occurred_at == datetime(2026, 1, 1, 0, 1, tzinfo=UTC)
+    assert closed[0].occurred_at == opened[0].occurred_at
+    assert trades[0].occurred_at == opened[0].occurred_at
