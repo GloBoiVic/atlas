@@ -41,6 +41,9 @@ tasks during shutdown, and isolate a failing feed from sibling feeds. Strategy i
 through EventBus subscriptions only; pipeline, execution, persistence, and transport API behavior
 remain outside this feature.
 
+`run()` owns a session until all finite drains end; callers using externally managed `start()` must
+pair it with `stop()` during shutdown.
+
 Binance Spot live streaming, OANDA streaming, and COIN-M Futures are deferred. The provider
 interface remains broker-agnostic.
 
@@ -89,7 +92,9 @@ class BinanceStreamingProvider(LiveDataProvider):
     def __init__(self, event_bus: EventBus):
         self.event_bus = event_bus
 
-    async def subscribe_candles(self, instrument: Instrument, timeframe: str) -> AsyncGenerator[Candle, None]:
+    async def subscribe_candles(
+        self, instrument: Instrument, timeframe: str
+    ) -> AsyncGenerator[Candle, None]:
         symbol = self._to_binance_symbol(instrument.symbol)
         interval = self._to_binance_interval(timeframe)
         ws_url = f"wss://fstream.binance.com/market/ws/{symbol.lower()}@kline_{interval}"
@@ -102,9 +107,11 @@ class BinanceStreamingProvider(LiveDataProvider):
                 # Emit CandleClosed only when the kline's closed flag is true
                 # and the candle hasn't been emitted before.
                 if kline["x"] and self._is_new_candle(candle):
-                    await self.event_bus.publish(CandleClosed(
-                        candle=candle,
-                    ))
+                    await self.event_bus.publish(
+                        CandleClosed(
+                            candle=candle,
+                        )
+                    )
 
                 yield candle
 
@@ -115,9 +122,11 @@ class BinanceStreamingProvider(LiveDataProvider):
             async for message in ws:
                 data = json.loads(message)
                 tick = self._parse_tick(data)
-                await self.event_bus.publish(TickReceived(
-                    tick=tick,
-                ))
+                await self.event_bus.publish(
+                    TickReceived(
+                        tick=tick,
+                    )
+                )
                 yield tick
 ```
 
@@ -141,8 +150,13 @@ after the closed flag is set. Deduplication prevents duplicate events:
 
 ```python
 def _is_new_candle(self, candle: Candle) -> bool:
-    key = (candle.instrument_id, candle.provider, candle.timeframe,
-           candle.open_time, candle.price_basis)
+    key = (
+        candle.instrument_id,
+        candle.provider,
+        candle.timeframe,
+        candle.open_time,
+        candle.price_basis,
+    )
     if key in self._emitted_candle_closed:
         return False
     self._emitted_candle_closed.add(key)
@@ -165,10 +179,12 @@ class DataFeedMonitor:
     async def check_feed(self, instrument_id: UUID):
         last_time = self.last_candle_time.get(instrument_id)
         if last_time and self.clock.now() - last_time > self.timeout:
-            await self.event_bus.publish(DataFeedError(
-                instrument_id=instrument_id,
-                error="Data feed timeout - no candles received",
-            ))
+            await self.event_bus.publish(
+                DataFeedError(
+                    instrument_id=instrument_id,
+                    error="Data feed timeout - no candles received",
+                )
+            )
 ```
 
 ### Reconnection
@@ -186,7 +202,7 @@ async def connect_with_reconnect(self, instrument: str, timeframe: str):
                 pass
         except websockets.ConnectionClosed:
             if attempt < max_retries - 1:
-                await asyncio.sleep(2 ** attempt)
+                await asyncio.sleep(2**attempt)
                 continue
             raise
 ```

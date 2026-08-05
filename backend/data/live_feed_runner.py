@@ -34,7 +34,11 @@ class LiveMarketContextProvider(Protocol):
 
 
 class LiveFeedSession:
-    """Own and publish one isolated instrument's live feed tasks."""
+    """Own and publish one isolated instrument's live feed tasks.
+
+    Call :meth:`run` for a task-owned lifetime, or pair an externally managed
+    :meth:`start` with :meth:`stop` during shutdown.
+    """
 
     def __init__(
         self,
@@ -76,7 +80,7 @@ class LiveFeedSession:
         return self._started and not self._stopped
 
     async def start(self) -> None:
-        """Start all supported provider drains without creating orphan tasks."""
+        """Start provider drains; callers must later await :meth:`stop`."""
         if self._started:
             return
         self._started = True
@@ -87,10 +91,12 @@ class LiveFeedSession:
         ]
         context_provider = self._context_provider()
         if context_provider is not None:
-            drains.extend((
-                lambda: self._drain_book(context_provider),
-                lambda: self._drain_mark(context_provider),
-            ))
+            drains.extend(
+                (
+                    lambda: self._drain_book(context_provider),
+                    lambda: self._drain_mark(context_provider),
+                )
+            )
         self._tasks = {asyncio.create_task(drain()) for drain in drains}
 
     async def run(self) -> None:
@@ -120,9 +126,7 @@ class LiveFeedSession:
 
     async def _drain_candles(self) -> None:
         try:
-            async for candle in self._provider.subscribe_candles(
-                self._instrument, self._timeframe
-            ):
+            async for candle in self._provider.subscribe_candles(self._instrument, self._timeframe):
                 if not candle.is_complete:
                     continue
                 key = (

@@ -10,6 +10,8 @@
 - [x] Existing StrategyEngine integration remains EventBus-only; PaperBroker, BotPipeline,
       BotSupervisor, execution calculations, API, frontend, persistence, and history remain out
       of scope.
+- [x] Task 5 review fixes: formatted the runner and added deterministic book/mark capability,
+      context publication/metadata, failure, and cancellation-cleanup coverage.
 
 ### Feature 08 — Task 4 reconnect, gaps, and health — complete (2026-08-05)
 
