@@ -1,6 +1,17 @@
 # Current Feature
 
-## Feature 08 — Task 4 reconnect, gaps, and health — complete (2026-08-05)
+## Feature 08 — Task 5 EventBus feed runner — complete (2026-08-05)
+
+- [x] Added isolated `LiveFeedSession` and `LiveFeedRunner` with explicit child-task ownership,
+      cancellation-safe shutdown, and sole EventBus publication responsibility.
+- [x] Published typed candle, tick, feed-error, and coherent market-context events with UTC
+      timestamps and session metadata; incomplete and duplicate candles are suppressed.
+- [x] Added lifecycle, metadata/order, failure-isolation, and no-orphan-task coverage.
+- [x] Existing StrategyEngine integration remains EventBus-only; PaperBroker, BotPipeline,
+      BotSupervisor, execution calculations, API, frontend, persistence, and history remain out
+      of scope.
+
+### Feature 08 — Task 4 reconnect, gaps, and health — complete (2026-08-05)
 
 - [x] Created `feature/08-live-data-streaming` from current `main`.
 - [x] Added USDⓈ-M Futures provider identity and typed non-secret public-stream configuration.

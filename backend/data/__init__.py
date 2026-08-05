@@ -13,6 +13,7 @@ from backend.data.binance_usdm import (
 from backend.data.csv_provider import CSVDataProvider
 from backend.data.feed_monitor import DataFeedMonitor
 from backend.data.interfaces import HistoricalDataProvider, LiveDataProvider
+from backend.data.live_feed_runner import LiveFeedRunner, LiveFeedSession, LiveMarketContextProvider
 from backend.data.loader import (
     HistoricalDataLoader,
     build_dataset_identity,
@@ -54,6 +55,9 @@ __all__ = [
     "MarketContextAggregator",
     "DataFeedMonitor",
     "LiveDataProvider",
+    "LiveFeedRunner",
+    "LiveFeedSession",
+    "LiveMarketContextProvider",
     "Tick",
     "MarkPriceUpdate",
     "build_dataset_identity",

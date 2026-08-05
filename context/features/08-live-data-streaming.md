@@ -32,6 +32,15 @@ interval are logged and surfaced via `DataFeedError`.
 - [ ] Data feed management: Reconnection, subscription deduplication, health monitoring
 - [ ] Live data integration: Live data feeds into strategy engine via EventBus
 
+### Task 5 completion
+
+The `LiveFeedSession`/`LiveFeedRunner` owns provider-draining tasks and is the sole publisher of
+live `CandleClosed`, `TickReceived`, `DataFeedError`, and `MarketContextUpdated` events. Sessions
+preserve UTC timestamps and scope metadata, suppress incomplete/duplicate candles, await all child
+tasks during shutdown, and isolate a failing feed from sibling feeds. Strategy integration remains
+through EventBus subscriptions only; pipeline, execution, persistence, and transport API behavior
+remain outside this feature.
+
 Binance Spot live streaming, OANDA streaming, and COIN-M Futures are deferred. The provider
 interface remains broker-agnostic.
 
@@ -191,14 +200,14 @@ must be designed when OANDA is scheduled. The provider interface remains broker-
 
 ## Acceptance Criteria
 
-- [ ] Only completed, deduplicated candles are emitted as CandleClosed events
-- [ ] Live ticks are received and emitted as TickReceived events
+- [x] Only completed, deduplicated candles are emitted as CandleClosed events
+- [x] Live ticks are received and emitted as TickReceived events
 - [ ] Data feed reconnection works automatically without duplicate subscriptions
-- [ ] Data feed errors are handled gracefully (DataFeedError event)
+- [x] Data feed errors are handled gracefully (DataFeedError event)
 - [ ] Data feed health is monitored (timeout detection)
-- [ ] Feed timestamps are normalized to UTC and use the shared Clock for timeout decisions
-- [ ] Binance `k.x` flag is the authoritative candle completion signal
-- [ ] Candle deduplication prevents duplicate CandleClosed events
+- [x] Feed timestamps are normalized to UTC and use the shared Clock for timeout decisions
+- [x] Binance `k.x` flag is the authoritative candle completion signal
+- [x] Candle deduplication prevents duplicate CandleClosed events
 
 ## Done when
 
