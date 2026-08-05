@@ -11,6 +11,8 @@ if TYPE_CHECKING:
 
     from backend.data.models import Candle as CandleDomain
     from backend.execution.models import Fill, Order, Position, Trade
+
+from backend.persistence.repositories.candle_semantics import validate_candle_query
 from backend.persistence.repositories.protocols import (
     BotRecord,
     CandleRepository,
@@ -126,6 +128,10 @@ class InMemoryInstrumentRepository(InstrumentRepository):
             self._by_provider_symbol[key] = record.id
             return record
 
+    async def get(self, instrument_id: UUID) -> InstrumentRecord | None:
+        async with self._lock:
+            return self._instruments.get(instrument_id)
+
     async def upsert(
         self,
         *,
@@ -186,7 +192,7 @@ class InMemoryCandleRepository(CandleRepository):
     """
 
     def __init__(self) -> None:
-        self._candles: set[tuple[UUID, str, str, datetime, str]] = set()
+        self._candles: dict[tuple[UUID, str, str, datetime, str], CandleDomain] = {}
         self._lock = asyncio.Lock()
 
     @staticmethod
@@ -212,13 +218,34 @@ class InMemoryCandleRepository(CandleRepository):
             for candle in candles:
                 key = self._make_key(candle)
                 if key not in self._candles:
-                    self._candles.add(key)
+                    self._candles[key] = candle
                     inserted += 1
         return inserted
 
     def contains(self, candle: CandleDomain) -> bool:
         """Check whether a specific candle was persisted (for test inspection)."""
         return self._make_key(candle) in self._candles
+
+    async def get_candles(
+        self,
+        instrument_id: UUID,
+        timeframe: str,
+        start: datetime,
+        end: datetime,
+        price_basis: str = "trade",
+    ) -> list[CandleDomain]:
+        validate_candle_query(instrument_id, timeframe, start, end, price_basis)
+        async with self._lock:
+            matching = [
+                candle
+                for candle in self._candles.values()
+                if candle.instrument_id == instrument_id
+                and candle.timeframe == timeframe
+                and candle.price_basis == price_basis
+                and candle.is_complete
+                and start <= candle.open_time <= end
+            ]
+        return sorted(matching, key=lambda candle: (candle.open_time, self._make_key(candle)))
 
 
 class InMemoryExecutionRepository:

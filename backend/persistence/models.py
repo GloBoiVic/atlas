@@ -397,3 +397,80 @@ Order = ExecutionOrder
 Fill = ExecutionFill
 Position = ExecutionPosition
 Trade = ExecutionTrade
+
+
+class BacktestRunModel(Base):
+    """Durable projection of one backtest execution."""
+
+    __tablename__ = "backtest_runs"
+    __table_args__ = (Index("idx_backtest_status", "status"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    strategy_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    strategy_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    strategy_commit_sha: Mapped[str] = mapped_column(String(64), nullable=False)
+    strategy_parameters: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    instrument_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("instruments.id"), nullable=False
+    )
+    symbol: Mapped[str] = mapped_column(String(50), nullable=False)
+    timeframe: Mapped[str] = mapped_column(String(10), nullable=False)
+    data_source: Mapped[str] = mapped_column(String(255), nullable=False)
+    dataset_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    start_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    end_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    risk_config: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    execution_config: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    fill_model: Mapped[str] = mapped_column(
+        String(100), nullable=False, default="next_candle_open"
+    )
+    total_return: Mapped[Decimal | None] = mapped_column(Numeric(28, 12))
+    total_pnl: Mapped[Decimal | None] = mapped_column(Numeric(28, 12))
+    starting_equity: Mapped[Decimal | None] = mapped_column(Numeric(28, 12))
+    ending_equity: Mapped[Decimal | None] = mapped_column(Numeric(28, 12))
+    win_rate: Mapped[float | None] = mapped_column()
+    sharpe_ratio: Mapped[float | None] = mapped_column()
+    max_drawdown: Mapped[Decimal | None] = mapped_column(Numeric(28, 12))
+    profit_factor: Mapped[float | None] = mapped_column()
+    total_trades: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    winning_trades: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    losing_trades: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    last_processed_timestamp: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class BacktestTradeModel(Base):
+    """Durable projection of a completed execution trade."""
+
+    __tablename__ = "backtest_trades"
+    __table_args__ = (Index("idx_backtest_trades_run", "backtest_run_id"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    backtest_run_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("backtest_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    instrument_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("instruments.id"), nullable=False
+    )
+    symbol: Mapped[str] = mapped_column(String(50), nullable=False)
+    direction: Mapped[str] = mapped_column(String(10), nullable=False)
+    entry_price: Mapped[Decimal] = mapped_column(Numeric(28, 12), nullable=False)
+    exit_price: Mapped[Decimal | None] = mapped_column(Numeric(28, 12))
+    quantity: Mapped[Decimal] = mapped_column(Numeric(28, 12), nullable=False)
+    pnl: Mapped[Decimal | None] = mapped_column(Numeric(28, 12))
+    entry_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    exit_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    signal_metadata: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
+    )
+
+
+# Explicit aliases make the persistence/domain boundary obvious to callers.
+BacktestRun = BacktestRunModel
+BacktestTrade = BacktestTradeModel

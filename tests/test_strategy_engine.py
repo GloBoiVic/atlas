@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import cast
 from uuid import UUID, uuid4
 
 import pytest
@@ -8,6 +9,7 @@ from backend.core.account_mode import AccountMode
 from backend.core.events import (
     CandleClosed,
     EventBus,
+    EventHandler,
     InMemoryFailureRecorder,
     SignalGenerated,
     StrategyError,
@@ -111,7 +113,7 @@ async def test_engine_subscribes_and_suppresses_warmup_signals(
     async def collect_signal(event: SignalGenerated) -> None:
         signals.append(event)
 
-    bus.subscribe(SignalGenerated, collect_signal)
+    bus.subscribe(SignalGenerated, cast("EventHandler", collect_signal))
 
     await engine.warm_up([candle])
     await bus.publish(CandleClosed(candle=candle, bot_id=identity[1]))
@@ -135,7 +137,7 @@ async def test_engine_emits_provenance_after_warmup(
     async def collect_signal(event: SignalGenerated) -> None:
         received.append(event)
 
-    bus.subscribe(SignalGenerated, collect_signal)
+    bus.subscribe(SignalGenerated, cast("EventHandler", collect_signal))
 
     await engine.warm_up([first])
     source = CandleClosed(
@@ -143,6 +145,7 @@ async def test_engine_emits_provenance_after_warmup(
         account_id=identity[0],
         bot_id=identity[1],
         mode=AccountMode.PAPER,
+        occurred_at=datetime(2026, 1, 1, 0, 1, 30, tzinfo=UTC),
     )
     await bus.publish(source)
 
@@ -152,6 +155,7 @@ async def test_engine_emits_provenance_after_warmup(
     assert signal.candle_timestamp == live.open_time
     assert signal.strategy_name == "test-strategy"
     assert received[0].correlation_id == source.correlation_id
+    assert received[0].occurred_at == source.occurred_at
 
 
 @pytest.mark.asyncio
@@ -211,7 +215,7 @@ async def test_strategy_failure_publishes_error_reraises_and_pauses_bot(
     async def collect_error(event: StrategyError) -> None:
         errors.append(event)
 
-    bus.subscribe(StrategyError, collect_error)
+    bus.subscribe(StrategyError, cast("EventHandler", collect_error))
     engine = make_engine(bus, FailingStrategy({}), identity)
     await engine.warm_up([])
     candle = make_candle(identity[2], open_time=datetime(2026, 1, 1, tzinfo=UTC))

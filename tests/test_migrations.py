@@ -1,3 +1,4 @@
+import ast
 import inspect
 from importlib.util import module_from_spec, spec_from_file_location
 from io import StringIO
@@ -7,6 +8,9 @@ from types import SimpleNamespace
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 
+from backend.persistence.database import Base
+from backend.persistence.models import BacktestRunModel, BacktestTradeModel  # noqa: F401
+
 MIGRATIONS_PATH = Path(__file__).parents[1] / "alembic/versions"
 MIGRATION_PATH = MIGRATIONS_PATH / "002_bot_supervisor_schema.py"
 CONSTRAINT_MIGRATION_PATH = MIGRATIONS_PATH / "003_bot_run_unique_constraint.py"
@@ -14,6 +18,7 @@ DROP_MIGRATION_PATH = MIGRATIONS_PATH / "004_drop_bot_runs.py"
 UUID_MIGRATION_PATH = MIGRATIONS_PATH / "005_uuid_identity_migration.py"
 INSTRUMENTS_MIGRATION_PATH = MIGRATIONS_PATH / "006_create_instruments_and_candles.py"
 EXECUTION_MIGRATION_PATH = MIGRATIONS_PATH / "007_execution_state.py"
+BACKTEST_MIGRATION_PATH = MIGRATIONS_PATH / "008_backtest_results.py"
 
 
 def load_migration(path: Path = MIGRATION_PATH):  # type: ignore[no-untyped-def]
@@ -93,6 +98,76 @@ def test_bot_supervisor_migration_follows_initial_schema():
     assert migration.down_revision == "001"
     assert callable(migration.upgrade)
     assert callable(migration.downgrade)
+
+
+def test_backtest_migration_follows_execution_state_and_has_cascade() -> None:
+    migration = load_migration(BACKTEST_MIGRATION_PATH)
+    assert migration.revision == "008"
+    assert migration.down_revision == "007"
+    assert callable(migration.upgrade)
+    assert callable(migration.downgrade)
+
+    output = StringIO()
+    context = MigrationContext.configure(
+        dialect_name="postgresql", opts={"as_sql": True, "output_buffer": output}
+    )
+    operations = Operations(context)
+    original_op = migration.op
+    migration.op = operations
+    try:
+        migration.upgrade()
+    finally:
+        migration.op = original_op
+    sql = output.getvalue()
+    assert "CREATE TABLE backtest_runs" in sql
+    assert "CREATE TABLE backtest_trades" in sql
+    assert "NUMERIC(28, 12)" in sql
+    assert "ON DELETE CASCADE" in sql
+    assert "win_rate FLOAT" in sql
+    assert "sharpe_ratio FLOAT" in sql
+    assert "profit_factor FLOAT" in sql
+
+    downgrade_output = StringIO()
+    downgrade_context = MigrationContext.configure(
+        dialect_name="postgresql",
+        opts={"as_sql": True, "output_buffer": downgrade_output},
+    )
+    downgrade_operations = Operations(downgrade_context)
+    migration.op = downgrade_operations
+    try:
+        migration.downgrade()
+    finally:
+        migration.op = original_op
+    downgrade_sql = downgrade_output.getvalue()
+    assert downgrade_sql.index("DROP INDEX idx_backtest_trades_run") < downgrade_sql.index(
+        "DROP TABLE backtest_trades"
+    )
+    assert downgrade_sql.index("DROP TABLE backtest_trades") < downgrade_sql.index(
+        "DROP TABLE backtest_runs"
+    )
+    assert downgrade_sql.index("DROP INDEX idx_backtest_status") < downgrade_sql.index(
+        "DROP TABLE backtest_runs"
+    )
+    assert "DROP TABLE backtest_trades" in downgrade_sql
+    assert "DROP TABLE backtest_runs" in downgrade_sql
+
+
+def test_backtest_models_are_registered_for_alembic_metadata() -> None:
+    assert "backtest_runs" in Base.metadata.tables
+    assert "backtest_trades" in Base.metadata.tables
+
+
+def test_alembic_env_imports_backtest_models() -> None:
+    env_path = Path(__file__).parents[1] / "alembic/env.py"
+    tree = ast.parse(env_path.read_text())
+    imported_names = {
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        and node.module == "backend.persistence.models"
+        for alias in node.names
+    }
+    assert {"BacktestRunModel", "BacktestTradeModel"} <= imported_names
 
 
 def test_upgrade_renders_reference_tables_and_constraints():

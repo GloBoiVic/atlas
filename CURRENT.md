@@ -1,22 +1,274 @@
 # Current Feature
 
+## Frontend standalone asset serving fix — complete (2026-08-04)
+
+- [x] Corrected the runner image layout so standalone `server.js` runs at `/app` and serves
+      `.next/static` from `/app/.next/static`.
+- [x] Rebuilt the frontend image and restarted only `atlas-frontend-1` with `--no-deps`.
+- [x] Verified `/backtests` and its emitted CSS URL return HTTP 200; CSS contains Atlas styles.
+- [x] Frontend lint, typecheck, and production build pass; bounded smoke check passes.
+
+Root cause: the standalone bundle was copied under `/app/.next/standalone` but launched from
+that nested path while static assets were copied to `/app/.next/static`. Next's standalone
+server resolves its static directory relative to the standalone server root, so it looked for
+`/app/.next/standalone/.next/static` and returned 404. The runner now follows Next's convention:
+standalone contents at `/app`, static assets at `/app/.next/static`, and `node server.js`.
+
+Validation: Docker build succeeded; `GET /backtests` returned 200; the emitted
+`/_next/static/chunks/27mub1g206k2p.css` returned 200 with 18,855 bytes and an Atlas marker;
+the container contains `/app/server.js` and that CSS asset. `npm run lint`, `npm run typecheck`,
+and `npm run build` all passed.
+
+## Design-system reconciliation — final review PASS (2026-08-04)
+
+- [x] Final review complete: 0 Critical, 0 Important, 0 Minor findings in reconciliation scope.
+- [x] All 5 prior findings (F1–F5) verified as resolved.
+- [x] Compiled CSS confirmed: `font-atlas-semibold` → font-weight 600, all Atlas leading/tracking/spacing utilities work.
+- [x] Intentional exceptions documented in CURRENT.md and `context/ui-registry.md`.
+- [x] No legacy `font-fw-atlas-*` or `tracking-tight` in source or compiled output.
+- [x] Quality gates: lint ✅, typecheck ✅, build ✅.
+- [x] Topnav 56px maintained; screenshot provenance deferred for human confirmation.
+
+See `dispatch/REVIEW.md` for the full final review.
+
+## Design-system reconciliation slice 2 — complete (2026-08-04)
+
+- [x] Resolved review findings F1–F5 across the existing `/backtests` surface.
+- [x] Replaced legacy weight utilities, migrated semantic type/spacing/leading/tracking,
+      and added Atlas duration/easing only to existing transitions.
+- [x] Kept topnav source geometry at 56px; no routes, dashboard, landing, or navigation work added.
+- [x] Updated the UI registry through the imprint workflow with intentional utility exceptions.
+
+Intentional exceptions: `py-[10px]` on compact controls, `min-h-11` touch target,
+`py-[56px]` for the empty-list state, and `max-w-7xl`/
+arbitrary grid minimums preserve existing geometry where no equivalent Atlas token exists.
+
+Validation: `npm run lint`, `npm run typecheck`, and `npm run build` pass. Compiled CSS contains
+working `font-atlas-semibold` (600), Atlas leading/tracking, Atlas spacing, Atlas easing, and
+the explicit duration utility. Source audit finds no legacy `font-fw-atlas-*`, `tracking-tight`,
+or reviewed standard text/spacing utilities. Bounded smoke: `GET /backtests` returned HTTP 200
+and rendered “Backtests”; no data was created. The first 3001 smoke attempt was blocked by the
+already-running local Next server on port 3000, so the bounded check used that existing server.
+
 Last updated: 2026-08-04
+
+## Design-system reconciliation slice 1 — complete (2026-08-04)
+
+- [x] Reconcile JSON-derived design and Tailwind token projections
+- [x] Validate frontend lint, typecheck, build, and compiled utilities
+- [x] Record the 56px token / 57px screenshot measurement without changing the source token
+
+Validation: token projection audit passed; compiled utility audit passed; frontend lint,
+typecheck, and production build passed. `dashboard-topnav.png` remains 1440×57px while the
+canonical `layout.topnav-height` token remains 56px; border/crop provenance is deferred for
+human confirmation. Component utility migration and route work remain out of scope.
+
+Last updated: 2026-08-04
+
+## Feature 05 — Final-gates blocker B1 resolved (2026-08-04)
+
+- [x] Made `test_backtest_models_are_registered_for_alembic_metadata` self-contained by
+      explicitly importing the backtest ORM models using the normal test import convention.
+- [x] Isolated migration test passes without test-order side effects.
+- [x] `python3 -m pytest -q tests/test_migrations.py -k
+      test_backtest_models_are_registered_for_alembic_metadata`: 1 passed, 20 deselected.
+- [x] `python3 -m pytest -q`: 371 passed in 11.35s.
+- [x] `python3 -m ruff check .`: all checks passed.
+- [x] Relevant mypy (backtest code plus `tests/test_migrations.py`): 14 files, 0 errors.
+
+Last updated: 2026-08-04
+
+## Feature 05 — Final quality gates complete (2026-08-04)
+
+- [x] Backend pytest: 371 passed (full suite, 9.95s)
+- [x] Ruff: all checks passed
+- [x] mypy (backtest feature code, 13 files): 0 errors
+- [x] mypy (full repo): 14 pre-existing errors, unchanged, unrelated to Feature 05
+- [x] Coverage: 89% overall (above 80% minimum)
+- [x] TypeScript typecheck: zero errors
+- [x] ESLint: zero errors/warnings
+- [x] `next build`: compiled successfully (1 cosmetic CSS @import warning)
+- [x] **B1** `test_backtest_models_are_registered_for_alembic_metadata` is self-contained and passes in isolation
+- [ ] PostgreSQL/Docker integration: deferred (Docker daemon not running)
+- [ ] Frontend test runner: absent (infrastructure gap)
+
+**Verdict: PASS** ✅ — No production code changes needed. All application quality gates pass. PostgreSQL/Docker and frontend test-runner gates remain deferred as documented.
+
+Last updated: 2026-08-04
+
+## Feature 05 Task 6 review fixes — complete (2026-08-04)
+
+- [x] Corrected Decimal-ratio percentage formatting without floating-point conversion
+- [x] Displayed max drawdown according to its absolute monetary contract
+- [x] Added client-side date ordering/validity checks and explicit UTC handling for datetime-local inputs
+- [x] Replaced backtest-page relative imports with `@/` aliases and refreshed the UI registry
+- [x] Frontend lint, typecheck, and production build pass
+- [ ] No frontend test runner exists in the current package; CSS warning limitation reported below
+
+Validation limitations: frontend has no configured test runner. `next build` may continue to
+report the pre-existing CSS `@import` ordering warning from `shadcn-bridge.css`.
+
+Last updated: 2026-08-04
+
+## Feature 05 Task 6 — Backtests UI — complete (2026-08-04)
+
+- [x] Added `/backtests` with API-boundary list/detail fetching and a validated run form
+- [x] Added completed, pending, running, failed, and cancelled presentation states with safe
+      empty/error handling, responsive trades table, and accessible labels/status announcements
+- [x] Preserved Decimal strings at the transport boundary; only presentation formatting is done in
+      the browser and canonical metrics are never recalculated client-side
+- [x] Updated the UI registry via the imprint workflow
+- [x] Frontend lint, typecheck, and production build pass
+- [ ] No frontend test runner exists in the current package, so automated UI tests were not added
+
+Last updated: 2026-08-04
+
+## Feature 05 Task 5 API review fixes — complete (2026-08-04)
+
+- [x] Added environment-configured CORS with localhost:3000 default and wildcard-origin rejection
+- [x] Added CORS, ValueError→409, empty-list, non-empty trade, and immutable-created_at coverage
+- [x] Removed unused get_api_session scaffolding
+- [x] Full backend pytest: 371 passed; full Ruff and changed-slice mypy clean
+- [ ] PostgreSQL-backed endpoint execution and Docker Compose validation remain unavailable because
+      the local Docker daemon is not running
+- [ ] Full-repository mypy remains limited by 14 pre-existing errors in provider, circuit-breaker,
+      strategy-example, supervisor, and logging tests
+
+Last updated: 2026-08-04
+
+## Feature 05 Task 5 — Backtest API — complete (2026-08-04)
+
+- [x] Added FastAPI session/dependency infrastructure, trusted service factories, and router
+      registration for the synchronous backtest API
+- [x] Added Pydantic request/response schemas with trusted UUID selection, forbidden secret/import
+      configuration fields, UTC validation, and Decimal-as-string result/trade serialization
+- [x] Added POST, list, detail, and trades endpoints with documented 404/409/422/500 mappings
+- [x] Added API coverage for success, validation, missing IDs, conflicts, failures, and Decimal output
+- [x] Full backend pytest: 365 passed; changed-slice Ruff and mypy clean
+- [ ] PostgreSQL-backed endpoint execution remains environment-blocked; frontend intentionally deferred
+
+Last updated: 2026-08-04
+
+## Feature 05 Task 4 review fixes — complete (2026-08-04)
+
+- [x] Persisted `dataset_id` during SQLAlchemy terminal finalization
+- [x] Added bounded FAILED fallback for terminal persistence errors while preserving the
+      original infrastructure exception
+- [x] Added service-boundary coverage for trusted resolution, strategy failure, protective
+      projection, terminal metadata, cancellation, and SQLAlchemy dataset persistence
+- [x] Full pytest: 361 passed; full Ruff clean; changed-slice mypy clean
+- [x] Full-repository mypy still reports 14 pre-existing errors in unrelated provider,
+      circuit-breaker, logging, strategy-example, and supervisor tests
+
+Last updated: 2026-08-04
+
+## Feature 05 Task 4 — BacktestService orchestration — complete (2026-08-04)
+
+- [x] Added trusted strategy/instrument resolution and immutable run metadata snapshots
+- [x] Added PENDING → RUNNING → COMPLETED/FAILED/CANCELLED lifecycle, bounded errors,
+      cancellation persistence, terminal idempotency, and progress timestamps
+- [x] Added atomic BacktestRepository finalization for run, closed trades, and metrics;
+      replay remains isolated from Feature 07 execution tables
+- [x] Added protective/liquidation closed-trade projection without changing fill semantics
+- [x] Added focused service lifecycle, cancellation, identity, failure, and projection tests
+- [x] Full backend pytest: 355 passed; Ruff and changed-slice mypy clean
+
+Last updated: 2026-08-04
+
+## Feature 05 Task 3 review fixes — complete (2026-08-04)
+
+- [x] Propagated replay candle timestamps through SignalGenerated, risk, and execution events
+- [x] Formalized validated `DataRequirement.warmup_candles`; removed undocumented getattr fallback
+- [x] Added expected-value metric, protective-trigger, event timestamp, and same-input dataset identity tests
+- [x] Full backend pytest, Ruff, and changed-slice mypy passed
+- [ ] BacktestService status lifecycle, persistence orchestration, and cancellation ownership remain
+      deferred to Task 4 as recorded in the review
+
+Last updated: 2026-08-04
+
+## Feature 05 Task 3 — isolated replay (in progress, 2026-08-04)
+
+- [ ] Implement isolated BacktesterEngine replay orchestration and canonical projections
+- [ ] Add deterministic timing, warm-up, final-candle, cleanup, and failure-path tests
+- [ ] Run focused/full backend pytest, Ruff, and changed-slice mypy
+
+## Feature 05 Task 3 — isolated replay (complete, 2026-08-04)
+
+- [x] Implemented fresh run-local EventBus, strategy, risk, broker, execution repository/engine,
+      and SimulationClock composition
+- [x] Added loader dataset identity reuse, validated complete-candle replay, warm-up, executable
+      next-candle-open market context, protective/liquidation checks, and final-candle gating
+- [x] Added TradeClosed collection, closed-trade projection, Decimal canonical metrics, and
+      cleanup/failure-path coverage
+- [x] Focused replay tests: 4 passed; full backend pytest: 347 passed
+- [x] Changed-slice Ruff and mypy: clean
+
+Last updated: 2026-08-04
+
+## Current session
+
+### Feature 05 Task 1 review fixes — in progress (2026-08-04)
+
+- [ ] Resolve the review-reported test mypy errors without suppressing unrelated errors
+- [ ] Add focused BacktestTrade and BacktestRun validation coverage
+- [ ] Add cross-implementation CandleRepository parity coverage
+- [ ] Run full backend pytest, Ruff, and mypy validation
+
+### Feature 05 Task 1 review fixes — complete (2026-08-04)
+
+- [x] Replaced heterogeneous `**dict[str, object]` test construction with precise
+      `TypedDict`/explicit arguments; no broad mypy suppression added
+- [x] Added focused BacktestTrade validation for valid/nullable/frozen metadata and invalid
+      Decimal, quantity, and UTC values
+- [x] Added focused BacktestRun validation for valid/frozen config, status, and UTC values
+- [x] Added identical-data SQLAlchemy/in-memory CandleRepository parity assertion
+- [x] Full backend pytest: 337 passed
+- [x] Changed-slice Ruff and mypy: clean
+
+### Feature 05 Task 2 — persistence (2026-08-04)
+
+- [x] Added Alembic migration 008 for isolated backtest runs and trade projections
+- [x] Added UUID/UTC/JSONB-aware ORM models and Decimal-preserving conversions
+- [x] Added deterministic, idempotent SQLAlchemy and in-memory BacktestRepository implementations
+- [x] Added migration, repository, conversion, cascade, and validation tests
+- [x] Focused validation: 21 tests, Ruff, and changed-slice mypy clean
+- [x] Full backend pytest: 341 passed
+- [x] Full backend Ruff and changed-slice mypy: clean
+
+### Feature 05 Task 2 review fixes — in progress (2026-08-04)
+
+- [ ] Import backtest ORM models in Alembic env.py for autogenerate metadata discovery
+- [ ] Add offline migration downgrade ordering and ORM metadata coverage
+- [ ] Run full backend pytest, Ruff, and changed-slice mypy
+
+### Feature 05 Task 2 review fixes — complete (2026-08-04)
+
+- [x] Imported BacktestRunModel and BacktestTradeModel in Alembic env.py so autogenerate sees
+      all persistence metadata
+- [x] Added offline migration assertions for FLOAT metric columns and downgrade dependency/index
+      ordering
+- [x] Added Alembic model-import and Base.metadata coverage without requiring PostgreSQL
+- [x] Added explicit NULL-metric result=None repository coverage
+- [x] Full backend pytest: 343 passed
+- [x] Full backend Ruff: clean
+- [x] Changed-slice mypy: clean
+- [ ] PostgreSQL migration upgrade/downgrade execution: not run; PostgreSQL was unavailable
 
 ## Status
 
 - [ ] Not started
-- [x] In progress
-- [ ] Complete
+- [ ] In progress
+- [x] Complete
 
 ## Feature
 
-- **Number:** 07
-- **Name:** Execution Layer
-- **File:** context/features/07-execution-layer.md
+- **Number:** 05
+- **Name:** Backtesting
+- **File:** context/features/05-backtesting.md
 
 ## Branch
 
-- **Name:** feature/07-execution-layer
+- **Name:** feature/05-backtesting
 - **Created:** 2026-08-04
 
 ## Current session
@@ -211,3 +463,11 @@ Last updated: 2026-08-04
 - [x] Ruff: clean
 - [x] Feature 07 source, tests, and migration mypy: clean
 - [x] Feature 07 complete; next scheduled feature is Feature 05 — Backtesting
+
+### Feature 05 — Task 1 (2026-08-04)
+
+- [x] Extended CandleRepository with deterministic inclusive UTC reads in SQLAlchemy and memory
+- [x] Added immutable BacktestConfig, BacktestStatus, BacktestResult, BacktestRun, and BacktestTrade contracts
+- [x] Added focused candle and contract validation tests
+- [x] Focused validation: 37 passed; Ruff clean; changed-slice mypy clean
+- [x] Migration, replay engine, API, and UI remain deferred

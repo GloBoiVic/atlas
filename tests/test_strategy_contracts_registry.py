@@ -89,10 +89,20 @@ def test_data_requirement_validates_timeframe() -> None:
         DataRequirement(DataType.CANDLE, "hour")
 
 
+def test_data_requirement_validates_deterministic_warmup_count() -> None:
+    requirement = DataRequirement(DataType.CANDLE, "5m", warmup_candles=3)
+
+    assert requirement.warmup_candles == 3
+    with pytest.raises(ValueError):
+        DataRequirement(DataType.CANDLE, "5m", warmup_candles=-1)
+    with pytest.raises(TypeError):
+        DataRequirement(DataType.CANDLE, "5m", warmup_candles=True)
+
+
 def test_strategy_has_synchronous_default_hooks() -> None:
     strategy = StubStrategy({"period": 5})
     assert strategy.required_data() == DataRequirement(DataType.CANDLE, "1m")
-    assert strategy.on_tick(None) is None  # type: ignore[arg-type]
+    assert strategy.on_tick(None) is None  # type: ignore[arg-type,func-returns-value]
 
 
 def test_registry_registers_and_resolves_trusted_factory() -> None:

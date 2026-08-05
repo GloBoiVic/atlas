@@ -279,6 +279,7 @@ class ExecutionEngine:
                     account_id=order.account_id,
                     bot_id=order.bot_id,
                     mode=order.mode,
+                    occurred_at=event.occurred_at,
                     correlation_id=event.correlation_id,
                 )
             )
@@ -295,6 +296,7 @@ class ExecutionEngine:
                     account_id=order.account_id,
                     bot_id=order.bot_id,
                     mode=order.mode,
+                    occurred_at=event.occurred_at,
                     correlation_id=event.correlation_id,
                 )
             )
@@ -308,6 +310,7 @@ class ExecutionEngine:
                 account_id=order.account_id,
                 bot_id=order.bot_id,
                 mode=order.mode,
+                occurred_at=event.occurred_at,
                 correlation_id=event.correlation_id,
             )
         )
@@ -357,8 +360,9 @@ class ExecutionEngine:
                 fill=persisted_fill,
                 account_id=order.account_id,
                 bot_id=order.bot_id,
-                mode=order.mode,
-                correlation_id=event.correlation_id,
+                    mode=order.mode,
+                    occurred_at=event.occurred_at,
+                    correlation_id=event.correlation_id,
             )
         )
         if current is None or current.status is PositionStatus.CLOSED:
@@ -398,6 +402,7 @@ class ExecutionEngine:
                         account_id=order.account_id,
                         bot_id=order.bot_id,
                         mode=order.mode,
+                        occurred_at=event.occurred_at,
                         correlation_id=event.correlation_id,
                     )
                 )
@@ -407,6 +412,7 @@ class ExecutionEngine:
                         account_id=order.account_id,
                         bot_id=order.bot_id,
                         mode=order.mode,
+                        occurred_at=event.occurred_at,
                         correlation_id=event.correlation_id,
                     )
                 )
@@ -446,6 +452,7 @@ class ExecutionEngine:
                     account_id=order.account_id,
                     bot_id=order.bot_id,
                     mode=order.mode,
+                    occurred_at=event.occurred_at,
                     correlation_id=event.correlation_id,
                 )
             )

@@ -3,7 +3,9 @@ from contextlib import asynccontextmanager
 
 import structlog
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
+from backend.api.routes.backtests import router as backtests_router
 from backend.config import settings
 from backend.core.logging import setup_logging
 
@@ -30,6 +32,14 @@ def create_app() -> FastAPI:
         version="0.1.0",
         lifespan=lifespan,
     )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.API_CORS_ORIGINS,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type"],
+    )
+    app.include_router(backtests_router)
 
     @app.get("/health")
     async def health() -> dict[str, str]:

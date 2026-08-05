@@ -1,151 +1,150 @@
-# Memory — Feature 06 Risk Engine
+# Memory — Feature 05 Backtesting + Design-System Reconciliation
 
 Last updated: 2026-08-04
 
 ## What was built
 
-### Feature 06 — Risk Engine (this session)
+### Feature 05 — Backtesting (previous session)
 
-- Implemented the deterministic Risk Engine on branch `feature/06-risk-engine`.
-- Created `backend/risk/engine.py` (398 lines) — `RiskEngine`, `RiskContext`, `PositionInfo`, `PositionStatus`, `RiskContextProvider` protocol, configuration-driven stop resolution, conservative tick/step rounding, equity-constrained sizing, max-open positions with transient reservations, per-bot isolation via bot_id filtering, CLOSE zero-quantity approval, and direction-conflict rejection (no scaling/reversal).
-- Added `RiskApproved`/`RiskRejected` typed event payloads to `backend/core/events.py` — `signal`, `position_size`, `stop_loss`, `take_profit` for approval; `signal`, `reason` for rejection.
-- Extended `RiskConfig` in `backend/config.py` with `stop_loss_multiplier`, `take_profit_multiplier`, `stop_source_config`, `take_profit_risk_reward`, `max_risk_per_trade`, and YAML-friendly source discriminator.
-- Updated `config/default.yaml` with full risk section: `max_open_positions: 5`, `per_trade_risk: 0.01`, `stop_source`, `stop_loss_multiplier`, `take_profit_risk_reward`.
-- Populated `backend/risk/__init__.py` with public exports.
-- Updated `tests/test_events.py` — `RiskApproved`/`RiskRejected` new-style payload assertions.
-- Updated `tests/test_config.py` — `RiskConfig` extended-field validation.
-- Created `tests/test_risk_engine.py` (22 KB, 38 tests) — every rejection path, identity/timestamp/entry mismatches, max-positions boundary with pending reservations, reserved-bot isolation, CLOSE approval, lifecycle hooks, constraint validation variants, post-rounding geometry guards.
-- **294 backend tests passing**, **Ruff clean**, **Feature 06 mypy clean** (21 pre-existing errors in unrelated test files), **98% risk-module coverage** (4 missed lines: defensive guard + fail-closed handler).
+- **CandleRepository read protocol** (`get_candles`) added to protocol, SQLAlchemy, and in-memory implementations with inclusive UTC, complete-only, chronological semantics.
+- **BacktestRun/BacktestTrade domain models** in `backend/backtester/models.py` — `BacktestStatus` enum (`PENDING→RUNNING→COMPLETED/FAILED/CANCELLED`), `BacktestConfig` with UUID/Decimal/frozen validation, `BacktestResult` with 8 run-level metrics, execution contract enforcement.
+- **Alembic migration 008** — native UUID PKs, `NUMERIC(28,12)` for money/Decimal-ratio columns, `FLOAT` for non-monetary ratios, JSONB for config, `ON DELETE CASCADE` from runs to trades.
+- **Backtest ORM models** and SQLAlchemy/InMemory repository parity implementations.
+- **Isolated replay engine** (`BacktesterEngine` in `backend/backtester/engine.py`) — fresh run-local EventBus/SimulationClock/PaperBroker/InMemoryExecutionRepository per run, warm-up (strategy-state only, no signals), canonical candle loop (validate → clock.advance → ExecutableMarket with next_candle_open → CandleClosed → triggers), protective stops, last-candle gate, subscription cleanup in `finally`.
+- **BacktestService** full lifecycle (`PENDING→RUNNING→COMPLETED/FAILED/CANCELLED`), trusted strategy resolution via `StrategyRegistry`, atomic persistence with bounded terminal-failure fallback, `asyncio.CancelledError` handling.
+- **Backtest metrics** in `backend/backtester/metrics.py` — `total_return` (Decimal ratio), `total_pnl`, `starting_equity`, `ending_equity`, `max_drawdown` (monetary), `win_rate`, `profit_factor`, `sharpe_ratio`. Owner-deferred to Feature 10.
+- **Four API endpoints** — `POST /backtests`, `GET /backtests`, `GET /backtests/{id}`, `GET /backtests/{id}/trades` — with Decimal-as-string serialization, `_FORBIDDEN_KEYS` untrusted-config rejection, env-configured CORS (no wildcard with credentials), 404/409/422/500 error mapping.
+- **Complete frontend backtests UI** — form (strategy/instrument/timeframe/date-range/balance), run list with empty state, detail view with 8-metric `Metric` grid + trades table, `StatusBadge`/`StatusMessage` for lifecycle, UTC datetime-local handling (`Z`-suffix + `aria-describedby` hint), `end>=start` validation, string-only `formatPercentRatio`, design tokens (`bg-atlas-*`, `font-atlas-mono`, `rounded-atlas-*`), accessibility conventions.
+- **No new strategy/risk/execution semantics** — reused shared `StrategyEngine`/`RiskEngine`/`ExecutionEngine`/`PaperBroker` contracts exclusively.
 
-### Context Documentation Reconciliation (preserved from previous session)
+**Validation:** 371 backend tests, Ruff clean, backtest-feature mypy 0 errors, coverage 90%, `tsc --noEmit` zero errors, ESLint zero errors, `next build` compiled successfully. Three accepted environment limits: PostgreSQL/Docker integration deferred (daemon unavailable), no frontend test runner, 14 pre-existing unrelated test mypy errors.
 
-- Reconciled all 17+ context documentation files to form a single authoritative source of truth.
-- Established singular ownership boundaries, approved MVP execution model, metric policy, and 9 approved defaults.
-- Final review: **PASS** with 0 Critical, 0 Important, 0 Minor findings.
-- Resolved 6 findings from the first review cycle.
+### Design-system reconciliation (this session)
+
+- **Token projection chain verified**: JSON → `design/tokens/atlas-tokens.css` → `frontend/src/styles/atlas-theme.css` pairwise audit confirmed zero value drift across 65+ tokens (22 colors, 10 text sizes, 13 spacing, 5 radii, 2 easings, 4 font weights, 5 durations, 6 tracking, 4 leading, 2 font families, 4 layout, 4 z-index). No runtime import of design CSS.
+- **Layout/z-index/font-weight projections added**: `--container-atlas`, `--container-atlas-narrow`, `--spacing-atlas-topnav-height`, `--spacing-atlas-page-gutter`, `--z-index-atlas-sticky/modal/toast/tooltip` added to Tailwind `@theme`. Font-weight corrected from non-functional `--fw-atlas-*` to `--font-weight-atlas-*`, generating working `font-atlas-regular/medium/semibold/bold` utilities.
+- **Base-style cleanup**: Body reset and `.mono` class removed from `design/tokens/atlas-tokens.css` (now 89 lines, token-only). `frontend/src/app/globals.css` confirmed as sole owner of Google Fonts import, `@import "tailwindcss"`, base reset — single font load, single body reset, correct `@import` ordering.
+- **Existing backtests utility migration**: All `/backtests` components migrated from standard Tailwind to semantic Atlas tokens — 10 legacy `font-fw-atlas-semibold` → `font-atlas-semibold`; `tracking-tight` → `tracking-atlas-tight`; 13+ text-size instances → `text-atlas-*`; 30+ spacing instances → `*-atlas-*`; `leading-atlas-tight/snug/normal` deployed; `duration-atlas-base`/`ease-atlas-out` on transitions. No route scope leakage.
+- **56px topnav maintained**: `layout.topnav-height` kept at 56px in JSON, design CSS, and Tailwind theme pending human provenance confirmation of the 57px `dashboard-topnav.png` screenshot.
+- **8 intentional exceptions documented**: `py-[10px]`, `px-[10px]`, `min-h-11`, `py-[56px]`, `max-w-7xl/2xl/xs`, `mt-[2px]` — with rationale in `ui-registry.md`. Structural/layout utilities (flex, grid, size-4, etc.) recognised as non-token standard utilities.
+- **Validation**: lint PASS, typecheck PASS, build PASS (14.9s, 4 routes), compiled CSS utility audit confirms all `bg-atlas-*`, `text-atlas-*`, `font-atlas-*`, `rounded-atlas-*`, `leading-atlas-*`, `tracking-atlas-*`, `*-atlas-*`, `ease-atlas-*`, `duration-atlas-*` utilities resolve correctly.
+- **Deferred**: dashboard/landing screenshot comparisons (future acceptance artifacts), topnav 57px provenance (human confirmation).
+- **Final review**: **PASS** 🟢 — 0 Critical, 0 Important, 0 Minor findings in reconciliation scope. All 10 architecture conflicts C1–C10 resolved or explicitly deferred. All 5 prior review findings F1–F5 (2 Critical + 3 Important) fixed.
+
+### Feature 06 — Risk Engine (preserved from previous session)
+
+- Deterministic RiskEngine on `feature/06-risk-engine` — configuration-driven stops (percentage_of_entry/absolute_price_distance/explicit_stop_price), 1% default/2% max equity risk, conservative rounding (BUY→FLOOR, SELL→CEILING), R:R take-profit, direction-conflict rejection, transient reservations, per-bot isolation, fail-closed.
+- `RiskApproved`/`RiskRejected` typed event payloads.
+- 294 tests, Ruff clean, Feature 06 mypy clean, 98% coverage. Final review: PASS.
+- No ATR dependency. No scaling or reversal.
+
+### Context documentation reconciliation (preserved from previous session)
+
+- All 17+ context docs reconciled into single authoritative source. Singular ownership boundaries, approved MVP execution model, defaults.
 
 ### Feature 04 — Strategy Engine (preserved from previous session)
 
-- Strategy contracts with UUID/Decimal, immutable Signal, provenance, warm-up, registry, parameter, validation, and fail-closed contracts.
-- StrategyEngine validates completed candles, deduplicates by composite key, gates signals until warm-up completes.
-- 256 tests, Ruff clean, mypy clean.
+- UUID/Decimal/immutable Signal, provenance, warm-up, registry, validation, fail-closed contracts. 256 tests.
 
 ### Feature 03 — Data Layer (preserved from previous session)
 
-- Historical CSV and Binance Spot providers, normalized contracts, provider-aware persistence, dataset fingerprints, UUID migrations 005/006, repositories, and provider registry.
+- Historical CSV + Binance Spot providers, normalized contracts, dataset fingerprints, migrations 005/006.
 
 ## Decisions made
 
-### From this session (Feature 06 Risk Engine)
+### From this session (Design-system reconciliation)
 
-- **No ATR for the MVP.** Stop sources are configuration-driven: `percentage_of_entry`, `absolute_price_distance`, or `explicit_stop_price`. No ATR indicator, no ATR import, no ATR field.
-- **1% default / 2% hard cap** on per-trade equity risk. Enforced at config level (Pydantic `gt=0, le=0.02`) and at runtime (guard raises if > 2% even if config somehow exceeds it).
-- **Three stop sources, not just strategy proposals.** The risk engine resolves stops from config — strategy stop proposals may be supported later but are always subject to Risk approval.
-- **Conservative rounding:** BUY → `ROUND_FLOOR` for stop distance and quantity; SELL → `ROUND_CEILING`. This prevents under-sizing long stops and over-sizing short stops when precision must truncate.
-- **Sizing from rounded stop distance.** Position size = risk_amount / rounded stop_distance, not raw stop_distance. This ensures the math uses the exact distance that will be enforced.
-- **Optional R:R take-profit.** No universal target ratio. When `take_profit_risk_reward` is configured, TP = entry ± (stop_distance × ratio); when absent, no TP is set.
-- **No scaling or reversal.** Direction conflict (BUY signal while existing long) rejects the signal. CLOSE is approved as a zero-quantity close intent.
-- **Transient reservations + per-bot isolation.** Each RiskEngine maintains its own `set[ReservationKey]` scoped by `(account_id, mode, instrument_id)`. Pending entries occupy a slot without needing a persisted position.
-- **Foreign bot filtering.** RiskEngine silently ignores signals where `event.bot_id != self._bot_id` — critical since EventBus is per-process, not per-bot-pipeline.
-- **Fail-closed:** exceptions in `_handler` log the error and re-raise; no misleading approvals are published.
-- **No Feature 07/05 scope leakage.** The risk engine has zero dependencies on orders, fills, positions, P&L, broker interfaces, database, API, or UI.
+- **Token projection chain is authoritative**: `atlas-tokens.json` is the only editable source; `atlas-tokens.css` and `atlas-theme.css` are derived projections. Never edit them independently.
+- **`--font-weight-atlas-*` namespace**: Tailwind v4 requires `--font-weight-*` for weight utilities. The non-functional `--fw-atlas-*` was replaced; `font-fw-atlas-*` classes are gone.
+- **`globals.css` is sole runtime owner**: No runtime import of `design/tokens/atlas-tokens.css`. Single Google Fonts `@import`, single `@layer base` body reset.
+- **56px pending provenance**: Topnav stays 56px until a human confirms whether `dashboard-topnav.png`'s 57px is content+border or pure content.
+- **No route scope expansion**: Migration limited to existing `/backtests` files and shared styles. Dashboard/landing stubs remain untouched and still use standard Tailwind.
+- **Intentional exceptions are documented, not blocked**: 8 utility instances without Atlas equivalents are preserved with rationale in `ui-registry.md`.
+- **Structural/layout utilities exempt**: `flex`, `grid`, `size-4`, `min-h-screen`, `overflow-*`, `truncate`, etc. are standard utilities not requiring Atlas token equivalents.
+- **Screenshot comparisons deferred**: Not a code-quality gate for this slice. Dashboard/landing references remain future acceptance artifacts.
 
-### Preserved from previous sessions
+### From previous session (Feature 05 Backtesting)
 
-- Feature IDs are stable domain identifiers, not implementation sequence; the roadmap owns delivery order.
-- BotSupervisor ownership: Feature 02 (core lifecycle), Feature 09 (paper/testnet pipeline), Feature 12 (API/UI).
-- Paper Broker: shared algorithm with mode-specific price sources (next-candle open for backtests, current market for live paper).
+- **Reuse `build_dataset_identity` from `loader.py`** — not the simplified spec example. Production function hashes all candle fields.
+- **`NUMERIC(28,12)` for backtest money/Decimal-ratio columns** — matches Feature 07 convention, not the `NUMERIC(20,8)` in the database doc.
+- **Warm-up is strategy-state-only** — no signals, no events emitted during warm-up.
+- **Signal at candle T close → fill at T+1 open** — enforced by `PaperFillMode.BACKTEST` + `ExecutableMarket.next_candle_open`. Last candle is a no-execution gate.
+- **`total_return` = Decimal ratio** (0.125 = 12.5%). Persisted as `NUMERIC(28,12)`, serialized as string in API, displayed as percentage via string-only `formatPercentRatio` (no float conversion).
+- **`max_drawdown` = absolute monetary value**, not a ratio. Labeled "Max drawdown (absolute)" in UI, formatted as raw Decimal string.
+- **CORS configurable via env** with explicit origin list; wildcard `*` with credentials explicitly rejected.
+- **No metric recalculation in the frontend** — all formatting-only transformations.
+- **Feature 05 is sequenced after Feature 07** despite its lower domain ID — Feature 07's execution contracts were necessary for backtest execution.
+- **Asyncio.CancelledError is caught, persists CANCELLED status, then re-raises** — clean cancellation semantics.
+
+### Preserved from earlier sessions (still relevant)
+
+- Feature IDs are stable domain identifiers, not implementation sequence.
+- BotSupervisor ownership: Feature 02 (core), Feature 09 (paper/testnet), Feature 12 (API/UI).
+- Paper Broker: shared algorithm with mode-specific price sources (next-candle-open for backtests, current market for live).
 - Event payload ownership: Feature 04 owns SignalGenerated/StrategyError; Feature 06 owns RiskApproved/RiskRejected; Feature 07 owns execution events.
-- Execution realism defaults approved: 0.10% taker fee, 0.05% fixed adverse slippage, stop-loss-first candle ambiguity, complete fills by default, no synthetic candles, indefinite data retention, immutable strategy pins.
-- Metric formulas canonical in Feature 10; Feature 05 persists raw snapshots.
-- Atlas remains single-user, paper-first, broker-agnostic, single-worker for the MVP.
-- Backend identifiers use UUID; prices, quantities, fees, P&L, and signal strength use Decimal; timestamps are UTC.
-- Local Docker: 2 CPUs/~3 GiB normal, 3 CPUs/~4 GiB for heavier iteration.
+- Execution realism defaults: 0.10% taker fee, 0.05% fixed adverse slippage, stop-loss-first candle ambiguity, complete fills by default, no synthetic candles, indefinite data retention, immutable strategy pins.
+- Metric formulas canonical in Feature 10; Feature 05 persists raw snapshots only.
+- Atlas remains single-user, paper-first, broker-agnostic, single-worker for MVP.
+- Backend identifiers use UUID; money/prices/quantities/fees/P&L use Decimal; timestamps are UTC.
+- No ATR for MVP risk engine — configuration-driven stop sources.
+- Conservative rounding direction (BUY→FLOOR, SELL→CEILING) for stop distance and quantity.
+- Transient reservations + per-bot isolation for risk engine.
+- Fail-closed: exceptions in handlers log and re-raise; no misleading approvals.
 
 ## Problems solved
 
 ### From this session
 
-- **Event payload lockstep:** Adding `RiskApproved`/`RiskRejected` payload fields required simultaneous update of `tests/test_events.py` `EVENT_TYPES` parametrized assertion. The exploration phase flagged this blocker; the update was done in lockstep.
-- **`_optional_constraint` edge cases:** Missing `min_qty`/`min_notional` in per-instrument constraints defaults to `ZERO`, which could pass `>=` validation incorrectly. Handled with explicit `ZERO if name != "max_qty" else None` — correct for current constraint set, flagged as a cosmetic Minor observation.
-- **Mode filtering gap in position conflict check:** Initial implementation didn't scope reservation keys by `mode` (backtest vs paper). Fixed so mode is part of the key — different modes for the same account/instrument are independent.
-- **Post-rounding stop geometry:** After conservative rounding (e.g., BUY `ROUND_FLOOR` on stop), a rounded stop at entry is possible (zero distance). Added a post-rounding guard that rejects `invalid_stop` if the rounded distance isn't positive.
-- **295 → 294 test count:** One `pytest-asyncio` fixture running on non-async test was consuming the event loop without yielding — removed the unused async from that fixture.
+- **Legacy `font-fw-atlas-semibold` in 10 instances (F1)** — All replaced with `font-atlas-semibold`. Compiled CSS confirms `font-weight: 600`.
+- **`tracking-tight` value drift (F2)** — Replaced with `tracking-atlas-tight` (`-0.02em` vs Tailwind's `-0.025em`).
+- **Standard Tailwind text sizes in backtests components (F3)** — All 13+ `text-xs/sm/lg/xl/3xl` instances migrated to semantic `text-atlas-*`.
+- **Standard Tailwind spacing in backtests components (F4)** — All 30+ spacing instances migrated to `*-atlas-*` patterns; 8 exceptions documented.
+- **No `leading-atlas-*` utilities used (F5)** — `leading-atlas-tight/snug/normal` deployed across all 5 backtests components.
+- **Design CSS base reset vs globals reset (C9)** — Body reset and `.mono` removed from `atlas-tokens.css`; `globals.css` confirmed as sole owner.
 
-### Preserved from previous sessions
+### From previous session
 
-- Resolved stale Feature 04 contracts using `instrument: str`, `strength: float`, `candle_id`, and mutation of frozen Signals.
-- Documentation drift root cause addressed — ownership boundaries and approved defaults now explicit.
-- Transport timeouts vs domain-clock deadlines distinguished.
+- **formatPercentRatio padStart→padEnd bug** — Original implementation used `padStart` which could produce wrong decimal shifts. Fixed to `padEnd` with 8 test value verification (0.125→12.5%, 0.01→1%, 1.5→150%, etc.). String-only operation, no float conversion.
+- **max_drawdown monetary vs ratio ambiguity** — Prior review flagged `max_drawdown` as potentially needing `%` display. Contract evidence proved it is absolute monetary value. Finding withdrawn. Labeled "Max drawdown (absolute)".
+- **Migration isolation failure (B1)** — `test_backtest_models_are_registered_for_alembic_metadata` failed when run in isolation because `Base.metadata.tables` was empty. Fixed by adding explicit model imports to the test.
+- **Wall-clock event timestamps** — Initial replay used `datetime.now(timezone.utc)` for event timestamps. Fixed to propagate `SimulationClock` time through the event chain.
+- **Dataset identity missing from SQLAlchemy persistence path** — `SqlAlchemyBacktestRepository.finalize_run` omitted the `dataset_id` column from its UPDATE statement. Fixed.
+- **Bounded terminal-failure fallback** — If `_finalize` persistence fails, the service catches the error, attempts to persist FAILED status with the error message, and re-raises.
+- **CORS wildcard-with-credentials** — Fixed to env-configured explicit origin list.
+- **UTC datetime-local handling** — Fixed by appending `"Z"` suffix to force UTC interpretation, with `aria-describedby` hint text.
+- **Post-rounding stop geometry guard** — After conservative rounding, a rounded stop at entry is possible (zero distance). Added guard that rejects `invalid_stop` if rounded distance isn't positive.
+
+### Preserved from earlier sessions (still relevant)
+
+- Event payload lockstep — adding fields requires simultaneous test update (solved with parametrized EVENT_TYPES).
+- Mode filtering gap in risk position conflict — reservation keys now scoped by mode (backtest vs paper).
+- Stale Feature 04 contracts resolved (instrument: str, strength: float, candle_id, mutation).
+- Documentation drift root cause addressed with explicit ownership boundaries.
 
 ## Eureka moments
 
-- Choosing explicit stop sources over ATR eliminates indicator state, warm-up latency, and candle-sync complexity from the risk gate — the risk engine stays purely configuration-driven and deterministic.
-- Conservative tick/step rounding on both stop distance and quantity means the risk engine is always pessimistic about how much risk it's taking, which is the correct safety posture.
-- The `RiskContextProvider` protocol (callable or `RiskContext`-returning awaitable) decouples the risk engine from any DB/broker dependency without needing abstract base classes or dependency injection frameworks.
-- Documentation drift was the root cause of most architectural ambiguity — explicit ownership boundaries prevent entire classes of implementation errors.
+- **Explicit stop sources over ATR** eliminates indicator state, warm-up latency, and candle-sync complexity from the risk gate — fully configuration-driven and deterministic.
+- **Conservative tick/step rounding** on both stop distance and quantity means the risk engine is always pessimistic — correct safety posture.
+- **`RiskContextProvider` protocol** decouples risk engine from any DB/broker dependency without abstract base classes or DI frameworks.
+- **Shared contract reuse** (StrategyEngine/RiskEngine/ExecutionEngine/PaperBroker) in backtesting proves the architecture works — the same event-driven pipeline runs in both modes.
+- **`formatPercentRatio` as string-only operation** avoids float precision issues entirely — moves decimal point with regex/string manipulation, not arithmetic.
 
 ## Current state
 
-- Feature 06 Risk Engine is **complete and reviewed** — 294 tests, Ruff clean, Feature 06 mypy clean, 98% coverage, final review PASS. Branch `feature/06-risk-engine` has uncommitted implementation files.
-- Context documentation reconciliation is complete and verified; `main` contains Feature 04 + reconciliation (locally ahead of `origin/main`).
-- Docker Compose is stopped; PostgreSQL volume preserved.
-- All dispatch files present with Feature 06 records in PLAN.md, TASKS.md, DECISIONS.md, EXPLORATION.md, REVIEW.md, COMPLETED.md, MODEL-LOG.md.
-- Next implementation slice: **Feature 07 — Execution Layer** (Phase 6), then Feature 05 (Backtesting).
+- **Feature 05 Backtesting** is **complete and reviewed** — 371 tests, Ruff clean, backtest mypy 0 errors, coverage 90%, tsc/ESLint/build PASS.
+- **Feature 06 Risk Engine** is **complete and reviewed** — previously delivered on branch `feature/06-risk-engine`.
+- **Design-system reconciliation** is **complete and reviewed** — token projections verified, all backtests components migrated, all 10 architecture conflicts resolved/deferred, quality gates pass. Final review: PASS 🟢.
+- **Feature 07 Execution Layer** is **complete and reviewed** — execution contracts, persistence, paper broker, reconciliation, net exposure coordinator.
+- **Three accepted environment limitations**: PostgreSQL/Docker integration testing deferred (daemon unavailable), no frontend test runner (infrastructure gap), 14 pre-existing unrelated test mypy errors.
+- All changes currently uncommitted on the `feature/05-backtesting` branch. Dispatch files have been reset to empty templates.
 
 ## Next session starts with
 
-1. Restore memory and confirm this state.
-2. Commit and push the Feature 06 implementation on `feature/06-risk-engine` (or merge to `main`).
-3. Read Feature 07 (Execution Layer) acceptance criteria — `context/features/07-execution-layer.md`.
-4. Feature 07 requires: Order, Fill, Position, Trade domain models; migration 007; repository protocols; Broker interface; PaperBroker; execution events; paper-trade pipeline. Plan the implementation order (data models first, then broker, then execution engine).
+1. Commit and push all work on `feature/05-backtesting` (or merge to `main`).
+2. Read Feature 08 (Live Data Streaming) acceptance criteria — `context/features/08-live-data-streaming.md`.
+3. Feature 08 requires: WebSocket data feed integration, live candle assembly, CandleClosed emission from live data, feed health monitoring.
 
 ## Open questions
 
-- Exact Feature 05/07 replay mechanism for supplying warm-up candles while preserving deterministic timing.
-- Whether to push local `main` to remote before beginning Feature 07.
-- No remaining Feature 06 open questions — all edge cases from the initial exploration (ATR dependency, direction-conflict policy, CLOSE handling, bot_id filtering) were decided and implemented.
-
----
-
-## Session: Feature 06 Risk Engine — 2026-08-04
-
-This session completed Feature 06 Risk Engine per the approved no-ATR blueprint.
-
-### What was done
-
-- Revised the ARCHITECTURE.md blueprint to incorporate the approved no-ATR stop policy and take-profit boundary.
-- Implemented RiskApproved/RiskRejected event payloads in `backend/core/events.py` and extended RiskConfig in `backend/config.py`.
-- Implemented the pure Risk Engine evaluator in `backend/risk/engine.py` — RiskContext, position sizing, stop resolution, constraint validation, conservative rounding, reservation tracking, CLOSE approval, direction-conflict rejection, fail-closed handler.
-- Implemented the EventBus adapter and complete test suite in `tests/test_risk_engine.py` (38 tests).
-- First review (GPT-5.6 Luna): **needs-retry** — 7 Important findings (coverage gaps, mode filtering, type suppressions).
-- Fix loop resolved all 7 findings: added missing rejection-path tests, fixed mode filtering in position conflict, removed `# type: ignore` from fixtures.
-- Re-review (GPT-5.6 Luna): **PASS** — 0 Critical, 0 Important, 3 Minor cosmetic observations.
-
-### Review summary
-
-| Review cycle | Model | Outcome |
-|---|---|---|
-| Initial Feature 06 review | GPT-5.6 Luna | needs-retry (7 Important findings) |
-| Post-fix re-review | GPT-5.6 Luna | success — PASS |
-
-### Key outcomes
-
-- The no-ATR stop design was validated through implementation and review — no indicator state or warm-up needed for the risk gate.
-- Every rejection path has a direct test (25 `_Reject` paths all covered).
-- Conservative rounding direction is confirmed safe for both BUY and SELL.
-- Risk engine is broker-agnostic, DB-independent, and ready to feed RiskApproved events to Feature 07.
-
-### Files created or modified
-
-**Created:**
-- `backend/risk/engine.py` — RiskEngine, RiskContext, PositionInfo, PositionStatus, RiskContextProvider
-- `backend/risk/__init__.py` — public exports
-- `tests/test_risk_engine.py` — 38 tests covering all rejection paths and lifecycle
-
-**Modified:**
-- `backend/core/events.py` — RiskApproved/RiskRejected payload fields
-- `backend/config.py` — RiskConfig extended with stop/tp/constraint fields
-- `config/default.yaml` — full risk section
-- `tests/test_events.py` — updated EVENT_TYPES assertions
-- `tests/test_config.py` — extended RiskConfig validation tests
+- Whether to push local `main` to remote before beginning Feature 08.
+- Topnav 57px provenance — human confirmation needed on whether `dashboard-topnav.png` represents a 57px bar, a 56px bar plus 1px border, or capture framing. Until confirmed, 56px remains canonical.

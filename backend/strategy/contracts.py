@@ -81,10 +81,11 @@ def _freeze_json(value: JsonValue) -> FrozenJsonValue:
 
 @dataclass(frozen=True, slots=True)
 class DataRequirement:
-    """A strategy's single data series requirement."""
+    """A strategy's single data series and deterministic warm-up requirement."""
 
     data_type: DataType
     timeframe: str
+    warmup_candles: int = 0
 
     def __post_init__(self) -> None:
         if not isinstance(self.data_type, DataType):
@@ -95,6 +96,10 @@ class DataRequirement:
             raise ValueError("timeframe must contain a numeric interval")
         if not self.timeframe[-1].isalpha():
             raise ValueError("timeframe must end with a time unit")
+        if isinstance(self.warmup_candles, bool):
+            raise TypeError("warmup_candles must be an integer")
+        if not isinstance(self.warmup_candles, int) or self.warmup_candles < 0:
+            raise ValueError("warmup_candles must be a non-negative integer")
 
 
 def _validate_metadata(metadata: dict[str, Any]) -> _FrozenJsonDict:

@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from backend.backtester.models import BacktestRun, BacktestTrade
     from backend.core.account_mode import AccountMode
     from backend.data.models import Candle as CandleDomain
     from backend.execution.models import Fill, Order, Position, Trade
@@ -99,6 +100,9 @@ class InstrumentRepository(Protocol):
         supplied fields and sensible defaults for precision/constraints.
         """
 
+    async def get(self, instrument_id: UUID) -> InstrumentRecord | None:
+        """Return a persisted instrument by its UUID."""
+
     async def upsert(
         self,
         *,
@@ -139,6 +143,43 @@ class CandleRepository(Protocol):
         Uses ``ON CONFLICT DO NOTHING`` — existing rows are retained unchanged.
         Returns the number of rows that were **inserted**, not the batch size.
         """
+
+    async def get_candles(
+        self,
+        instrument_id: UUID,
+        timeframe: str,
+        start: datetime,
+        end: datetime,
+        price_basis: str = "trade",
+    ) -> list[CandleDomain]:
+        """Return complete candles in the inclusive UTC window, chronologically."""
+
+
+class BacktestRepository(Protocol):
+    """Durable boundary for isolated backtest result projections."""
+
+    async def create_run(self, run: BacktestRun) -> BacktestRun:
+        """Create a run, returning the existing record for a repeated ID."""
+
+    async def update_run(self, run: BacktestRun) -> BacktestRun | None:
+        """Update a run's lifecycle, progress, and terminal result fields."""
+
+    async def get_run(self, run_id: UUID) -> BacktestRun | None:
+        """Return one run, if it exists."""
+
+    async def list_runs(self) -> list[BacktestRun]:
+        """Return runs in deterministic created-at/UUID order."""
+
+    async def save_trade(self, trade: BacktestTrade) -> BacktestTrade:
+        """Persist a trade, returning the existing record for a repeated ID."""
+
+    async def get_trades(self, run_id: UUID) -> list[BacktestTrade]:
+        """Return trades in deterministic entry-time/UUID order."""
+
+    async def finalize_run(
+        self, run: BacktestRun, trades: list[BacktestTrade]
+    ) -> BacktestRun:
+        """Persist a completed run and its projections atomically where supported."""
 
 
 class ExecutionRepository(Protocol):

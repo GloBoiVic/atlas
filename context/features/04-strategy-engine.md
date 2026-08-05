@@ -52,6 +52,7 @@ provenance. Strategies never construct `Signal` objects themselves.
 class DataRequirement:
     data_type: DataType        # CANDLE, TICK, etc.
     timeframe: str             # "1m", "5m", "1h" — validated against bot config
+    warmup_candles: int = 0    # deterministic historical prefix consumed before replay
 
 class Strategy(ABC):
     def __init__(self, config: dict):
@@ -72,6 +73,10 @@ class Strategy(ABC):
         Feature 04 supports one candle requirement only."""
         return DataRequirement(data_type=DataType.CANDLE, timeframe="1m")
 ```
+
+`warmup_candles` is part of the validated strategy/data contract. Backtests use this
+declared count rather than an optional strategy attribute, and warm-up evaluation never emits
+trading signals.
 
 ### Signal Model
 

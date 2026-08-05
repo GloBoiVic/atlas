@@ -6,3 +6,98 @@ export const api = axios.create({
     "Content-Type": "application/json",
   },
 });
+
+export type BacktestStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export interface BacktestResult {
+  total_return: string;
+  total_pnl: string;
+  starting_equity: string;
+  ending_equity: string;
+  max_drawdown: string | null;
+  win_rate: number | null;
+  sharpe_ratio: number | null;
+  profit_factor: number | null;
+  trade_count: number;
+  winning_trade_count: number;
+  losing_trade_count: number;
+}
+
+export interface BacktestRun {
+  id: string;
+  strategy_name: string;
+  strategy_version: string;
+  strategy_commit_sha: string;
+  strategy_parameters: Record<string, unknown>;
+  instrument_id: string;
+  symbol: string;
+  timeframe: string;
+  data_source: string;
+  dataset_id: string;
+  start_date: string;
+  end_date: string;
+  risk_config: Record<string, unknown>;
+  execution_config: Record<string, unknown>;
+  fill_model: string;
+  status: BacktestStatus;
+  created_at: string;
+  result: BacktestResult | null;
+  error_message: string | null;
+  last_processed_timestamp: string | null;
+  completed_at: string | null;
+}
+
+export interface BacktestTrade {
+  id: string;
+  backtest_run_id: string;
+  instrument_id: string;
+  symbol: string;
+  direction: string;
+  entry_price: string;
+  exit_price: string | null;
+  quantity: string;
+  pnl: string | null;
+  entry_time: string;
+  exit_time: string | null;
+  signal_metadata: Record<string, unknown>;
+}
+
+export interface BacktestCreateRequest {
+  instrument_id: string;
+  account_id: string;
+  strategy_version_id: string;
+  timeframe: string;
+  start_date: string;
+  end_date: string;
+  strategy_parameters: Record<string, unknown>;
+  risk_config: Record<string, unknown>;
+  execution_config: Record<string, unknown>;
+  initial_balance: string;
+}
+
+export async function listBacktests(): Promise<BacktestRun[]> {
+  const response = await api.get<BacktestRun[]>('/backtests');
+  return response.data;
+}
+
+export async function getBacktest(id: string): Promise<BacktestRun> {
+  const response = await api.get<BacktestRun>(`/backtests/${id}`);
+  return response.data;
+}
+
+export async function getBacktestTrades(id: string): Promise<BacktestTrade[]> {
+  const response = await api.get<BacktestTrade[]>(`/backtests/${id}/trades`);
+  return response.data;
+}
+
+export async function createBacktest(
+  request: BacktestCreateRequest,
+): Promise<BacktestRun> {
+  const response = await api.post<BacktestRun>('/backtests', request);
+  return response.data;
+}
