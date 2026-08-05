@@ -14,7 +14,6 @@ from backend.core.events import (
     CircuitBreakerOpen,
     ConnectionLost,
     ConnectionRestored,
-    DataFeedError,
     DomainEvent,
     EventBus,
     EventFailure,
@@ -84,7 +83,6 @@ def _make_tick_received(**kwargs: object) -> TickReceived:
 # Event types that remain metadata-only (their payloads belong to later slices).
 EVENT_TYPES: tuple[type[DomainEvent], ...] = (
     ApiError,
-    DataFeedError,
     ConnectionLost,
     ConnectionRestored,
     CircuitBreakerOpen,

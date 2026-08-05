@@ -12,6 +12,7 @@ from backend.core.account_mode import AccountMode
 
 if TYPE_CHECKING:
     from backend.data.models import Candle as CandleModel
+    from backend.data.models import MarketContext
     from backend.data.models import Tick as TickModel
     from backend.execution.models import Fill, Order, Position, Trade
     from backend.strategy.contracts import Signal
@@ -103,7 +104,13 @@ class ApiError(DomainEvent):
 
 @dataclass(frozen=True, slots=True)
 class DataFeedError(DomainEvent):
-    pass
+    instrument_id: UUID = field(kw_only=True)
+    error: str = field(kw_only=True)
+
+
+@dataclass(frozen=True, slots=True)
+class MarketContextUpdated(DomainEvent):
+    context: "MarketContext" = field(kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)

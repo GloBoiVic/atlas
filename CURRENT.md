@@ -1,5 +1,18 @@
 # Current Feature
 
+## Feature 08 — Task 1 contracts and deterministic parsers — in progress (2026-08-05)
+
+- [x] Created `feature/08-live-data-streaming` from current `main`.
+- [x] Added USDⓈ-M Futures provider identity and typed non-secret public-stream configuration.
+- [x] Added keyword-only `DataFeedError`, provider-neutral `MarketContext`, and
+      `MarketContextUpdated` foundations.
+- [x] Added exact Decimal/UTC parsers and validation tests for Binance `@kline`, `@aggTrade`,
+      `@bookTicker`, and `@markPrice@1s` payloads.
+- [ ] WebSocket loops, reconnection, feed runner, aggregation, PaperBroker integration,
+      bot pipeline, API, frontend, and registry remain deferred to later Feature 08 tasks.
+
+Last updated: 2026-08-05
+
 ## Frontend standalone asset serving fix — complete (2026-08-04)
 
 - [x] Corrected the runner image layout so standalone `server.js` runs at `/app` and serves

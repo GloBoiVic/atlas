@@ -6,7 +6,7 @@ and ``datetime`` (UTC) for timestamps.  ``Candle`` is provider-domain only — i
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -71,6 +71,47 @@ class Tick:
     price: Decimal
     base_volume: Decimal | None = None
     tick_volume: int | None = None  # OANDA price-update count
+
+
+@dataclass(frozen=True, slots=True)
+class MarketContext:
+    """Provider-neutral, executable bid/ask plus non-executable futures context."""
+
+    instrument_id: UUID
+    provider: str
+    bid: Decimal
+    ask: Decimal
+    mark_price: Decimal
+    index_price: Decimal
+    funding_rate: Decimal
+    next_funding_time: datetime
+    as_of: datetime
+    bid_at: datetime
+    ask_at: datetime
+    mark_at: datetime
+    index_at: datetime
+    funding_at: datetime
+
+    def __post_init__(self) -> None:
+        timestamps = (
+            self.as_of,
+            self.bid_at,
+            self.ask_at,
+            self.mark_at,
+            self.index_at,
+            self.funding_at,
+        )
+        if any(
+            timestamp.tzinfo is None or timestamp.utcoffset() != timedelta(0)
+            for timestamp in timestamps
+        ):
+            raise ValueError("market context timestamps must be UTC")
+        if self.bid <= 0 or self.ask <= 0 or self.mark_price <= 0 or self.index_price <= 0:
+            raise ValueError("market context prices must be positive")
+        if self.bid > self.ask:
+            raise ValueError("market context bid must not exceed ask")
+        if not self.funding_rate.is_finite():
+            raise ValueError("market context funding rate must be finite")
 
 
 @dataclass(frozen=True, slots=True)

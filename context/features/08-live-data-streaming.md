@@ -2,8 +2,9 @@
 
 ## Description
 
-Real-time market data feeds for live trading and paper trading. The live feed owns
-CandleClosed event emission — only completed, deduplicated candles produce events.
+Real-time Binance USDⓈ-M Futures market data feeds for live trading and paper trading.
+The live feed owns CandleClosed event emission — only completed, deduplicated candles
+produce events.
 
 **Completed-candle authority:** The Binance `k.x` flag is the authoritative signal for
 candle completion. Incomplete candles are never emitted as `CandleClosed`.
@@ -19,21 +20,32 @@ interval are logged and surfaced via `DataFeedError`.
 
 ## Deliverables
 
-- [ ] Binance Spot streaming: WebSocket connection for live klines and trades
+- [x] USDⓈ-M Futures provider identity, non-secret stream configuration, typed feed errors,
+      provider-neutral market context contracts, and deterministic Binance parsers (Task 1)
+- [ ] Binance USDⓈ-M Futures streaming: WebSocket connection for live klines and trades
 - [ ] CandleClosed emission: Only completed candles produce events (Binance `k.x` flag)
 - [ ] TickReceived emission: Real-time trade stream
 - [ ] Data feed management: Reconnection, subscription deduplication, health monitoring
 - [ ] Live data integration: Live data feeds into strategy engine via EventBus
 
-OANDA streaming is deferred. The provider interface remains broker-agnostic.
+Binance Spot live streaming, OANDA streaming, and COIN-M Futures are deferred. The provider
+interface remains broker-agnostic.
 
 ### Event Payload Status
 
 `CandleClosed` and `TickReceived` already carry typed, keyword-only payloads
 (`candle: Candle` and `tick: Tick`, both `field(kw_only=True)`) in
-`backend/core/events.py`. The `DataFeedError` payload remains owned by this feature and
+`backend/core/events.py`. The `DataFeedError` payload is owned by this feature and
 must follow the same `kw_only=True` convention when implemented, carrying
 `instrument_id: UUID` and `error: str`.
+
+### Task 1 completion
+
+Task 1 establishes `binance_usdm` identity and the public `fstream` endpoint configuration.
+The parsers normalize Binance millisecond timestamps to UTC and numeric strings to exact
+`Decimal` values. They validate positive prices, non-negative quantities, OHLC bounds, and
+crossed books. Kline parsing preserves `k.x` as `Candle.is_complete`; transport gating and
+event publication remain in later tasks. No credentials are accepted or required.
 
 ## Technical Details
 

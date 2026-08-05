@@ -1,4 +1,15 @@
 from backend.data.binance_provider import BinanceHistoricalProvider, BinanceTimeoutPolicy
+from backend.data.binance_usdm import (
+    BINANCE_USDM_FSTREAM_BASE_URL,
+    BINANCE_USDM_PROVIDER,
+    BinanceUsdMStreamingConfig,
+    BookTicker,
+    MarkPriceUpdate,
+    parse_binance_usdm_agg_trade,
+    parse_binance_usdm_book_ticker,
+    parse_binance_usdm_kline,
+    parse_binance_usdm_mark_price,
+)
 from backend.data.csv_provider import CSVDataProvider
 from backend.data.interfaces import HistoricalDataProvider, LiveDataProvider
 from backend.data.loader import (
@@ -11,6 +22,7 @@ from backend.data.models import (
     DatasetIdentity,
     HistoricalLoadResult,
     Instrument,
+    MarketContext,
     Tick,
 )
 from backend.data.registry import (
@@ -25,6 +37,10 @@ __all__ = [
     "Candle",
     "BinanceHistoricalProvider",
     "BinanceTimeoutPolicy",
+    "BINANCE_USDM_FSTREAM_BASE_URL",
+    "BINANCE_USDM_PROVIDER",
+    "BinanceUsdMStreamingConfig",
+    "BookTicker",
     "CSVDataProvider",
     "DatasetIdentity",
     "HistoricalDataProvider",
@@ -32,12 +48,18 @@ __all__ = [
     "HistoricalLoadResult",
     "load_historical_data",
     "Instrument",
+    "MarketContext",
     "LiveDataProvider",
     "Tick",
+    "MarkPriceUpdate",
     "build_dataset_identity",
     "build_historical_provider_registry",
     "create_historical_provider_registry",
     "DuplicateHistoricalProviderError",
     "HistoricalProviderRegistry",
     "UnknownHistoricalProviderError",
+    "parse_binance_usdm_agg_trade",
+    "parse_binance_usdm_book_ticker",
+    "parse_binance_usdm_kline",
+    "parse_binance_usdm_mark_price",
 ]
