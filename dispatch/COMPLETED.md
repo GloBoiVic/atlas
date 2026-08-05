@@ -56,6 +56,27 @@
   full suite 411 passed with one pre-existing frontend Dockerfile assertion failure.
 - Commits: `ba6e465`, `9ddbcf4`; task review: PASS after fixes, no remaining findings.
 
+## Feature 08 — Task 6 live-provider registry and docs gate — 2026-08-05
+
+- Added separate broker-agnostic `LiveProviderRegistry` with side-effect-free
+  `binance_usdm` factory registration, duplicate/unknown errors, and fresh isolated
+  provider instances; historical Spot registry remained unchanged.
+- Reconciled Feature 08 docs with USDⓈ-M Futures, current public/market stream routes,
+  optional market-context capability, acceptance state, and Feature 09/12 boundaries.
+- Validation: focused 14 tests, Ruff clean, changed-slice mypy clean; full suite 419
+  passed with one pre-existing frontend Dockerfile assertion failure.
+- Commit: `72fc542`; task review: PASS with no findings.
+
+## Feature 08 — Final validation and review — 2026-08-05
+
+- Whole-branch review covered all nine implementation/fix commits from `493fc1a`
+  through `72fc542`.
+- Final gate: **PASS** with zero Critical/Important findings and one cosmetic
+  formatting observation.
+- Validation: 419 backend tests passed; one pre-existing frontend Dockerfile
+  assertion failure; Ruff lint and mypy passed.
+- Feature 08 is ready to merge into `main`.
+
 ## Feature 08 — Task 6 live provider registry and documentation gate — 2026-08-05
 
 - Added a separate factory-based `LiveProviderRegistry` with deterministic duplicate and
