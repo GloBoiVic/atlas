@@ -225,3 +225,19 @@ def _non_negative_int(value: object, name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise ValueError(f"{name} must be a non-negative integer")
     return value
+
+
+from backend.data.binance_usdm_stream import BinanceUsdMStreamingProvider  # noqa: E402
+
+__all__ = [
+    "BINANCE_USDM_FSTREAM_BASE_URL",
+    "BINANCE_USDM_PROVIDER",
+    "BinanceUsdMStreamingConfig",
+    "BinanceUsdMStreamingProvider",
+    "BookTicker",
+    "MarkPriceUpdate",
+    "parse_binance_usdm_agg_trade",
+    "parse_binance_usdm_book_ticker",
+    "parse_binance_usdm_kline",
+    "parse_binance_usdm_mark_price",
+]

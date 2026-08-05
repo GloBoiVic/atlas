@@ -47,6 +47,14 @@ The parsers normalize Binance millisecond timestamps to UTC and numeric strings 
 crossed books. Kline parsing preserves `k.x` as `Candle.is_complete`; transport gating and
 event publication remain in later tasks. No credentials are accepted or required.
 
+### Task 2 completion
+
+The USDⓈ-M provider now opens injectable raw `fstream` sessions for klines, aggregate trades,
+book tickers, and mark-price updates. Logical subscriptions are provider-local and release their
+keys on generator exit or cancellation. Klines are yielded only after `k.x` completion and use
+the mandated composite candle key for deduplication across the minimal reconnect session seam.
+EventBus publication, context aggregation, and bounded retry policy remain deferred.
+
 ## Technical Details
 
 ### Binance Streaming

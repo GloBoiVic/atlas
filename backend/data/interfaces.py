@@ -38,7 +38,7 @@ class LiveDataProvider(ABC):
     """
 
     @abstractmethod
-    async def subscribe_candles(
+    def subscribe_candles(
         self,
         instrument: Instrument,
         timeframe: str,
@@ -46,7 +46,7 @@ class LiveDataProvider(ABC):
         """Yield completed candles as they stream in."""
 
     @abstractmethod
-    async def subscribe_ticks(
+    def subscribe_ticks(
         self,
         instrument: Instrument,
     ) -> AsyncGenerator[Tick, None]:

@@ -1,6 +1,6 @@
 # Current Feature
 
-## Feature 08 — Task 1 contracts and deterministic parsers — in progress (2026-08-05)
+## Feature 08 — Task 2 fstream subscriptions — complete (2026-08-05)
 
 - [x] Created `feature/08-live-data-streaming` from current `main`.
 - [x] Added USDⓈ-M Futures provider identity and typed non-secret public-stream configuration.
@@ -8,8 +8,10 @@
       `MarketContextUpdated` foundations.
 - [x] Added exact Decimal/UTC parsers and validation tests for Binance `@kline`, `@aggTrade`,
       `@bookTicker`, and `@markPrice@1s` payloads.
-- [ ] WebSocket loops, reconnection, feed runner, aggregation, PaperBroker integration,
-      bot pipeline, API, frontend, and registry remain deferred to later Feature 08 tasks.
+- [x] Added injectable fstream sessions, logical subscription cleanup, completion gating, and
+      reconnect-preserving completed-candle deduplication.
+- [ ] Retry policy, context aggregation, feed runner, PaperBroker integration, bot pipeline,
+      API, frontend, and registry remain deferred to later Feature 08 tasks.
 
 Last updated: 2026-08-05
 
