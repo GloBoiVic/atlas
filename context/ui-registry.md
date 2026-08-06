@@ -98,3 +98,29 @@ Last updated: 2026-08-05
 P&L. Signal and market context use a native disclosure panel so detail does not overwhelm the
 scan path. Notes are the only editable field; saves are explicit, pending, and notified with
 Sonner. Mobile rows stack while desktop preserves a scan-friendly data grid.
+
+### Analytics page, metric grid, and equity curve
+
+Files: `frontend/src/app/analytics/analytics-view.tsx`, `frontend/src/app/analytics/loading.tsx`,
+`frontend/src/app/analytics/error.tsx`
+Last updated: 2026-08-05
+
+| Property         | Class |
+| ---------------- | ----- |
+| Background       | `bg-atlas-bg`, `bg-atlas-surface`, `bg-atlas-bg-elevated` |
+| Border           | `border border-atlas-border` |
+| Border radius    | `rounded-atlas`, `rounded-atlas-md` |
+| Text — primary   | `text-atlas-fg` |
+| Text — secondary | `text-atlas-fg-secondary` |
+| Spacing          | `p-atlas-5 sm:p-atlas-6`, `gap-atlas-4`, `gap-atlas-5`, `mt-atlas-6` |
+| Typography       | `text-atlas-3xl`, `text-atlas-xl`, `text-atlas-lg`, `text-atlas-md`, `text-atlas-xs`, `font-atlas-semibold`, `font-atlas-mono` |
+| Hover/focus      | `hover:bg-atlas-bg-elevated`, `focus:ring-2 focus:ring-atlas-accent/30` |
+| Shadow           | none |
+| Accent usage     | `text-atlas-accent`, `bg-atlas-accent`, semantic positive/negative tokens |
+
+**Pattern notes:** Analytics preserves API Decimal strings for monetary values and total return;
+only the chart's controlled SVG display boundary converts equity values for coordinates. Undefined
+Sharpe and profit factor states use explicit “Not defined” copy with the reason, never zero or
+infinity. Date-time controls are interpreted as UTC before query serialization. The equity curve
+uses the API-provided closed-trade series and includes a visually hidden data table for accessible
+point-by-point reading.

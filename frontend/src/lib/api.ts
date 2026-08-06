@@ -150,3 +150,37 @@ export async function updateJournalNotes(
   const response = await api.patch<JournalEntry>(`/journal/${id}/notes`, request);
   return response.data;
 }
+
+export interface EquityPoint {
+  timestamp: string;
+  equity: string;
+  net_pnl: string;
+  trade_id: string | null;
+}
+
+export interface AnalyticsResponse {
+  total_return: string;
+  total_pnl: string;
+  starting_equity: string;
+  ending_equity: string;
+  win_rate: number;
+  closed_trade_daily_sharpe: number | null;
+  max_drawdown: string;
+  profit_factor: number | null;
+  total_trades: number;
+  winning_trades: number;
+  losing_trades: number;
+  equity_curve: EquityPoint[];
+}
+
+export interface AnalyticsFilters {
+  start_date?: string;
+  end_date?: string;
+}
+
+export async function getAnalytics(
+  filters: AnalyticsFilters = {},
+): Promise<AnalyticsResponse> {
+  const response = await api.get<AnalyticsResponse>('/analytics', { params: filters });
+  return response.data;
+}

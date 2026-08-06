@@ -1,5 +1,46 @@
 # Current Feature
 
+## Feature 10 Task 6 — page-level Analytics UI (complete, 2026-08-05)
+
+- [x] Add `/analytics` page, API client types/function, UTC date filters, explicit metric states,
+      and accessible API-provided closed-trade equity curve.
+- [x] Reuse Atlas UI patterns, update the registry through imprint, and keep Feature 11 shell
+      integration out of scope.
+- [x] Run frontend lint, typecheck, and production build.
+
+Last updated: 2026-08-05
+
+## Feature 10 Task 4 — Journal/Analytics API layer (complete, 2026-08-05)
+
+- [x] Add schemas, routes, dependency factories, registration, and API coverage.
+- [x] Run focused tests, Ruff, changed-slice mypy, and commit the implementation.
+
+Last updated: 2026-08-05
+
+## Feature 10 Task 3 — canonical analytics metrics and service (complete, 2026-08-05)
+
+- [x] Add pure immutable canonical metrics and closed-trade equity curve contracts.
+- [x] Add execution-repository closed-trade reads with inclusive UTC exit-time filtering.
+- [x] Add analytics service with explicit starting-equity input and focused coverage.
+- [x] Run final validation and commit the implementation.
+
+Last updated: 2026-08-05
+
+## Feature 10 Task 2 — TradeClosed journal projection (complete, 2026-08-05)
+
+- [x] Add the idempotent TradeClosed journal projection service and focused tests.
+- [x] Run focused tests, Ruff, and changed-slice mypy.
+
+Last updated: 2026-08-05
+
+## Feature 10 Task 1 — persistence/domain contracts and repository parity (complete, 2026-08-05)
+
+- [x] Add journal migration, ORM/domain contracts, and repository implementations.
+- [x] Add focused migration, precision, validation, filtering, idempotency, notes, and parity tests.
+- [x] Run focused tests, Ruff, changed-slice mypy, and commit the implementation.
+
+Last updated: 2026-08-05
+
 ## Feature 09 Phase 8 — Tier 2 review fixes — complete (2026-08-05)
 
 - [x] Reconstructed paper balance on restore from durable fill fees/realized P&L and funding,
