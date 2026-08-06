@@ -1,5 +1,18 @@
 # Current Feature
 
+## Feature 10 — post-review environment validation (complete, 2026-08-05)
+
+- [x] PostgreSQL migration 010 upgraded, downgraded to 009, and upgraded again successfully
+      against Docker Desktop PostgreSQL.
+- [x] Corrected the stale standalone Dockerfile test; focused test and full backend suite pass.
+- [x] Built the frontend Docker image successfully; `/journal` and `/analytics` compile.
+- [ ] Frontend test runner remains unconfigured and is deferred as infrastructure work.
+
+Validation: 453 backend tests passed; frontend Docker build, lint, typecheck, and production build
+passed. Docker-backed migration execution is now verified.
+
+Last updated: 2026-08-05
+
 ## Feature 10 Task 6 — page-level Analytics UI (complete, 2026-08-05)
 
 - [x] Add `/analytics` page, API client types/function, UTC date filters, explicit metric states,

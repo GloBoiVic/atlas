@@ -1,5 +1,102 @@
 # Completed Work
 
+## Docker API build recovery — 2026-08-06
+
+- Reproduced the persistent `binutils-x86-64-linux-gnu` Hash Sum mismatch in the API image build.
+- Switched Debian apt sources to HTTPS and added apt retries in `Dockerfile.api`.
+- Commit: `5a609a1`; `docker compose build --no-cache api` now succeeds.
+- Recreated the API container, applied migration 010, and verified `GET /health` and `GET /journal`.
+- Frontend container serves `/journal` and `/analytics` with HTTP 200; analytics correctly displays
+  its configured-scope error until an account scope is wired.
+
+## Feature 10 — environment validation follow-up — 2026-08-05
+
+- Docker Desktop PostgreSQL was started and migration 010 successfully upgraded, downgraded to
+  009, and upgraded again.
+- Corrected `tests/test_frontend_dockerfile.py` to assert the current standalone runtime layout;
+  commit `072602e`.
+- Validation: focused Dockerfile test passed, full backend suite passed with 453 tests, and the
+  frontend Docker image built successfully with `/journal` and `/analytics` routes.
+- The frontend test runner remains unconfigured; adding one is separate infrastructure work, not
+  a Feature 10 blocker.
+
+## Feature 10 — Final validation and review — 2026-08-05
+
+- Final whole-branch review passed plan alignment, system integrity, and production-readiness
+  gates; all six slices and Feature 10 acceptance criteria are complete.
+- Cleanup commit `f99aec0` removed dead repository code and added ORM `updated_at` onupdate
+  behavior; `context/database.md` now matches the selected `NUMERIC(28,12)` journal precision.
+- Final validation: 452 backend tests passed, Ruff and mypy passed, frontend lint/typecheck/build
+  passed. PostgreSQL migration execution remains unavailable without Docker; frontend test runner
+  remains unconfigured; one unrelated pre-existing frontend Dockerfile assertion remains.
+- Final review: PASS. Feature 10 is ready to merge.
+
+## Feature 10 — Task 6 Analytics page UI — 2026-08-05
+
+- Added page-level `/analytics` UI with server-provided metric cards, explicit undefined states,
+  UTC-safe date filters, loading/empty/error states, accessible SVG equity curve plus data table,
+  API client types/functions, and Atlas UI registry imprint.
+- Fixed empty date filters to omit query parameters instead of serializing `undefined`; also
+  aligned shared date formatting and input transitions.
+- Commits: `ffda7ac`, `40f6a86`.
+- Validation: frontend lint, typecheck, and production build passed; no frontend test runner is
+  configured.
+- Review: PASS after fix; no Critical or Important findings remain.
+
+## Feature 10 — Task 5 Journal page UI — 2026-08-05
+
+- Added page-level `/journal` UI with responsive accessible entries, loading/empty/error states,
+  signal and market-context disclosure, notes editing through PATCH, API client functions, and
+  Atlas UI registry imprint.
+- Fixed zero-P&L display to remain neutral using string-safe Decimal handling.
+- Commits: `39ad47d`, `9366a3e`.
+- Validation: frontend lint, typecheck, and production build passed; no frontend test runner is
+  configured.
+- Review: PASS after fix; no Critical or Important findings remain.
+
+## Feature 10 — Task 4 Journal/Analytics API — 2026-08-05
+
+- Added journal list/detail/notes routes and analytics route with typed schemas, Decimal-safe
+  serialization, UTC/UUID/date validation, dependency wiring, fail-closed analytics scope, and
+  focused API regression tests.
+- Commit: `641026d`.
+- Validation: 452 backend tests passed; Ruff and changed-slice mypy passed; one pre-existing
+  frontend Dockerfile failure remains.
+- Review: PASS with non-blocking Minor observations around helper duplication and edge coverage.
+
+## Feature 10 — Task 3 canonical analytics metrics/service — 2026-08-05
+
+- Added authoritative closed-Trade analytics service and deterministic Decimal-safe metrics for
+  P&L, total return, win rate, closed-trade daily Sharpe, max drawdown, profit factor, and
+  closed-trade equity curves, with account/date filtering and explicit undefined behavior.
+- Extended execution repository protocols and implementations with closed-trade reads.
+- Commit: `63ae59e`.
+- Validation: 446 backend tests passed; Ruff and changed-slice mypy passed; one pre-existing
+  frontend Dockerfile failure remains.
+- Review: PASS with five non-blocking Minor observations.
+
+## Feature 10 — Task 2 TradeClosed journal projection — 2026-08-05
+
+- Added idempotent `TradeClosed` journal projection with complete trade/context mapping,
+  strategy-version and instrument-name resolution, deep-copied metadata snapshots, and
+  subscription cleanup/fail-closed behavior.
+- Extracted the shared strategy-version repository protocol without changing Trade semantics.
+- Commit: `0c1f89b`.
+- Validation: 437 backend tests passed; Ruff and changed-slice mypy passed; one pre-existing
+  frontend Dockerfile failure remains.
+- Review: PASS with no Critical or Important findings.
+
+## Feature 10 — Task 1 persistence/domain contracts — 2026-08-05
+
+- Added migration 010, JournalEntry ORM/domain contracts, repository protocol, SQLAlchemy and
+  in-memory implementations, idempotent `trade_id` handling, filtering, notes updates, and
+  focused parity/validation tests.
+- Commit: `695a93a`.
+- Validation: 432 tests passed; Ruff and changed-slice mypy passed; PostgreSQL migration execution
+  was unavailable.
+- Review: PASS with two non-blocking Minor findings: unused `_row()` helper and missing ORM
+  `updated_at` `onupdate` declaration.
+
 ## Feature 09 — USDⓈ-M Futures alignment and Phase 8 paper trading — 2026-08-05
 
 - Reconciled live-data, paper-trading, and future testnet context to Binance USDⓈ-M Futures;

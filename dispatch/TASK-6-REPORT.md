@@ -45,3 +45,18 @@ Complete. The implementation is committed on `feature/10-journal-analytics`.
 - `frontend/src/app/analytics/error.tsx`
 - `frontend/src/lib/api.ts`
 - `context/ui-registry.md`
+
+## Reviewer-required fix — 2026-08-05
+
+- Built the `AnalyticsFilters` object conditionally before `getAnalytics()`. Empty date inputs
+  now produce an empty filter object, so Axios cannot serialize `start_date=undefined` or
+  `end_date=undefined`.
+- Preserved UTC parsing, ISO serialization, and existing range validation.
+- Applied the safe minor consistency fixes: Atlas input transition utilities, removal of the dead
+  decimal identity formatter, and reuse of the shared UTC date formatter.
+
+### Fix validation
+
+- `npm run lint` — pass
+- `npm run typecheck` — pass
+- `npm run build` — pass
