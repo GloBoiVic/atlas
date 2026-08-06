@@ -2,7 +2,10 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/*.sources /etc/apt/sources.list 2>/dev/null || true && \
+    sed -i 's|http://security.debian.org|https://security.debian.org|g' /etc/apt/sources.list.d/*.sources /etc/apt/sources.list 2>/dev/null || true && \
+    apt-get update -o Acquire::Retries=3 && \
+    apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
