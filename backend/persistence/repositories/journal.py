@@ -48,32 +48,6 @@ def _domain(row: JournalEntryModel) -> JournalEntry:
     )
 
 
-def _row(entry: JournalEntry) -> JournalEntryModel:
-    return JournalEntryModel(
-        id=entry.id,
-        account_id=entry.account_id,
-        bot_id=entry.bot_id,
-        strategy_version_id=entry.strategy_version_id,
-        trade_id=entry.trade_id,
-        instrument_id=entry.instrument_id,
-        symbol=entry.symbol,
-        direction=entry.direction.value,
-        entry_price=entry.entry_price,
-        exit_price=entry.exit_price,
-        quantity=entry.quantity,
-        pnl=entry.pnl,
-        strategy_name=entry.strategy_name,
-        signal=entry.signal,
-        market_conditions=entry.market_conditions,
-        notes=entry.notes,
-        risk_metadata=entry.risk_metadata,
-        opened_at=entry.opened_at,
-        closed_at=entry.closed_at,
-        created_at=entry.created_at,
-        updated_at=entry.updated_at,
-    )
-
-
 class SqlAlchemyJournalRepository:
     """Journal repository with operation-owned async sessions."""
 
