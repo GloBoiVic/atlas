@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import TYPE_CHECKING, Protocol
 from uuid import UUID, uuid4
 
@@ -10,10 +11,22 @@ if TYPE_CHECKING:
 
     from backend.backtester.models import BacktestRun, BacktestTrade
     from backend.core.account_mode import AccountMode
+    from backend.dashboard.models import (
+        AccountRead,
+        BotRead,
+        PositionRead,
+        StrategyRead,
+        StrategyVersionRead,
+        TradeRead,
+    )
     from backend.data.models import Candle as CandleDomain
     from backend.execution.models import Fill, Order, Position, Trade
     from backend.execution.paper_broker import FundingAdjustment
     from backend.journal.models import JournalEntry
+
+
+class BotIdentityConflictError(RuntimeError):
+    """A bot configuration identity is already owned by another bot."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +62,12 @@ class BotRecord:
     last_error: str | None
     started_at: datetime | None
     stopped_at: datetime | None
+    strategy_version_id: UUID | None = None
+    config: Mapping[str, object] = field(default_factory=dict)
+    config_identity: Mapping[str, object] = field(default_factory=dict)
+    pnl: Decimal = Decimal("0")
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +105,20 @@ class BotRepository(Protocol):
 
     async def persist_lifecycle(self, bot_id: UUID, state: LifecycleUpdate) -> BotRecord | None:
         """Persist lifecycle state and return the resulting bot."""
+
+    async def create(self, bot: BotRecord) -> BotRecord:
+        """Persist a newly stopped bot."""
+
+    async def list(
+        self, *, account_id: UUID | None = None, mode: str | None = None
+    ) -> list[BotRecord]:
+        """List bots constrained by the supplied account/mode scope."""
+
+    async def update_configuration(self, bot_id: UUID, bot: BotRecord) -> BotRecord | None:
+        """Persist configuration changes without changing lifecycle state."""
+
+    async def get_account_mode(self, account_id: UUID) -> str | None:
+        """Return the persisted mode for an account."""
 
 
 class ReconciliationRepository(Protocol):
@@ -195,9 +228,7 @@ class BacktestRepository(Protocol):
     async def get_trades(self, run_id: UUID) -> list[BacktestTrade]:
         """Return trades in deterministic entry-time/UUID order."""
 
-    async def finalize_run(
-        self, run: BacktestRun, trades: list[BacktestTrade]
-    ) -> BacktestRun:
+    async def finalize_run(self, run: BacktestRun, trades: list[BacktestTrade]) -> BacktestRun:
         """Persist a completed run and its projections atomically where supported."""
 
 
@@ -220,9 +251,7 @@ class ExecutionRepository(Protocol):
     async def get_order_by_broker_id(self, broker_order_id: str) -> Order | None:
         """Load the durable order for a broker order id."""
 
-    async def get_non_terminal_orders(
-        self, *, account_id: UUID, mode: AccountMode
-    ) -> list[Order]:
+    async def get_non_terminal_orders(self, *, account_id: UUID, mode: AccountMode) -> list[Order]:
         """Return durable orders which still require broker reconciliation."""
 
     async def get_orders(self, *, account_id: UUID, mode: AccountMode) -> list[Order]:
@@ -270,6 +299,26 @@ class ExecutionRepository(Protocol):
         end: datetime,
     ) -> list[Trade]:
         """Return completed trades whose UTC exit time is within the inclusive window."""
+
+
+class DashboardReadRepository(Protocol):
+    """Read-only, account/mode-scoped dashboard persistence boundary."""
+
+    async def get_account(self, account_id: UUID) -> AccountRead | None: ...
+
+    async def list_positions(
+        self, *, account_id: UUID, mode: AccountMode
+    ) -> list[PositionRead]: ...
+
+    async def list_bots(self, *, account_id: UUID, mode: AccountMode) -> list[BotRead]: ...
+
+    async def list_trades(
+        self, *, account_id: UUID, mode: AccountMode, limit: int | None
+    ) -> list[TradeRead]: ...
+
+    async def list_strategies(self) -> list[StrategyRead]: ...
+
+    async def list_strategy_versions(self, strategy_id: UUID) -> list[StrategyVersionRead]: ...
 
 
 class JournalRepository(Protocol):

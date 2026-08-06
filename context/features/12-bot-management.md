@@ -16,15 +16,16 @@ The MVP runs a single worker process. `BotSupervisor` uses in-process per-bot lo
 
 ## Deliverables
 
-- [ ] Bot model: Bot(strategy, broker, status, instrument, timeframe)
-- [ ] Bot pins a strategy repository, commit SHA, account, and execution mode
-- [ ] Bot lifecycle: Start, stop, pause, resume
+- [x] Bot model: Bot(strategy, broker, status, instrument, timeframe)
+- [x] Bot pins a strategy repository, commit SHA, account, and execution mode
+- [x] Bot lifecycle: Start, stop, pause, resume
 - [ ] BotSupervisor: Owns one isolated pipeline per bot
 - [ ] Bot status: Real-time status updates
 - [ ] Startup restoration and broker reconciliation
-- [ ] Bot API endpoints: POST /bots, GET /bots, POST /bots/{id}/stop
-- [ ] Bot UI: Start/stop buttons, status indicators
-- [ ] Confirmation dialogs: Destructive actions require confirmation
+- [x] Bot API endpoints: POST /bots, GET /bots, GET /bots/{id}, PATCH /bots/{id}, and
+      idempotent start/stop/pause/resume commands
+- [x] Bot UI: Start/stop/pause/resume controls, status indicators, and configuration forms
+- [x] Confirmation dialogs: Destructive/trading-affecting actions require confirmation
 
 ## Technical Details
 
@@ -47,6 +48,24 @@ implement a second supervisor:
 Bot configuration migration (schema changes across strategy versions) is deferred. The MVP
 requires explicit stop/recreate to adopt a new strategy version or configuration. No
 automated migration of running bot state across configuration changes exists.
+
+### Create idempotency and duplicate semantics
+
+`POST /bots` is idempotent by the canonical stopped-bot configuration identity:
+`(account_id, mode, name, strategy_version_id, broker, instrument, timeframe, config_identity)`.
+`config_identity` is a separate internal JSON projection: strings remain strings, while every
+JSON number or Decimal is encoded as the reserved `{"__atlas_numeric__": "<canonical Decimal>"}`
+object. This preserves runtime config types and Decimal precision while making `1`, `1.0`, and
+Decimal `"1.00"` equivalent without conflating an intentional string value. A repeated valid
+request with the same identity returns the existing bot and does not create another UUID. The
+identity includes account and mode, so it cannot collapse bots across scopes. Changing any
+identity component creates a new stopped record. The database constraint is authoritative for
+concurrent requests; memory repositories implement the same equality semantics.
+
+Migration 012 fails before creating its constraint if pre-existing duplicate bot identities are
+detected, with an actionable operator error. It never deletes or silently changes trading records.
+Migration 013 adds the canonical identity column; legacy rows remain nullable so migration does
+not invent identities for historical configuration.
 
 ### Bot Model
 

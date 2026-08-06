@@ -19,6 +19,8 @@ class BotSnapshot:
     desired_status: str
     status: str
     last_error: str | None = None
+    strategy_version_id: UUID | None = None
+    config: Mapping[str, object] = field(default_factory=dict)
 
 
 class ReconciliationStatus(StrEnum):

@@ -1,11 +1,12 @@
 "use client";
 
-import { FormEvent, ReactElement, useMemo, useState } from "react";
+import { FormEvent, ReactElement, useState } from "react";
 import axios from "axios";
 import { AlertCircle, BarChart3, Loader2, RefreshCw, SearchX } from "lucide-react";
 
 import { AnalyticsFilters, AnalyticsResponse, getAnalytics } from "@/lib/api";
 import { formatDate, formatPercentRatio } from "@/lib/backtests-format";
+import { EquityCurveChart } from "@/components/charts/equity-curve-chart";
 
 const panelClass = "rounded-atlas-md border border-atlas-border bg-atlas-surface";
 const inputClass =
@@ -31,30 +32,7 @@ function Metric({ label, value, detail, tone }: { label: string; value: string; 
 }
 
 function EquityCurve({ analytics }: { analytics: AnalyticsResponse }): ReactElement {
-  const points = useMemo(() => analytics.equity_curve.map((point) => ({
-    ...point,
-    numericEquity: Number(point.equity),
-  })).filter((point) => Number.isFinite(point.numericEquity)), [analytics.equity_curve]);
-  const chart = useMemo(() => {
-    if (points.length < 2) return null;
-    const values = points.map((point) => point.numericEquity);
-    const min = Math.min(...values);
-    const max = Math.max(...values);
-    const range = max - min || 1;
-    const coordinates = points.map((point, index) => ({
-      ...point,
-      x: (index / (points.length - 1)) * 100,
-      y: 92 - ((point.numericEquity - min) / range) * 78,
-    }));
-    return {
-      coordinates,
-      min: points[values.indexOf(min)]?.equity ?? String(min),
-      max: points[values.indexOf(max)]?.equity ?? String(max),
-      polyline: coordinates.map((point) => `${point.x},${point.y}`).join(" "),
-    };
-  }, [points]);
-
-  if (!chart) {
+  if (analytics.equity_curve.length < 2) {
     return (
       <div className="flex min-h-56 flex-col items-center justify-center px-atlas-5 py-atlas-8 text-center">
         <SearchX className="size-7 text-atlas-fg-secondary" aria-hidden="true" />
@@ -66,17 +44,11 @@ function EquityCurve({ analytics }: { analytics: AnalyticsResponse }): ReactElem
 
   return (
     <div className="p-atlas-4 sm:p-atlas-6">
-      <div className="flex items-center justify-between text-atlas-xs text-atlas-fg-secondary"><span>{chart.max}</span><span>Closed-trade equity · UTC</span></div>
-      <svg viewBox="0 0 100 100" className="mt-atlas-3 h-64 w-full overflow-visible" role="img" aria-labelledby="equity-curve-title equity-curve-description" preserveAspectRatio="none">
-        <title id="equity-curve-title">Closed-trade equity curve</title>
-        <desc id="equity-curve-description">Equity changes from the API-provided closed-trade series. Values are not recalculated in the browser.</desc>
-        <line x1="0" y1="92" x2="100" y2="92" stroke="currentColor" className="text-atlas-border" strokeWidth="0.5" />
-        <polyline points={chart.polyline} fill="none" stroke="currentColor" className="text-atlas-accent" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
-        {chart.coordinates.map((point) => <circle key={`${point.timestamp}-${point.trade_id ?? "baseline"}`} cx={point.x} cy={point.y} r="1.4" className="fill-atlas-accent"><title>{formatDate(point.timestamp)} · {point.equity}</title></circle>)}
-      </svg>
-      <div className="flex items-center justify-between text-atlas-xs text-atlas-fg-secondary"><span>{chart.min}</span><span>{points.length} points</span></div>
+      <div className="flex items-center justify-between text-atlas-xs text-atlas-fg-secondary"><span>API-provided equity</span><span>UTC</span></div>
+      <div className="mt-atlas-3 overflow-hidden rounded-atlas border border-atlas-border"><EquityCurveChart points={analytics.equity_curve} /></div>
+      <div className="mt-atlas-3 text-right text-atlas-xs text-atlas-fg-secondary">{analytics.equity_curve.length} API-provided points</div>
       <div className="sr-only" aria-label="Equity curve data table">
-        <table><caption>API-provided closed-trade equity points</caption><thead><tr><th scope="col">UTC time</th><th scope="col">Equity</th></tr></thead><tbody>{points.map((point) => <tr key={`table-${point.timestamp}-${point.trade_id ?? "baseline"}`}><td>{formatDate(point.timestamp)}</td><td>{point.equity}</td></tr>)}</tbody></table>
+        <table><caption>API-provided closed-trade equity points</caption><thead><tr><th scope="col">UTC time</th><th scope="col">Equity</th></tr></thead><tbody>{analytics.equity_curve.map((point) => <tr key={`table-${point.timestamp}-${point.trade_id ?? "baseline"}`}><td>{formatDate(point.timestamp)}</td><td>{point.equity}</td></tr>)}</tbody></table>
       </div>
     </div>
   );

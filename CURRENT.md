@@ -1,5 +1,162 @@
 # Current Feature
 
+## Feature 11 Slice 6 — Remaining Operational Pages and Charts (complete, 2026-08-06)
+
+- [x] Implement the REST-polled `/trades` read-only history surface with typed API strings and
+      explicit UTC/freshness states.
+- [x] Keep `/settings` truthful against supported backend contracts; report the missing settings
+      API as deferred rather than inventing editable configuration.
+- [x] Add a cleaned-up Lightweight Charts equity wrapper for the API-provided analytics series;
+      do not add a candlestick surface without a corresponding candle API.
+- [x] Preserve existing operational routes and document validation gaps.
+
+Branch: `feature/11-slice-6-operational-pages`
+
+Validation: frontend lint, typecheck, and production build passed. Route smoke checks returned HTTP
+200 for all canonical routes. The frontend test runner remains unavailable. No backend settings or
+candlestick REST contracts exist, so those surfaces were truthfully deferred. `/imprint` is not an
+installed executable in this environment; the registry was updated with the imprint pattern capture.
+
+Last updated: 2026-08-06
+
+## Feature 11/12 Slice 5 review fixes — complete, 2026-08-06
+
+- [x] Removed unsafe bot-mode assertions from the operational view and bot form.
+- [x] Added a runtime-supported-mode guard; unknown/production modes fail closed without
+      paper/testnet controls or lifecycle commands.
+
+Validation: frontend typecheck, lint, and production build passed. No frontend test runner exists.
+No WebSocket, mock data, backend, or `/dispatch/` changes were added.
+
+## Feature 11/12 Slice 5 — Bot Management UI (complete, 2026-08-06)
+
+- [x] Implement truthful `/strategies`, `/paper`, and `/testnet` REST-polled operational views.
+- [x] Add supported paper/testnet bot create/edit configuration, preserving account/mode and
+      strategy-version identity.
+- [x] Add confirmed start, pause, resume, and stop mutations with TanStack invalidation/refetch,
+      observed/desired transitional states, UTC refresh timestamps, and Sonner outcomes.
+- [x] Update UI registry through imprint-equivalent component pattern capture.
+
+Validation: frontend typecheck, lint, and production build passed. Frontend automated test runner
+remains unavailable. Route smoke checks and manual browser interaction checks were not available in
+this environment; this slice did not modify backend or `/dispatch/` files.
+
+Last updated: 2026-08-06
+
+## Feature 12 runtime-facing Slice 4 — Bot Management Backend (complete, 2026-08-05)
+
+- [x] Implement persisted BotService composition and typed CRUD/lifecycle REST contracts.
+- [x] Keep BotSupervisor authoritative for every lifecycle transition and gate execution on
+      reconciliation, strategy identity, broker state, and feed safety.
+- [x] Add focused safety/isolation/persistence/transport tests and run backend validation gates.
+
+Branch: `feature/12-bot-management-backend`
+
+Validation: focused bot tests 4 passed; full backend pytest 470 passed; Ruff clean. Docker API
+image built; PostgreSQL migration 011 upgraded, downgraded, and upgraded successfully. Changed-slice
+mypy is unavailable on the host and the Docker run used an image built before the final Decimal
+annotation fix; rerun after rebuilding if strict type-gate evidence is required.
+
+Review fix: identical `POST /bots` configuration identities now return the existing persisted bot
+through repository-owned duplicate handling; migration 012 adds the matching database uniqueness
+constraint. Focused bot tests: 6 passed; full backend pytest: 472 passed; Docker migration 012
+upgrade/downgrade/upgrade and changed-slice mypy passed.
+
+Latest review fixes: numeric/Decimal values now use a separate tagged canonical identity projection
+without changing runtime config types or precision; numeric `1`, `1.0`, and Decimal `1.00` share
+identity while textual `"1"` remains distinct. Migration 012 now fails closed with an actionable
+error when legacy duplicate identities exist, and migration 013 adds the nullable identity column
+without inventing or deleting historical records. Focused bot tests: 8 passed; full backend pytest:
+474 passed; Ruff and changed-slice Docker mypy passed. PostgreSQL verified clean migration 012/013
+upgrade path and duplicate-preflight failure path.
+
+Idempotency re-review fix: repository updates now preflight the canonical identity in both
+implementations and translate only the named SQL uniqueness violation into `BotConflict`; unrelated
+SQLAlchemy integrity failures still propagate. Focused bot/SQL repository tests: 16 passed; full
+backend pytest: 477 passed; Ruff and changed-slice Docker mypy passed. No context documentation
+change was required.
+
+Tier 3 re-review (2026-08-06): 0 Critical, 1 Important, 1 Minor findings. All prior Critical/Important
+findings resolved. Numeric canonicalization verified deterministic and precision-safe; `__atlas_numeric__`
+encoding correctly separates text from numeric values; runtime config and identity projection stored in
+separate columns without cross-contamination. Migration ordering (011→012→013) correct; preflight
+duplicate check verified fail-safe/actionable/non-destructive. Concurrent create idempotency verified
+safe via PostgreSQL UNIQUE constraint atomicity. No lifecycle/trading data mutated or deleted. New
+Important finding: `update_bot` can trigger unhandled `IntegrityError` on identity collision (recommend
+pre-check or catch in repository). New Minor finding: memory `update_configuration` has parity gap
+with SQLAlchemy on identity conflict detection. See dispatch/REVIEW.md for full report.
+
+Safety assumptions: API accepts paper/testnet only; account mode must match bot mode; trusted
+strategy-version identity and deployed registry resolution are required; supervisor remains the
+sole lifecycle owner; reconciliation and pipeline safety failures remain persisted as error and
+are returned as HTTP 503; default API runtime is fail-closed and cannot submit orders.
+
+Last updated: 2026-08-05
+
+## Feature 11 — Option 1 WebSocket reconciliation (complete, 2026-08-05)
+
+- [x] Keep REST polling as the authoritative Feature 11 MVP live mechanism.
+- [x] Gate Slice 4a route registration and EventBus projection behind the explicit,
+      non-default `ENABLE_DEFERRED_OPERATIONAL_WEBSOCKET` setting.
+- [x] Prove default app behavior does not register `/ws/operational`; retain protocol unit tests
+      only through explicit deferred opt-in.
+
+The default API/Docker deployment has no operational WebSocket route and no client activation. The
+deferred foundation remains intentionally non-production: API and worker EventBus instances are
+separate, the default authenticator rejects every connection, and Cloudflare Access auth/proxy
+wiring is not implemented. Future activation additionally requires a cross-process bridge, unique
+state-envelope IDs, send timeout/backpressure handling, and deployment auth tests.
+
+Validation: focused reconciliation/config tests 22 passed; full backend pytest 466 passed; full
+Ruff passed; `docker compose config --quiet` and default app route inspection passed. Changed-slice
+mypy could not run because `mypy` is not installed in this environment. Starlette emitted one
+existing httpx compatibility warning.
+
+Last updated: 2026-08-05
+
+## Feature 11 Slice 3 — Dashboard REST View (complete, 2026-08-05)
+
+- [x] Replace the dashboard placeholder with a typed, read-only operational REST view.
+- [x] Display API-provided account/equity/P&L, positions, bots, recent trades, health/freshness,
+      strategy inventory, and analytics/equity information.
+- [x] Add truthful loading, empty, error, unavailable, stale, and REST polling states without
+      browser-side financial calculations or WebSocket behavior.
+- [x] Update the UI registry through imprint for dashboard panel patterns.
+- [x] Run frontend lint, typecheck, production build, and route smoke validation.
+
+Validation: `npm run lint`, `npm run typecheck`, and `npm run build` passed. Frontend automated
+test runner remains unconfigured. Dashboard route smoke passed against the production server.
+Backend/Docker integration was not rerun; Slice 2 recorded PostgreSQL/Docker availability limits.
+
+Last updated: 2026-08-05
+
+## Feature 11 Slice 2 — Backend Read Models (complete, 2026-08-05)
+
+- [x] Add typed, scoped dashboard read contracts and repository/service composition.
+- [x] Wire deployment-configured AnalyticsScope without inventing equity.
+- [x] Add focused backend coverage and run the required validation gates.
+
+Branch: `feature/11-backend-read-models`
+
+Validation: focused dashboard/API tests 15 passed; full backend pytest 457 passed; changed-scope
+Ruff and mypy passed. PostgreSQL/Docker-backed endpoint execution was not available in this run.
+
+Last updated: 2026-08-05
+
+## Feature 11 Slice 1 — Shell Foundation (complete, 2026-08-05)
+
+- [x] Add persistent App Router shell and canonical route navigation.
+- [x] Add TanStack Query provider and reusable shell status/boundary primitives.
+- [x] Preserve existing Backtests, Journal, and Analytics behavior.
+- [x] Run frontend lint, typecheck, production build, and focused route checks.
+
+Branch: `feature/11-shell-foundation`
+
+Validation: frontend lint, typecheck, and production build pass. Route smoke checks pass for all
+9 canonical routes and active navigation state.
+
+Last updated: 2026-08-05
+
 ## Feature 10 — post-review environment validation (complete, 2026-08-05)
 
 - [x] PostgreSQL migration 010 upgraded, downgraded to 009, and upgraded again successfully

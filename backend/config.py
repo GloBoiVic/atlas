@@ -4,6 +4,7 @@ from decimal import Decimal
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal
+from uuid import UUID
 
 import structlog
 import yaml  # type: ignore[import-untyped]
@@ -46,6 +47,15 @@ class Settings(BaseSettings):
     API_HOST: str = "0.0.0.0"
     API_PORT: int = 8000
     API_CORS_ORIGINS: list[str] = ["http://localhost:3000"]
+
+    # Slice 4a is deferred infrastructure, not an MVP transport.  The route and its
+    # EventBus projection are absent unless a future, explicitly approved deployment
+    # opts in while also supplying the required bridge and authentication wiring.
+    ENABLE_DEFERRED_OPERATIONAL_WEBSOCKET: bool = False
+
+    # Dashboard/analytics scope is deployment configuration, never a fabricated default.
+    ANALYTICS_ACCOUNT_ID: UUID | None = None
+    ANALYTICS_STARTING_EQUITY: Decimal | None = Field(default=None, gt=0)
 
     @field_validator("API_CORS_ORIGINS")
     @classmethod

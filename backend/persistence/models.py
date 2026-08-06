@@ -81,6 +81,19 @@ class StrategyVersion(Base):
 
 class Bot(Base):
     __tablename__ = "bots"
+    __table_args__ = (
+        UniqueConstraint(
+            "account_id",
+            "mode",
+            "name",
+            "strategy_version_id",
+            "broker",
+            "instrument",
+            "timeframe",
+            "config_identity",
+            name="uq_bots_create_idempotency",
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -97,6 +110,10 @@ class Bot(Base):
     mode: Mapped[str] = mapped_column(String(20), nullable=False)
     instrument: Mapped[str] = mapped_column(String(50), nullable=False)
     timeframe: Mapped[str] = mapped_column(String(10), nullable=False)
+    config: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, default=dict)
+    config_identity: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB, nullable=True, default=dict
+    )
     desired_status: Mapped[str] = mapped_column(
         String(20), nullable=False, default="stopped"
     )

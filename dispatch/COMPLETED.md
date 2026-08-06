@@ -1,5 +1,24 @@
 # Completed Work
 
+## Feature 11 Operational UI + Feature 12 Bot Management — 2026-08-06
+
+- Delivered the Atlas shell, canonical navigation, Query provider, dashboard read models, REST-
+  polled dashboard, bot CRUD/lifecycle API and UI, trades page, truthful settings prerequisite,
+  and Lightweight Charts equity curve integration.
+- Added bot create idempotency with canonical numeric identity normalization, migration preflight
+  duplicate detection, and update identity-conflict handling with SQLAlchemy/in-memory parity.
+- Deliberately selected REST polling as the MVP live mechanism. The operational WebSocket foundation
+  is retained only behind a disabled-by-default, fail-closed gate pending cross-process EventBus
+  bridging, deployment auth/proxy wiring, unique state IDs, and send timeouts.
+- Preserved Decimal-string, UUID, UTC, account/mode/bot isolation, reconciliation fail-closed,
+  no-client-financial-calculation, and confirmation-dialog invariants.
+- Validation: 477 backend tests passed, Ruff passed, frontend lint/typecheck/build passed, route
+  smoke checks passed, Compose configuration and migration chain 010→013 verified. Frontend test
+  runner, full Docker/PostgreSQL startup, Cloudflare-authenticated checks, and browser visual tests
+  remain documented environment/infrastructure gaps.
+- Final whole-feature review: PASS with zero Critical or Important findings; eight Minor items are
+  cosmetic, optimization, or documentation follow-ups. Work remains uncommitted by request.
+
 ## Docker API build recovery — 2026-08-06
 
 - Reproduced the persistent `binutils-x86-64-linux-gnu` Hash Sum mismatch in the API image build.

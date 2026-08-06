@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -21,7 +22,10 @@ from backend.persistence.models import (
     Strategy,
     StrategyVersion,
 )
-from backend.persistence.repositories.protocols import ReconciliationRecord
+from backend.persistence.repositories.protocols import (
+    BotIdentityConflictError,
+    ReconciliationRecord,
+)
 from backend.persistence.repositories.sqlalchemy import (
     SqlAlchemySupervisorRepositories,
     _candle_insert_statement,
@@ -162,3 +166,17 @@ async def test_sqlite_get_restore_candidates_excludes_stopped(
 ) -> None:
     candidates = await sqlite_repository.get_restore_candidates()
     assert [c.id for c in candidates] == [_BOT_ID]
+
+
+@pytest.mark.asyncio
+async def test_sqlite_update_rejects_duplicate_bot_identity(
+    sqlite_repository: SqlAlchemySupervisorRepositories,
+) -> None:
+    first = await sqlite_repository.get(_BOT_ID)
+    assert first is not None
+    second = await sqlite_repository.create(
+        replace(first, id=UUID("00000000-0000-0000-0000-000000000002"), name="second")
+    )
+
+    with pytest.raises(BotIdentityConflictError):
+        await sqlite_repository.update_configuration(second.id, replace(second, name=first.name))

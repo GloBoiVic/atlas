@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
 from backend.persistence.repositories.candle_semantics import validate_candle_query
 from backend.persistence.repositories.protocols import (
+    BotIdentityConflictError,
     BotRecord,
     CandleRepository,
     InstrumentRecord,
@@ -32,10 +33,14 @@ class InMemorySupervisorRepositories:
         self,
         bots: list[BotRecord] | None = None,
         reconciliations: list[ReconciliationRecord] | None = None,
+        account_modes: dict[UUID, str] | None = None,
     ) -> None:
         self._bots = {bot.id: bot for bot in bots or []}
         self._reconciliations = {result.id: result for result in reconciliations or []}
         self._bot_lock = asyncio.Lock()
+        self._account_modes = dict(account_modes or {})
+        for bot in self._bots.values():
+            self._account_modes.setdefault(bot.account_id, bot.mode)
 
     async def get_restore_candidates(self) -> list[BotRecord]:
         async with self._bot_lock:
@@ -66,9 +71,69 @@ class InMemorySupervisorRepositories:
             last_error=state.last_error,
             started_at=state.started_at,
             stopped_at=state.stopped_at,
+            strategy_version_id=bot.strategy_version_id,
+            config=bot.config,
+            config_identity=bot.config_identity,
+            pnl=bot.pnl,
+            created_at=bot.created_at,
+            updated_at=bot.updated_at,
         )
         self._bots[bot_id] = updated
         return updated
+
+    async def create(self, bot: BotRecord) -> BotRecord:
+        async with self._bot_lock:
+            for existing in self._bots.values():
+                if (
+                    existing.account_id == bot.account_id
+                    and existing.mode == bot.mode
+                    and existing.name == bot.name
+                    and existing.strategy_version_id == bot.strategy_version_id
+                    and existing.broker == bot.broker
+                    and existing.instrument == bot.instrument
+                    and existing.timeframe == bot.timeframe
+                    and dict(existing.config_identity) == dict(bot.config_identity)
+                ):
+                    return existing
+            self._bots[bot.id] = bot
+            self._account_modes.setdefault(bot.account_id, bot.mode)
+            return bot
+
+    async def list(
+        self, *, account_id: UUID | None = None, mode: str | None = None
+    ) -> list[BotRecord]:
+        async with self._bot_lock:
+            return [
+                bot
+                for bot in self._bots.values()
+                if (account_id is None or bot.account_id == account_id)
+                and (mode is None or bot.mode == mode)
+            ]
+
+    async def update_configuration(self, bot_id: UUID, bot: BotRecord) -> BotRecord | None:
+        async with self._bot_lock:
+            if bot_id not in self._bots:
+                return None
+            for existing_id, existing in self._bots.items():
+                if existing_id == bot_id:
+                    continue
+                if (
+                    existing.account_id == bot.account_id
+                    and existing.mode == bot.mode
+                    and existing.name == bot.name
+                    and existing.strategy_version_id == bot.strategy_version_id
+                    and existing.broker == bot.broker
+                    and existing.instrument == bot.instrument
+                    and existing.timeframe == bot.timeframe
+                    and dict(existing.config_identity) == dict(bot.config_identity)
+                ):
+                    raise BotIdentityConflictError("bot configuration identity already exists")
+            self._bots[bot_id] = bot
+            return bot
+
+    async def get_account_mode(self, account_id: UUID) -> str | None:
+        async with self._bot_lock:
+            return self._account_modes.get(account_id)
 
     async def record(self, result: ReconciliationRecord) -> ReconciliationRecord:
         async with self._bot_lock:

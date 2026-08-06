@@ -1,21 +1,35 @@
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from backend.data.models import Candle as CandleDomain
-from backend.persistence.models import Bot, Candle, Instrument, ReconciliationRun
+from backend.persistence.models import Account, Bot, Candle, Instrument, ReconciliationRun
 from backend.persistence.repositories.candle_semantics import validate_candle_query
 from backend.persistence.repositories.protocols import (
+    BotIdentityConflictError,
     BotRecord,
     InstrumentRecord,
     LifecycleUpdate,
     ReconciliationRecord,
 )
+
+_BOT_IDENTITY_CONSTRAINT = "uq_bots_create_idempotency"
+
+
+def _is_bot_identity_conflict(error: IntegrityError) -> bool:
+    original = error.orig
+    diagnostic = getattr(original, "diag", None)
+    constraint_name = getattr(diagnostic, "constraint_name", None)
+    return constraint_name == _BOT_IDENTITY_CONSTRAINT or (
+        _BOT_IDENTITY_CONSTRAINT in str(original)
+    )
 
 
 def _reconciliation_insert_statement(
@@ -77,6 +91,12 @@ def _bot_record(bot: Bot) -> BotRecord:
         last_error=bot.last_error,
         started_at=bot.started_at,
         stopped_at=bot.stopped_at,
+        strategy_version_id=bot.strategy_version_id,
+        config=bot.config,
+        config_identity=bot.config_identity or {},
+        pnl=bot.pnl if bot.pnl is not None else Decimal("0"),
+        created_at=bot.created_at,
+        updated_at=bot.updated_at,
     )
 
 
@@ -171,6 +191,113 @@ class SqlAlchemySupervisorRepositories:
             bot.stopped_at = state.stopped_at
             await session.flush()
             return _bot_record(bot)
+
+    async def create(self, bot: BotRecord) -> BotRecord:
+        async with self._session_factory.begin() as session:
+            values = {
+                "id": bot.id,
+                "name": bot.name,
+                "strategy_version_id": bot.strategy_version_id,
+                "account_id": bot.account_id,
+                "broker": bot.broker,
+                "mode": bot.mode,
+                "instrument": bot.instrument,
+                "timeframe": bot.timeframe,
+                "desired_status": bot.desired_status,
+                "status": bot.status,
+                "config": dict(bot.config),
+                "config_identity": dict(bot.config_identity),
+                "pnl": bot.pnl,
+            }
+            dialect_name = session.get_bind().dialect.name
+            insert_statement = (
+                sqlite_insert(Bot) if dialect_name == "sqlite" else postgres_insert(Bot)
+            )
+            statement = insert_statement.values(values).on_conflict_do_nothing(
+                index_elements=[
+                    Bot.account_id,
+                    Bot.mode,
+                    Bot.name,
+                    Bot.strategy_version_id,
+                    Bot.broker,
+                    Bot.instrument,
+                    Bot.timeframe,
+                    Bot.config_identity,
+                ]
+            ).returning(Bot)
+            result = await session.execute(statement)
+            row = result.scalar_one_or_none()
+            if row is not None:
+                return _bot_record(row)
+            existing = await session.execute(
+                select(Bot).where(
+                    Bot.account_id == bot.account_id,
+                    Bot.mode == bot.mode,
+                    Bot.name == bot.name,
+                    Bot.strategy_version_id == bot.strategy_version_id,
+                    Bot.broker == bot.broker,
+                    Bot.instrument == bot.instrument,
+                    Bot.timeframe == bot.timeframe,
+                    Bot.config_identity == dict(bot.config_identity),
+                )
+            )
+            row = existing.scalar_one()
+            return _bot_record(row)
+
+    async def list(
+        self, *, account_id: UUID | None = None, mode: str | None = None
+    ) -> list[BotRecord]:
+        async with self._session_factory() as session:
+            statement = select(Bot).order_by(Bot.created_at, Bot.id)
+            if account_id is not None:
+                statement = statement.where(Bot.account_id == account_id)
+            if mode is not None:
+                statement = statement.where(Bot.mode == mode)
+            result = await session.execute(statement)
+            return [_bot_record(row) for row in result.scalars().all()]
+
+    async def update_configuration(self, bot_id: UUID, bot: BotRecord) -> BotRecord | None:
+        async with self._session_factory.begin() as session:
+            row = await session.get(Bot, bot_id)
+            if row is None:
+                return None
+            duplicate = await session.execute(
+                select(Bot.id).where(
+                    Bot.id != bot_id,
+                    Bot.account_id == bot.account_id,
+                    Bot.mode == bot.mode,
+                    Bot.name == bot.name,
+                    Bot.strategy_version_id == bot.strategy_version_id,
+                    Bot.broker == bot.broker,
+                    Bot.instrument == bot.instrument,
+                    Bot.timeframe == bot.timeframe,
+                    Bot.config_identity == dict(bot.config_identity),
+                )
+            )
+            if duplicate.scalar_one_or_none() is not None:
+                raise BotIdentityConflictError("bot configuration identity already exists")
+            row.name = bot.name
+            row.strategy_version_id = bot.strategy_version_id
+            row.broker = bot.broker
+            row.mode = bot.mode
+            row.instrument = bot.instrument
+            row.timeframe = bot.timeframe
+            row.config = dict(bot.config)
+            row.config_identity = dict(bot.config_identity)
+            try:
+                await session.flush()
+            except IntegrityError as error:
+                if not _is_bot_identity_conflict(error):
+                    raise
+                raise BotIdentityConflictError(
+                    "bot configuration identity already exists"
+                ) from error
+            return _bot_record(row)
+
+    async def get_account_mode(self, account_id: UUID) -> str | None:
+        async with self._session_factory() as session:
+            account = await session.get(Account, account_id)
+            return None if account is None else str(account.mode)
 
     async def record(self, result: ReconciliationRecord) -> ReconciliationRecord:
         async with self._session_factory.begin() as session:

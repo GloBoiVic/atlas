@@ -184,3 +184,198 @@ export async function getAnalytics(
   const response = await api.get<AnalyticsResponse>('/analytics', { params: filters });
   return response.data;
 }
+
+export interface AccountSummary {
+  account: {
+    id: string;
+    name: string;
+    broker: string;
+    mode: string;
+    updated_at: string;
+  };
+  starting_equity: string;
+  realized_pnl: string;
+  unrealized_pnl: string;
+  equity: string;
+  as_of: string;
+}
+
+export interface Position {
+  id: string;
+  account_id: string;
+  bot_id: string | null;
+  strategy_version_id: string | null;
+  instrument_id: string;
+  symbol: string;
+  mode: string;
+  side: string;
+  quantity: string;
+  entry_price: string;
+  current_price: string | null;
+  unrealized_pnl: string;
+  realized_pnl: string;
+  opened_at: string;
+}
+
+export interface Bot {
+  id: string;
+  account_id: string;
+  strategy_id: string | null;
+  strategy_version_id: string | null;
+  name: string;
+  broker: string;
+  /** Wire values remain open so an unexpected backend mode cannot become a UI control. */
+  mode: string;
+  instrument: string;
+  timeframe: string;
+  desired_status: string;
+  status: string;
+  pnl: string | null;
+  config?: Record<string, unknown>;
+  last_error: string | null;
+  started_at: string | null;
+  stopped_at: string | null;
+  updated_at: string;
+}
+
+export type BotMode = "paper" | "testnet";
+
+export function isSupportedBotMode(value: string): value is BotMode {
+  return value === "paper" || value === "testnet";
+}
+
+export interface Trade {
+  id: string;
+  account_id: string;
+  bot_id: string | null;
+  strategy_version_id: string | null;
+  instrument_id: string;
+  symbol: string;
+  mode: string;
+  direction: string;
+  entry_price: string;
+  exit_price: string | null;
+  quantity: string;
+  gross_pnl: string | null;
+  net_pnl: string | null;
+  total_fees: string;
+  status: string;
+  entry_time: string;
+  exit_time: string | null;
+}
+
+export interface Strategy {
+  id: string;
+  name: string;
+  version: string;
+  commit_sha: string;
+  parameters: Record<string, unknown>;
+  description: string | null;
+  created_at: string;
+  versions: Array<{
+    id: string;
+    strategy_id: string;
+    repository: string;
+    commit_sha: string;
+    parameters: Record<string, unknown>;
+    deployed_at: string;
+  }>;
+}
+
+export interface DashboardSummary {
+  account: AccountSummary;
+  positions: Position[];
+  bots: Bot[];
+  recent_trades: Trade[];
+}
+
+export interface HealthResponse {
+  status: string;
+}
+
+export async function getDashboardSummary(): Promise<DashboardSummary> {
+  const response = await api.get<DashboardSummary>("/dashboard", { params: { limit: 10 } });
+  return response.data;
+}
+
+export async function getAccountSummary(): Promise<AccountSummary> {
+  const response = await api.get<AccountSummary>("/account");
+  return response.data;
+}
+
+export async function listPositions(): Promise<Position[]> {
+  const response = await api.get<Position[]>("/positions");
+  return response.data;
+}
+
+export async function listBots(): Promise<Bot[]> {
+  const response = await api.get<Bot[]>("/bots");
+  return response.data;
+}
+
+export interface BotCreateRequest {
+  name: string;
+  strategy_version_id: string;
+  account_id: string;
+  broker: string;
+  mode: BotMode;
+  instrument: string;
+  timeframe: string;
+  config: Record<string, unknown>;
+}
+
+export interface BotUpdateRequest {
+  name?: string;
+  strategy_version_id?: string;
+  broker?: string;
+  mode?: BotMode;
+  instrument?: string;
+  timeframe?: string;
+  config?: Record<string, unknown>;
+}
+
+export async function listScopedBots(
+  accountId: string,
+  mode: BotMode,
+): Promise<Bot[]> {
+  const response = await api.get<Bot[]>("/bots", {
+    params: { account_id: accountId, mode },
+  });
+  return response.data;
+}
+
+export async function createBot(request: BotCreateRequest): Promise<Bot> {
+  const response = await api.post<Bot>("/bots", request);
+  return response.data;
+}
+
+export async function updateBot(id: string, request: BotUpdateRequest): Promise<Bot> {
+  const response = await api.patch<Bot>(`/bots/${id}`, request);
+  return response.data;
+}
+
+export type BotCommand = "start" | "pause" | "resume" | "stop";
+
+export async function commandBot(
+  id: string,
+  command: BotCommand,
+  scope: { account_id: string; mode: BotMode },
+): Promise<Bot> {
+  const response = await api.post<Bot>(`/bots/${id}/${command}`, scope);
+  return response.data;
+}
+
+export async function listTrades(limit = 20): Promise<Trade[]> {
+  const response = await api.get<Trade[]>("/trades", { params: { limit } });
+  return response.data;
+}
+
+export async function listStrategies(): Promise<Strategy[]> {
+  const response = await api.get<Strategy[]>("/strategies");
+  return response.data;
+}
+
+export async function getHealth(): Promise<HealthResponse> {
+  const response = await api.get<HealthResponse>("/health");
+  return response.data;
+}

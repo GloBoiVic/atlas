@@ -18,6 +18,14 @@ def test_default_environment_is_paper():
     assert settings.is_production is False
 
 
+def test_deferred_operational_websocket_is_disabled_by_default():
+    settings = Settings(
+        DATABASE_URL="sqlite+aiosqlite://",
+        DATABASE_URL_SYNC="sqlite://",
+    )
+    assert settings.ENABLE_DEFERRED_OPERATIONAL_WEBSOCKET is False
+
+
 def test_paper_mode_properties():
     settings = Settings(
         ATLAS_ENVIRONMENT="paper",

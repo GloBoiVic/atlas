@@ -205,6 +205,8 @@ class BotSupervisor:
                     desired_status="running",
                     status="starting",
                     last_error=bot_record.last_error,
+                    strategy_version_id=bot_record.strategy_version_id,
+                    config=bot_record.config,
                 )
                 await self._persist(
                     bot_id,
