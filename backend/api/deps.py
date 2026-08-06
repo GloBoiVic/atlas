@@ -1,5 +1,7 @@
 """FastAPI dependencies and application-service composition."""
 
+from dataclasses import dataclass
+from decimal import Decimal
 from typing import Annotated
 from uuid import UUID
 
@@ -7,10 +9,14 @@ from fastapi import Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from backend.analytics.service import AnalyticsService
 from backend.backtester.service import BacktestService, StrategyVersionRecord
+from backend.journal.service import JournalReadService
 from backend.persistence.database import async_session
 from backend.persistence.models import Strategy, StrategyVersion
 from backend.persistence.repositories.backtest import SqlAlchemyBacktestRepository
+from backend.persistence.repositories.execution import SqlAlchemyExecutionRepository
+from backend.persistence.repositories.journal import SqlAlchemyJournalRepository
 from backend.persistence.repositories.sqlalchemy import (
     SqlAlchemyCandleRepository,
     SqlAlchemyInstrumentRepository,
@@ -18,9 +24,33 @@ from backend.persistence.repositories.sqlalchemy import (
 from backend.strategy.registry import StrategyRegistry
 
 __all__ = [
+    "AnalyticsScope",
+    "AnalyticsScopeDep",
+    "AnalyticsServiceDep",
     "BacktestServiceDep",
+    "JournalReadServiceDep",
     "get_backtest_service",
+    "get_analytics_scope",
+    "get_analytics_service",
+    "get_journal_read_service",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class AnalyticsScope:
+    """Server-selected account and starting equity for canonical analytics."""
+
+    account_id: UUID
+    starting_equity: Decimal
+
+
+def get_analytics_scope() -> AnalyticsScope | None:
+    """Return configured analytics scope, when the deployment supplies one.
+
+    No account/equity source exists in the current MVP application configuration.  Returning
+    ``None`` keeps the endpoint fail-closed until an account-scoped provider is wired in.
+    """
+    return None
 
 
 class SqlAlchemyStrategyVersionRepository:
@@ -73,4 +103,15 @@ def get_backtest_service(
     )
 
 
+def get_journal_read_service() -> JournalReadService:
+    return JournalReadService(SqlAlchemyJournalRepository(async_session))
+
+
+def get_analytics_service() -> AnalyticsService:
+    return AnalyticsService(SqlAlchemyExecutionRepository(async_session))
+
+
 BacktestServiceDep = Annotated[BacktestService, Depends(get_backtest_service)]
+JournalReadServiceDep = Annotated[JournalReadService, Depends(get_journal_read_service)]
+AnalyticsServiceDep = Annotated[AnalyticsService, Depends(get_analytics_service)]
+AnalyticsScopeDep = Annotated[AnalyticsScope | None, Depends(get_analytics_scope)]

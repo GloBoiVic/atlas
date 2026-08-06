@@ -1,4 +1,4 @@
-"""Pydantic transport schemas for the backtest API."""
+"""Pydantic transport schemas for the REST API."""
 
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -8,7 +8,9 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from backend.analytics.metrics import EquityPoint, PerformanceMetrics
 from backend.backtester.models import BacktestConfig, BacktestRun, BacktestStatus
+from backend.journal.models import JournalEntry
 
 _FORBIDDEN_KEYS = {
     "import",
@@ -156,6 +158,114 @@ class BacktestTradeResponse(BaseModel):
     entry_time: datetime
     exit_time: datetime | None
     signal_metadata: dict[str, Any]
+
+
+class JournalEntryResponse(BaseModel):
+    """Enriched historical journal projection at the API boundary."""
+
+    id: UUID
+    account_id: UUID
+    trade_id: UUID
+    bot_id: UUID | None
+    strategy_version_id: UUID | None
+    instrument_id: UUID | None
+    symbol: str
+    direction: str
+    entry_price: str
+    exit_price: str | None
+    quantity: str
+    pnl: str | None
+    strategy_name: str
+    signal: dict[str, object]
+    market_conditions: dict[str, object]
+    notes: str | None
+    risk_metadata: dict[str, object]
+    opened_at: datetime
+    closed_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class JournalNotesUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    notes: str | None = Field(default=None, max_length=10_000)
+
+
+class EquityPointResponse(BaseModel):
+    timestamp: datetime
+    equity: str
+    net_pnl: str
+    trade_id: UUID | None
+
+
+class PerformanceMetricsResponse(BaseModel):
+    """Canonical analytics facts; the browser must not recalculate these values."""
+
+    total_return: str
+    total_pnl: str
+    starting_equity: str
+    ending_equity: str
+    win_rate: float
+    closed_trade_daily_sharpe: float | None
+    max_drawdown: str
+    profit_factor: float | None
+    total_trades: int
+    winning_trades: int
+    losing_trades: int
+    equity_curve: list[EquityPointResponse]
+
+
+def journal_entry_response(entry: JournalEntry) -> JournalEntryResponse:
+    return JournalEntryResponse(
+        id=entry.id,
+        account_id=entry.account_id,
+        trade_id=entry.trade_id,
+        bot_id=entry.bot_id,
+        strategy_version_id=entry.strategy_version_id,
+        instrument_id=entry.instrument_id,
+        symbol=entry.symbol,
+        direction=entry.direction.value,
+        entry_price=str(entry.entry_price),
+        exit_price=_decimal(entry.exit_price),
+        quantity=str(entry.quantity),
+        pnl=_decimal(entry.pnl),
+        strategy_name=entry.strategy_name,
+        signal=dict(entry.signal),
+        market_conditions=dict(entry.market_conditions),
+        notes=entry.notes,
+        risk_metadata=dict(entry.risk_metadata),
+        opened_at=entry.opened_at,
+        closed_at=entry.closed_at,
+        created_at=entry.created_at,
+        updated_at=entry.updated_at,
+    )
+
+
+def metrics_response(metrics: PerformanceMetrics) -> PerformanceMetricsResponse:
+    return PerformanceMetricsResponse(
+        total_return=str(metrics.total_return),
+        total_pnl=str(metrics.total_pnl),
+        starting_equity=str(metrics.starting_equity),
+        ending_equity=str(metrics.ending_equity),
+        win_rate=metrics.win_rate,
+        closed_trade_daily_sharpe=metrics.closed_trade_daily_sharpe,
+        max_drawdown=str(metrics.max_drawdown),
+        profit_factor=metrics.profit_factor,
+        total_trades=metrics.total_trades,
+        winning_trades=metrics.winning_trades,
+        losing_trades=metrics.losing_trades,
+        equity_curve=[equity_point_response(point) for point in metrics.equity_curve],
+    )
+
+
+def equity_point_response(point: EquityPoint) -> EquityPointResponse:
+    return EquityPointResponse(
+        timestamp=point.timestamp,
+        equity=str(point.equity),
+        net_pnl=str(point.net_pnl),
+        trade_id=point.trade_id,
+    )
 
 
 def _decimal(value: Decimal | None) -> str | None:

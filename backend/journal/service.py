@@ -1,7 +1,9 @@
 """Project completed execution trades into the historical journal."""
 
 from copy import deepcopy
+from datetime import datetime
 from typing import cast
+from uuid import UUID
 
 import structlog
 
@@ -15,6 +17,38 @@ from backend.persistence.repositories.protocols import (
 )
 
 logger = structlog.get_logger(__name__).bind(component="JournalService")
+
+
+class JournalEntryNotFound(LookupError):
+    """Raised when a requested journal entry does not exist."""
+
+
+class JournalReadService:
+    """Application boundary for journal reads and note updates."""
+
+    def __init__(self, repository: JournalRepository) -> None:
+        self._repository = repository
+
+    async def list_entries(
+        self,
+        *,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        bot_id: UUID | None = None,
+    ) -> list[JournalEntry]:
+        return await self._repository.list_entries(start=start, end=end, bot_id=bot_id)
+
+    async def get_entry(self, entry_id: UUID) -> JournalEntry:
+        entry = await self._repository.get(entry_id)
+        if entry is None:
+            raise JournalEntryNotFound("journal entry not found")
+        return entry
+
+    async def update_notes(self, entry_id: UUID, notes: str | None) -> JournalEntry:
+        entry = await self._repository.update_notes(entry_id, notes)
+        if entry is None:
+            raise JournalEntryNotFound("journal entry not found")
+        return entry
 
 
 class JournalService:
