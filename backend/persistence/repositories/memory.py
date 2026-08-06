@@ -457,6 +457,27 @@ class InMemoryExecutionRepository:
                 None,
             )
 
+    async def get_closed_trades(
+        self,
+        *,
+        account_id: UUID,
+        start: datetime,
+        end: datetime,
+    ) -> list[Trade]:
+        async with self._lock:
+            return sorted(
+                (
+                    trade
+                    for trade in self._trades.values()
+                    if trade.account_id == account_id
+                    and trade.status.value == "exited"
+                    and trade.exit_time is not None
+                    and start <= trade.exit_time <= end
+                    and trade.net_pnl is not None
+                ),
+                key=lambda trade: (trade.exit_time, trade.id),
+            )
+
     async def record(self, result: ReconciliationRecord) -> ReconciliationRecord:
         async with self._lock:
             self._reconciliations.setdefault(result.id, result)

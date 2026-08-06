@@ -1,5 +1,6 @@
 """SQLAlchemy implementation of the execution persistence boundary."""
 
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import select
@@ -425,3 +426,25 @@ class SqlAlchemyExecutionRepository:
             )
             row = result.scalar_one_or_none()
             return _trade(row) if row else None
+
+    async def get_closed_trades(
+        self,
+        *,
+        account_id: UUID,
+        start: datetime,
+        end: datetime,
+    ) -> list[Trade]:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(ExecutionTrade)
+                .where(
+                    ExecutionTrade.account_id == account_id,
+                    ExecutionTrade.status == TradeStatus.EXITED.value,
+                    ExecutionTrade.exit_time.is_not(None),
+                    ExecutionTrade.exit_time >= start,
+                    ExecutionTrade.exit_time <= end,
+                    ExecutionTrade.net_pnl.is_not(None),
+                )
+                .order_by(ExecutionTrade.exit_time, ExecutionTrade.id)
+            )
+            return [_trade(row) for row in result.scalars().all()]

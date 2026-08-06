@@ -262,6 +262,15 @@ class ExecutionRepository(Protocol):
     async def get_trade_by_position(self, position_id: UUID) -> Trade | None:
         """Load the open trade associated with a net position."""
 
+    async def get_closed_trades(
+        self,
+        *,
+        account_id: UUID,
+        start: datetime,
+        end: datetime,
+    ) -> list[Trade]:
+        """Return completed trades whose UTC exit time is within the inclusive window."""
+
 
 class JournalRepository(Protocol):
     """Persistence boundary for immutable trade snapshots and mutable notes."""
