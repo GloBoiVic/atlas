@@ -45,8 +45,10 @@ remain outside this feature.
 `run()` owns a session until all finite drains end; callers using externally managed `start()` must
 pair it with `stop()` during shutdown.
 
-Binance Spot live streaming, OANDA streaming, and COIN-M Futures are deferred. The provider
-interface remains broker-agnostic.
+Binance USDⓈ-M Futures live streaming is provided by this feature (see deliverables above).
+OANDA streaming and COIN-M Futures are deferred. The provider interface
+remains broker-agnostic. Feature 09 consumes the live feed through EventBus and owns
+mode-specific pipeline assembly.
 
 ### Provider registry and ownership
 

@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID, uuid4
@@ -5,6 +6,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from backend.core.account_mode import AccountMode
+from backend.data.models import Instrument, MarketContext
 from backend.execution import (
     ExecutableMarket,
     Order,
@@ -12,6 +14,7 @@ from backend.execution import (
     OrderStatus,
     PaperBroker,
     PaperFillMode,
+    executable_market_from_context,
 )
 from backend.persistence.repositories.memory import InMemoryExecutionRepository
 
@@ -80,6 +83,97 @@ async def test_live_fill_uses_executable_side_and_configured_taker_fee() -> None
     assert result.fills[0].fee == Decimal("0.05052525")
 
 
+def test_live_market_adapter_preserves_context_without_next_candle_open() -> None:
+    instrument_id = uuid4()
+    timestamp = datetime(2026, 1, 1, tzinfo=UTC)
+    context = MarketContext(
+        instrument_id=instrument_id,
+        provider="binance_usdm",
+        bid=Decimal("99"),
+        ask=Decimal("101"),
+        mark_price=Decimal("100"),
+        index_price=Decimal("100"),
+        funding_rate=Decimal("0.0001"),
+        next_funding_time=timestamp + timedelta(hours=8),
+        as_of=timestamp,
+        bid_at=timestamp,
+        ask_at=timestamp,
+        mark_at=timestamp,
+        index_at=timestamp,
+        funding_at=timestamp,
+    )
+    instrument = Instrument(instrument_id, "BTCUSDT", "binance_usdm", "crypto")
+
+    executable = executable_market_from_context(context, instrument)
+
+    assert executable.mark_price == context.mark_price
+    assert executable.next_candle_open is None
+
+
+@pytest.mark.asyncio
+async def test_paper_broker_restores_durable_position_and_idempotent_funding() -> None:
+    account_id, instrument_id = uuid4(), uuid4()
+    repository = InMemoryExecutionRepository()
+    def clock() -> datetime:
+        return datetime(2026, 1, 1, tzinfo=UTC)
+    broker = PaperBroker(account_id=account_id, repository=repository, clock=clock)
+    broker.set_market(market(instrument_id))
+    await broker.submit_order(order(account_id, instrument_id, OrderSide.BUY), "restore-entry")
+    await broker.apply_funding(
+        Decimal("-2"),
+        instrument_id=instrument_id,
+        funding_timestamp=datetime(2026, 1, 1, 8, tzinfo=UTC),
+    )
+
+    restored = PaperBroker(account_id=account_id, repository=repository, clock=clock)
+    await restored.restore()
+    restored.set_market(market(instrument_id))
+    duplicate = await restored.apply_funding(
+        Decimal("-2"),
+        instrument_id=instrument_id,
+        funding_timestamp=datetime(2026, 1, 1, 8, tzinfo=UTC),
+    )
+
+    assert len(await restored.get_positions()) == 1
+    assert duplicate.amount == Decimal("-2")
+    assert len(await repository.get_funding_adjustments(
+        account_id=account_id, instrument_id=instrument_id, mode=AccountMode.PAPER
+    )) == 1
+
+
+@pytest.mark.asyncio
+async def test_restore_preserves_realized_pnl_and_fees() -> None:
+    account_id, instrument_id = uuid4(), uuid4()
+    repository = InMemoryExecutionRepository()
+    timestamp = datetime(2026, 1, 1, tzinfo=UTC)
+    broker = PaperBroker(
+        account_id=account_id,
+        initial_balance=Decimal("1000"),
+        repository=repository,
+        clock=lambda: timestamp,
+    )
+    broker.set_market(market(instrument_id, bid="100", ask="100", mark="100"))
+    await broker.submit_order(
+        order(account_id, instrument_id, OrderSide.BUY), "restore-pnl-entry"
+    )
+    broker.set_market(market(instrument_id, bid="110", ask="110", mark="110"))
+    await broker.submit_order(
+        order(account_id, instrument_id, OrderSide.SELL, reduce_only=True), "restore-pnl-close"
+    )
+    expected_balance = broker.balance
+
+    restored = PaperBroker(
+        account_id=account_id,
+        initial_balance=Decimal("1000"),
+        repository=repository,
+        clock=lambda: timestamp,
+    )
+    await restored.restore()
+
+    assert restored.balance == expected_balance
+    assert restored.balance == Decimal("1009.79000250")
+
+
 @pytest.mark.asyncio
 async def test_duplicate_client_id_returns_same_fill_without_duplicate_position() -> None:
     account_id, instrument_id = uuid4(), uuid4()
@@ -92,6 +186,32 @@ async def test_duplicate_client_id_returns_same_fill_without_duplicate_position(
 
     assert first == second
     assert len(await broker.get_positions()) == 1
+
+
+@pytest.mark.asyncio
+async def test_memory_order_queries_do_not_match_unscoped_orders_to_a_mode() -> None:
+    account_id, instrument_id = uuid4(), uuid4()
+    repository = InMemoryExecutionRepository()
+    unscoped = order(account_id, instrument_id, OrderSide.BUY)
+    unscoped = replace(unscoped, mode=None)
+    await repository.create_order(unscoped)
+
+    assert await repository.get_orders(account_id=account_id, mode=AccountMode.PAPER) == []
+    assert await repository.get_non_terminal_orders(
+        account_id=account_id, mode=AccountMode.PAPER
+    ) == [unscoped]
+
+
+@pytest.mark.asyncio
+async def test_funding_requires_durable_scope_fields() -> None:
+    broker = PaperBroker()
+
+    with pytest.raises(ValueError, match="requires an instrument"):
+        await broker.apply_funding(
+            Decimal("1"), funding_timestamp=datetime(2026, 1, 1, tzinfo=UTC)
+        )
+    with pytest.raises(ValueError, match="requires a funding timestamp"):
+        await broker.apply_funding(Decimal("1"), instrument_id=uuid4())
 
 
 @pytest.mark.asyncio
@@ -200,7 +320,11 @@ async def test_funding_is_separate_and_balance_never_goes_negative_on_liquidatio
         initial_balance=Decimal("10"),
         clock=lambda: datetime(2026, 1, 1, tzinfo=UTC),
     )
-    await funding_broker.apply_funding(Decimal("-20"))
+    await funding_broker.apply_funding(
+        Decimal("-20"),
+        instrument_id=instrument_id,
+        funding_timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+    )
     assert funding_broker.balance == Decimal("0")
 
     liquidation_broker = PaperBroker(

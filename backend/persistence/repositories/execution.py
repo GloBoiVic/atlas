@@ -18,12 +18,14 @@ from backend.execution.models import (
     Trade,
     TradeStatus,
 )
+from backend.execution.paper_broker import FundingAdjustment
 from backend.persistence.models import (
     ExecutionFill,
     ExecutionOrder,
     ExecutionPosition,
     ExecutionTrade,
 )
+from backend.persistence.models import FundingAdjustment as FundingAdjustmentRow
 
 
 def _order(row: ExecutionOrder) -> Order:
@@ -115,6 +117,18 @@ def _trade(row: ExecutionTrade) -> Trade:
     )
 
 
+def _funding(row: FundingAdjustmentRow) -> FundingAdjustment:
+    return FundingAdjustment(
+        account_id=row.account_id,
+        amount=row.amount,
+        applied_at=row.applied_at,
+        id=row.id,
+        instrument_id=row.instrument_id,
+        mode=AccountMode(row.mode),
+        funding_timestamp=row.funding_timestamp,
+    )
+
+
 class SqlAlchemyExecutionRepository:
     """Execution repository with explicit transaction ownership per operation."""
 
@@ -191,6 +205,16 @@ class SqlAlchemyExecutionRepository:
             )
             return [_order(row) for row in result.scalars().all()]
 
+    async def get_orders(self, *, account_id: UUID, mode: AccountMode) -> list[Order]:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(ExecutionOrder).where(
+                    ExecutionOrder.account_id == account_id,
+                    ExecutionOrder.mode == mode.value,
+                )
+            )
+            return [_order(row) for row in result.scalars().all()]
+
     async def update_order(self, order: Order) -> Order:
         async with self._session_factory.begin() as session:
             row = await session.get(ExecutionOrder, order.id)
@@ -255,6 +279,54 @@ class SqlAlchemyExecutionRepository:
                 )
             )
             return [_fill(row) for row in result.scalars().all()]
+
+    async def save_funding_adjustment(self, adjustment: FundingAdjustment) -> FundingAdjustment:
+        if adjustment.instrument_id is None:
+            raise ValueError("funding adjustment requires an instrument")
+        timestamp = adjustment.funding_timestamp or adjustment.applied_at
+        async with self._session_factory.begin() as session:
+            result = await session.execute(
+                select(FundingAdjustmentRow).where(
+                    FundingAdjustmentRow.account_id == adjustment.account_id,
+                    FundingAdjustmentRow.instrument_id == adjustment.instrument_id,
+                    FundingAdjustmentRow.mode == adjustment.mode.value,
+                    FundingAdjustmentRow.funding_timestamp == timestamp,
+                )
+            )
+            existing = result.scalar_one_or_none()
+            if existing is not None:
+                return _funding(existing)
+            row = FundingAdjustmentRow(
+                id=adjustment.id,
+                account_id=adjustment.account_id,
+                instrument_id=adjustment.instrument_id,
+                mode=adjustment.mode.value,
+                amount=adjustment.amount,
+                funding_timestamp=timestamp,
+                applied_at=adjustment.applied_at,
+            )
+            session.add(row)
+            await session.flush()
+            return _funding(row)
+
+    async def get_funding_adjustments(
+        self, *, account_id: UUID, instrument_id: UUID | None, mode: AccountMode
+    ) -> list[FundingAdjustment]:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(FundingAdjustmentRow)
+                .where(
+                    FundingAdjustmentRow.account_id == account_id,
+                    FundingAdjustmentRow.mode == mode.value,
+                )
+                .where(
+                    FundingAdjustmentRow.instrument_id == instrument_id
+                    if instrument_id is not None
+                    else FundingAdjustmentRow.instrument_id.is_not(None)
+                )
+                .order_by(FundingAdjustmentRow.funding_timestamp)
+            )
+            return [_funding(row) for row in result.scalars().all()]
 
     async def get_positions(self, *, account_id: UUID, mode: AccountMode) -> list[Position]:
         async with self._session_factory() as session:

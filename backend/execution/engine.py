@@ -243,12 +243,14 @@ class ExecutionEngine:
         repository: ExecutionRepository,
         *,
         bot_id: UUID | None = None,
+        coordinator: AccountExposureCoordinator | None = None,
     ) -> None:
         self._event_bus = event_bus
         self._broker = broker
         self._repository = repository
         self._bot_id = bot_id
-        self._coordinator = AccountExposureCoordinator(repository)
+        self._coordinator = coordinator or AccountExposureCoordinator(repository)
+        self._execution_enabled = True
         self._subscription: Subscription = event_bus.subscribe(
             RiskApproved, cast("EventHandler", self._on_approved)
         )
@@ -261,7 +263,18 @@ class ExecutionEngine:
     async def _on_approved(self, event: RiskApproved) -> None:
         if self._bot_id is not None and event.bot_id != self._bot_id:
             return
+        if not self._execution_enabled:
+            return
         await self._coordinator.apply_approval(event, self._submit)
+
+    def set_execution_enabled(self, enabled: bool) -> None:
+        """Gate new broker submissions while retaining event subscriptions."""
+        self._execution_enabled = enabled
+
+    @property
+    def execution_enabled(self) -> bool:
+        """Whether RiskApproved events may submit orders."""
+        return self._execution_enabled
 
     async def _submit(self, order: Order, event: RiskApproved, prior: Position | None) -> Order:
         # create_order is the durable idempotency fence and deliberately precedes I/O.

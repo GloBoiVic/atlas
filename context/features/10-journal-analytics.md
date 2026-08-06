@@ -152,7 +152,7 @@ but must cite these definitions and must not invent alternate formulas.
 
 - **Sharpe ratio:** `mean(periodic_excess_return) / std(periodic_excess_return) *
   sqrt(annualization_factor)`. **Recommended MVP defaults:** daily equity returns,
-  risk-free rate = zero, annualization factor = `sqrt(365)` (Binance Spot 24/7).
+  risk-free rate = zero, annualization factor = `sqrt(365)` (24/7 market assumption).
   Require a minimum-observation rule (e.g., at least 30 daily returns). Explicitly
   report `undefined` for zero variance or insufficient samples.
 

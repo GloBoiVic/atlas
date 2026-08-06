@@ -74,7 +74,7 @@ Oanda's REST API for future forex data and trading. It is not an MVP integration
 
 ### WebSocket: websockets
 
-For live data feeds (Binance Spot WebSocket first; Oanda deferred).
+For live data feeds (Binance USDⓈ-M Futures `fstream` WebSocket first; Oanda deferred).
 
 | Requirement | Version | Rationale |
 |-------------|---------|-----------|

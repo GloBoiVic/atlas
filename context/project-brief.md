@@ -105,7 +105,7 @@ The MVP uses one net position per account and instrument. Hedged or multiple ind
 
 The architecture is broker-agnostic. Broker-specific API logic lives behind interfaces and adapters.
 
-**Binance Spot is the first concrete integration.** It was chosen because it provides practical public market data and an accessible testnet path. The MVP targets paper trading on Binance public streaming data before testnet execution.
+**Binance USDⓈ-M Futures is the first concrete live-data and execution integration.** Binance was chosen because it provides practical public market data via the USDⓈ-M Futures streaming API and an accessible testnet endpoint for authenticated execution validation. The MVP targets paper trading on Binance USDⓈ-M Futures public streaming data before testnet execution.
 
 **OANDA is deferred.** The OANDA provider and broker adapter will be designed when scheduled, not before the paper-trading workflow is stable. OANDA's different candle semantics (RFC3339 timestamps, bid/ask/mid prices, tick-count volume), live pricing model (price stream, not completed candles), and instrument constraints (margin rate, pip location) should influence the provider abstractions without being retrofitted into the current implementation.
 
@@ -317,7 +317,7 @@ Strategies must not contain provider-specific API logic.
 
 # Broker Execution
 
-Execution is broker-agnostic. The Execution Engine owns orders and positions while adapters own broker APIs. The first authenticated adapter is Binance Spot testnet; production live trading is deferred. Detailed contracts live in `context/architecture.md` and Feature 07/09.
+Execution is broker-agnostic. The Execution Engine owns orders and positions while adapters own broker APIs. The first authenticated adapter is Binance USDⓈ-M Futures testnet (Phase 11); production live trading is deferred. Detailed contracts live in `context/architecture.md` and Feature 07/09.
 
 ---
 
@@ -361,7 +361,7 @@ The goal is to minimize differences between:
 - Paper Trading
 - Live Trading
 
-For the first vertical slice, live market data feeds paper execution. Paper trading reuses the same Strategy, Risk, and Paper Execution contracts as backtesting. Authenticated execution begins with Binance Spot testnet after paper trading is stable. Production live trading is deferred until a production adapter and safety gate exist.
+For the first vertical slice, live market data feeds paper execution. Paper trading reuses the same Strategy, Risk, and Paper Execution contracts as backtesting. Authenticated execution begins with Binance USDⓈ-M Futures testnet (Phase 11) after paper trading is stable. Production live trading is deferred until a production adapter and safety gate exist.
 
 ---
 

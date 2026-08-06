@@ -2,7 +2,7 @@
 
 ## Description
 
-Remote single-user MVP hardening. Tests pass, failures fail closed, recovery is documented, and the Binance Spot testnet boundary is safe. Production live trading remains deferred.
+Remote single-user MVP hardening. Tests pass, failures fail closed, recovery is documented, and the testnet boundary is safe. Production live trading remains deferred.
 
 ## Dependencies
 

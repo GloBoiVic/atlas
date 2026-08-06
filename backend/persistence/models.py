@@ -391,6 +391,25 @@ class ExecutionTrade(Base):
     exit_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class FundingAdjustment(Base):
+    """Idempotent Futures funding settlement for one account scope."""
+
+    __tablename__ = "funding_adjustments"
+    __table_args__ = (
+        UniqueConstraint("account_id", "instrument_id", "mode", "funding_timestamp"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    account_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("accounts.id"), nullable=False)
+    instrument_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("instruments.id"), nullable=False
+    )
+    mode: Mapped[str] = mapped_column(String(20), nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(28, 12), nullable=False)
+    funding_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    applied_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 # Persistence names remain explicit internally to avoid confusing ORM rows with the
 # immutable execution-domain contracts; these aliases provide the conventional public names.
 Order = ExecutionOrder
