@@ -27,7 +27,8 @@ function formatContext(value: Record<string, unknown>): string {
 
 function PnlValue({ pnl }: { pnl: string | null }): ReactElement {
   if (pnl === null) return <span className="font-atlas-mono text-atlas-fg-secondary">—</span>;
-  const positive = !pnl.startsWith("-") && pnl !== "0" && pnl !== "0.0";
+  const zero = /^-?0(?:\.0*)?$/.test(pnl);
+  const positive = !pnl.startsWith("-") && !zero;
   const tone = positive
     ? "text-atlas-positive"
     : pnl.startsWith("-")
