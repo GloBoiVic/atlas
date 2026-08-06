@@ -1,5 +1,21 @@
 # Completed Work
 
+## Feature 09 — USDⓈ-M Futures alignment and Phase 8 paper trading — 2026-08-05
+
+- Reconciled live-data, paper-trading, and future testnet context to Binance USDⓈ-M Futures;
+  preserved historical Spot `binance` versus live `binance_usdm` identities.
+- Added live `MarketContext` to `ExecutableMarket` translation, isolated `LivePaperPipeline`,
+  shared account-level coordinator support, deterministic mark/protective/liquidation/funding
+  maintenance, and fail-closed lifecycle/reconciliation behavior.
+- Added durable idempotent funding adjustments and Alembic migration 009; paper state restoration
+  replays durable fills, fees, realized P&L, positions, and funding without a broker snapshot.
+- Added mark-persistence cadence, strict mode filtering, required funding scope typing, and
+  comprehensive pipeline/restart/funding/maintenance tests.
+- Validation: 427/428 backend tests passed; one pre-existing frontend Dockerfile assertion
+  remains unrelated. Ruff and full backend mypy passed. Final Tier 2 review: PASS with six
+  non-blocking Minor observations.
+- Branch `feature/09-live-trading` is ready to merge; work is uncommitted.
+
 ## Feature 08 — Task 1 contracts and deterministic Futures parsers — 2026-08-05
 
 - Implemented `binance_usdm` identity and non-secret public fstream configuration.

@@ -26,6 +26,7 @@ from backend.execution.models import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from backend.data.models import Instrument, MarketContext
     from backend.persistence.repositories.protocols import ExecutionRepository
 
 
@@ -61,6 +62,39 @@ class ExecutableMarket:
             raise ValueError("next_candle_open must be positive")
 
 
+def executable_market_from_context(
+    context: MarketContext,
+    instrument: Instrument,
+    *,
+    stale_after: timedelta = timedelta(seconds=5),
+) -> ExecutableMarket:
+    """Translate one validated live context into the paper execution contract.
+
+    Live paper execution deliberately has no next-candle price.  The adapter also
+    checks the provider-aware instrument identity so a historical Spot instrument
+    cannot accidentally feed the USDⓈ-M Futures pipeline.
+    """
+    if context.instrument_id != instrument.id:
+        raise ValueError("market context instrument does not match pipeline instrument")
+    if context.provider != instrument.provider:
+        raise ValueError("market context provider does not match instrument provider")
+    if not instrument.is_active:
+        raise ValueError("live paper execution requires an active instrument")
+    if instrument.provider != "binance_usdm":
+        raise ValueError("live paper execution requires the binance_usdm provider")
+    if not isinstance(stale_after, timedelta) or stale_after <= timedelta(0):
+        raise ValueError("stale_after must be positive")
+    return ExecutableMarket(
+        instrument_id=context.instrument_id,
+        bid=context.bid,
+        ask=context.ask,
+        mark_price=context.mark_price,
+        as_of=context.as_of,
+        stale_after=stale_after,
+        next_candle_open=None,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class FundingAdjustment:
     """A cash-only funding adjustment, separate from trading fees and P&L."""
@@ -69,6 +103,9 @@ class FundingAdjustment:
     amount: Decimal
     applied_at: datetime
     id: UUID
+    instrument_id: UUID
+    funding_timestamp: datetime
+    mode: AccountMode = AccountMode.PAPER
 
 
 class PaperBroker(Broker):
@@ -92,7 +129,8 @@ class PaperBroker(Broker):
         repository: ExecutionRepository | None = None,
     ) -> None:
         self.account_id = account_id or uuid4()
-        self.balance = self._non_negative(initial_balance, "initial_balance")
+        self._initial_balance = self._non_negative(initial_balance, "initial_balance")
+        self.balance = self._initial_balance
         self.fee_rate = self._rate(fee_rate, "fee_rate")
         self.slippage_rate = self._rate(slippage_rate, "slippage_rate")
         self.maintenance_margin_rate = self._rate(
@@ -112,6 +150,86 @@ class PaperBroker(Broker):
         self._funding: list[FundingAdjustment] = []
         self._entry_fees: dict[UUID, Decimal] = {}
         self._protective_trades: list[Trade] = []
+
+    async def restore(self, *, mode: AccountMode = AccountMode.PAPER) -> None:
+        """Rebuild broker memory from durable orders, fills, and active positions.
+
+        No broker snapshot is introduced: orders and fills remain the durable ledger and
+        positions are the current derived state.  The method is idempotent and is intended
+        to run before a supervised pipeline is enabled.
+        """
+        if self._repository is None:
+            return
+        orders = await self._repository.get_orders(account_id=self.account_id, mode=mode)
+        fills = await self._repository.get_fills(account_id=self.account_id, mode=mode)
+        positions = await self._repository.get_positions(account_id=self.account_id, mode=mode)
+        funding = await self._repository.get_funding_adjustments(
+            account_id=self.account_id, instrument_id=None, mode=mode
+        )
+        self._orders = {order.client_order_id: order for order in orders}
+        self._fills = {
+            fill.broker_fill_id: fill
+            for fill in fills
+            if fill.broker_fill_id is not None
+        }
+        self._positions = {
+            (position.instrument_id, position.mode): position for position in positions
+        }
+        self._funding = list(funding)
+        self._results = {}
+        self._entry_fees = {}
+        self.balance = self._initial_balance + sum(
+            (item.amount for item in self._funding), Decimal("0")
+        )
+        replay_state: dict[
+            tuple[UUID, AccountMode], tuple[PositionSide, Decimal, Decimal, Decimal]
+        ] = {}
+        for fill in sorted(fills, key=lambda item: (item.filled_at, item.id)):
+            order = next((item for item in orders if item.id == fill.order_id), None)
+            if order is None:
+                continue
+            fill_mode = order.mode or AccountMode.PAPER
+            key = (fill.instrument_id, fill_mode)
+            self.balance -= fill.fee
+            side = self._position_side(fill.side)
+            current = replay_state.get(key)
+            if current is None:
+                replay_state[key] = (side, fill.quantity, fill.price, fill.fee)
+                continue
+            current_side, current_quantity, current_entry, entry_fees = current
+            if current_side is side:
+                quantity = current_quantity + fill.quantity
+                replay_state[key] = (
+                    side,
+                    quantity,
+                    (current_entry * current_quantity + fill.price * fill.quantity) / quantity,
+                    entry_fees + fill.fee,
+                )
+                continue
+            closed_quantity = min(fill.quantity, current_quantity)
+            self.balance += (
+                fill.price - current_entry
+                if current_side is PositionSide.LONG
+                else current_entry - fill.price
+            ) * closed_quantity
+            remaining = current_quantity - closed_quantity
+            if remaining:
+                replay_state[key] = (current_side, remaining, current_entry, entry_fees)
+            else:
+                replay_state.pop(key)
+        self.balance = max(Decimal("0"), self.balance)
+        for (instrument_id, position_mode), position in self._positions.items():
+            state = replay_state.get((instrument_id, position_mode))
+            if state is not None:
+                self._entry_fees[position.id] = state[3]
+        for order in orders:
+            if order.status is OrderStatus.FILLED:
+                self._results[order.client_order_id] = OrderResult(
+                    success=True,
+                    status=order.status,
+                    order_id=order.broker_order_id,
+                    fills=tuple(fill for fill in fills if fill.order_id == order.id),
+                )
 
     @staticmethod
     def _non_negative(value: Decimal, name: str) -> Decimal:
@@ -269,6 +387,8 @@ class PaperBroker(Broker):
             average_fill_price=fill.price,
             updated_at=fill.filled_at,
         )
+        if self._repository is not None:
+            await self._repository.update_order(self._orders[client_order_id])
         self._results[client_order_id] = result
         return result
 
@@ -409,15 +529,50 @@ class PaperBroker(Broker):
         )
 
     async def apply_funding(
-        self, amount: Decimal, *, applied_at: datetime | None = None
+        self,
+        amount: Decimal,
+        *,
+        instrument_id: UUID | None = None,
+        mode: AccountMode = AccountMode.PAPER,
+        funding_timestamp: datetime | None = None,
+        applied_at: datetime | None = None,
     ) -> FundingAdjustment:
         """Apply funding separately from fees and realized trading P&L."""
         if not isinstance(amount, Decimal) or not amount.is_finite():
             raise ValueError("funding amount must be a finite Decimal")
-        self.balance = max(Decimal("0"), self.balance + amount)
+        if instrument_id is None:
+            raise ValueError("funding adjustment requires an instrument")
+        if funding_timestamp is None:
+            raise ValueError("funding adjustment requires a funding timestamp")
+        settlement_time = funding_timestamp
+        if any(
+            item.account_id == self.account_id
+            and item.instrument_id == instrument_id
+            and item.mode == mode
+            and (item.funding_timestamp or item.applied_at) == settlement_time
+            for item in self._funding
+        ):
+            return next(
+                item
+                for item in self._funding
+                if item.instrument_id == instrument_id
+                and item.mode == mode
+                and (item.funding_timestamp or item.applied_at) == settlement_time
+            )
         adjustment = FundingAdjustment(
-            self.account_id, amount, applied_at or self._clock(), uuid4()
+            account_id=self.account_id,
+            amount=amount,
+            applied_at=applied_at or self._clock(),
+            id=uuid4(),
+            instrument_id=instrument_id,
+            funding_timestamp=settlement_time,
+            mode=mode,
         )
+        if self._repository is not None:
+            adjustment = await self._repository.save_funding_adjustment(adjustment)
+            if any(item.id == adjustment.id for item in self._funding):
+                return adjustment
+        self.balance = max(Decimal("0"), self.balance + adjustment.amount)
         self._funding.append(adjustment)
         return adjustment
 

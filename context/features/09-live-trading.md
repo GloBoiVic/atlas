@@ -3,8 +3,8 @@
 ## Description
 
 Execute trades through broker adapters. Paper trading comes first and reuses the same
-Strategy, Risk, and Execution contracts as backtesting. Binance Spot testnet follows
-after paper trading is stable. Production live trading is deferred.
+Strategy, Risk, and Execution contracts as backtesting. Binance USDⓈ-M Futures testnet
+(Phase 11) follows after paper trading is stable. Production live trading is deferred.
 
 ## Dependencies
 
@@ -16,14 +16,14 @@ after paper trading is stable. Production live trading is deferred.
 ## Deliverables
 
 ### Paper Trading (MVP)
-- [ ] Bot lifecycle: Start, stop, pause, resume persisted bots
-- [ ] BotSupervisor with isolated per-bot pipelines
-- [ ] Paper account with balance, positions, P&L tracking
-- [ ] Startup restoration: Reconcile broker state before enabling execution
-- [ ] Real-time bot status events via EventBus
+- [x] Bot lifecycle: Start, stop, pause, resume persisted bots
+- [x] BotSupervisor with isolated per-bot pipelines
+- [x] Paper account with balance, positions, P&L tracking
+- [x] Startup restoration: Reconcile broker state before enabling execution
+- [x] Real-time bot status events via EventBus
 
-### Binance Spot Testnet (Phase 11 — after paper execution is stable)
-- [ ] Binance Spot testnet broker adapter: Place, cancel, reconcile orders via ccxt
+### Binance USDⓈ-M Futures Testnet (Phase 11 — after paper execution is stable)
+- [ ] Binance USDⓈ-M Futures testnet broker adapter: Place, cancel, reconcile orders
 - [ ] Broker authentication: Read credentials from server environment secrets
 - [ ] Testnet order execution: Submit, fill, cancel, and reconcile orders
 - [ ] Position tracking: Sync net positions with the broker before resuming bots
@@ -78,37 +78,29 @@ class PaperBroker(Broker):
         ...
 ```
 
-### Binance Broker Adapter
+### Authenticated Binance USDⓈ-M Futures Adapter (Phase 11)
+
+The authenticated broker adapter for Binance USDⓈ-M Futures is deferred to Phase 11.
+Its canonical identity is `binance_usdm`. When implemented, it will:
+
+- Use the `binance_usdm` provider identity for instrument resolution and order routing.
+- Connect to Binance USDⓈ-M Futures testnet (and later production) REST and WebSocket
+  endpoints — never a Spot endpoint or `defaultType: spot`.
+- Read credentials from server environment secrets only (never the browser or database).
+- Implement the `Broker` protocol with market orders for entries and protective exits.
+- Defer limit, stop-limit, OCO, and iceberg order types.
+- Use the Broker interface defined in Feature 07; no provider-specific contract is required.
+
+The Broker interface contract (Feature 07) remains the sole adapter contract. The Phase 11
+adapter will implement `submit_order`, `cancel_order`, `get_account`, `get_positions`,
+and `reconcile`. Unknown-order responses trigger Feature 07 reconciliation before retry.
 
 ```python
-class BinanceBroker(Broker):
-    def __init__(self, api_key: str, api_secret: str, testnet: bool = True):
-        self.exchange = ccxt.async_support.binance({
-            "apiKey": api_key,
-            "secret": api_secret,
-            "options": {"defaultType": "spot"},
-        })
-        if testnet:
-            self.exchange.set_sandbox_mode(True)
-
-    async def submit_order(self, order: Order, client_order_id: str) -> OrderResult:
-        symbol = self._to_binance_symbol(order.instrument)
-        side = "buy" if order.side == SignalDirection.BUY else "sell"
-        try:
-            result = await self.exchange.create_order(
-                symbol=symbol,
-                type="market",
-                side=side,
-                amount=self._format_quantity(order.quantity),
-                params={"newClientOrderId": client_order_id},
-            )
-            return OrderResult(success=True, order_id=result["id"])
-        except ccxt.NetworkError as e:
-            return OrderResult(success=False, error=f"network_error: {e}")
-        except ccxt.ExchangeError as e:
-            return OrderResult(success=False, error=f"exchange_error: {e}")
-        except Exception as e:
-            return OrderResult(success=False, error=str(e))
+# Phase 11 stub — identity only, no implementation.
+# broker_identity = "binance_usdm"
+# mode = "testnet"
+# Adapter connects to USDⓈ-M Futures testnet endpoints.
+# No Spot endpoints, no defaultType: spot.
 ```
 
 ### Trade Lifecycle (Paper + Testnet)
@@ -139,30 +131,32 @@ fail at startup with a clear error.
 
 ```yaml
 broker:
-  name: "binance"
-  mode: "paper"          # or "testnet"
+  name: "binance_usdm"
+  mode: "paper"          # or "testnet" (Phase 11)
 
-  binance:
-    api_key: "${BINANCE_API_KEY}"
-    api_secret: "${BINANCE_API_SECRET}"
+  binance_usdm:
+    api_key: "${BINANCE_USDM_API_KEY}"
+    api_secret: "${BINANCE_USDM_API_SECRET}"
 ```
 
-Paper mode requires no API credentials. Testnet mode reads credentials from environment
-variables. Credentials never reach the browser or PostgreSQL.
+Paper mode (`mode: paper`) requires no API credentials. Testnet mode (`mode: testnet`,
+Phase 11) reads credentials from environment variables. Credentials never reach the
+browser or PostgreSQL. The authenticated Futures adapter is deferred; in Phase 8 the
+`binance_usdm` identity resolves only to the public-stream live provider (Feature 08).
 
 ## Acceptance Criteria
 
-- [ ] Paper trading pipeline runs against live streaming data
-- [ ] Paper broker fills are deterministic with Decimal values, fees, and slippage
-- [ ] Bot lifecycle (start, stop, pause, resume) works through BotSupervisor
-- [ ] Startup restoration reconciles before enabling execution
-- [ ] Binance Spot testnet orders can be submitted, filled, cancelled, and reconciled
+- [x] Paper trading pipeline runs against live streaming data
+- [x] Paper broker fills are deterministic with Decimal values, fees, and slippage
+- [x] Bot lifecycle (start, stop, pause, resume) works through BotSupervisor
+- [x] Startup restoration reconciles before enabling execution
+- [ ] Binance USDⓈ-M Futures testnet orders can be submitted, filled, cancelled, and reconciled
 - [ ] Broker authentication uses server environment secrets
 - [ ] Testnet mode cannot accidentally use production endpoints
 - [ ] Unknown order responses trigger reconciliation before retry
 - [ ] Paper and testnet accounts cannot share orders or positions
-- [ ] Trade entity is created and finalized through the trade lifecycle
-- [ ] Production mode is rejected until a safety gate exists
+- [x] Trade entity is created and finalized through the trade lifecycle
+- [x] Production mode is rejected until a safety gate exists
 
 ## Done when
 

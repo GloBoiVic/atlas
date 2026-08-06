@@ -404,6 +404,25 @@ CREATE TABLE trades (
 CREATE INDEX idx_trades_status ON trades(status);
 ```
 
+### Funding Adjustments
+
+Paper USDⓈ-M Futures funding is a cash adjustment, not a fee or trade P&L component. It is
+idempotent on `(account_id, instrument_id, mode, funding_timestamp)` so reconnects and
+restarts cannot settle one funding event twice.
+
+```sql
+CREATE TABLE funding_adjustments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    account_id UUID NOT NULL REFERENCES accounts(id),
+    instrument_id UUID NOT NULL REFERENCES instruments(id),
+    mode VARCHAR(20) NOT NULL,
+    amount NUMERIC(28, 12) NOT NULL,
+    funding_timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+    applied_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    UNIQUE(account_id, instrument_id, mode, funding_timestamp)
+);
+```
+
 ### Journal Entries
 
 Human-readable trade journal attached to completed trades via `trade_id`.
@@ -634,6 +653,8 @@ rewritten or deleted.
   positions, and trade lifecycle aggregates. Client order IDs, broker order IDs, and broker
   execution IDs are idempotency keys; the active position uniqueness is scoped by account,
   instrument, and mode. Requires PostgreSQL migration upgrade/downgrade coverage.
+- `009_funding_adjustments` — Creates idempotent account/instrument/mode funding settlement
+  records for live paper Futures maintenance.
 
 Existing migrations use `String(36)`. Migration 005 closes the UUID gap for the
 existing tables. Migration 006 creates all new tables with native PostgreSQL `UUID`

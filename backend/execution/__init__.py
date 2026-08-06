@@ -17,6 +17,7 @@ from backend.execution.paper_broker import (
     FundingAdjustment,
     PaperBroker,
     PaperFillMode,
+    executable_market_from_context,
 )
 from backend.execution.reconciliation import Reconciler, ReconciliationBlock, ReconciliationResult
 
@@ -36,6 +37,7 @@ __all__ = [
     "Trade",
     "TradeStatus",
     "ExecutableMarket",
+    "executable_market_from_context",
     "FundingAdjustment",
     "PaperBroker",
     "PaperFillMode",

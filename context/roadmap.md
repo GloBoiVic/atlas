@@ -5,10 +5,10 @@
 Atlas is a single-user trading operations platform deployed remotely as one Docker Compose application. The MVP workflow is:
 
 ```text
-Deploy strategy package → Backtest → Paper trade on Binance data → Monitor → Validate on Binance testnet → Journal and analyze
+Deploy strategy package → Backtest → Paper trade on Binance USDⓈ-M Futures data → Monitor → Validate on Binance USDⓈ-M Futures testnet → Journal and analyze
 ```
 
-The architecture remains broker-agnostic, but implementation is deliberately narrow: Binance Spot is the first concrete integration. OANDA, futures, production live trading, multi-account support, and automated infrastructure deployment are deferred.
+The architecture remains broker-agnostic, but implementation is deliberately narrow: Binance USDⓈ-M Futures is the first concrete live-data, paper, and testnet integration. The existing Binance Spot historical provider (Feature 03/05) is a separate identity for historical data only. OANDA, COIN-M Futures, production live trading, multi-account support, and automated infrastructure deployment are deferred.
 
 Development happens through vertical slices. Each phase includes tests and produces a usable, verifiable capability.
 
@@ -68,7 +68,7 @@ Development happens through vertical slices. Each phase includes tests and produ
 
 ## Phase 3: Data Layer (Feature 03, Feature 08 interfaces)
 
-**Goal:** Normalize historical and public Binance Spot data behind provider-agnostic interfaces. Feature 08's data interfaces and contracts are defined here; live streaming implementation follows in Phase 8.
+**Goal:** Normalize historical Binance Spot data and define provider-agnostic live-data interfaces. Feature 08's data interfaces and contracts are defined here; live streaming implementation (Binance USDⓈ-M Futures) follows in Phase 8.
 
 ### Deliverables
 
@@ -194,7 +194,7 @@ Daily loss limits, maximum drawdown, and trading sessions are deferred until the
 
 ## Phase 8: Bot Runtime and Paper Trading (Features 08 live, 09 paper, 12 runtime)
 
-**Goal:** Operate multiple isolated paper bots against Binance Spot live public data. Live streaming implementation (Feature 08), paper pipeline assembly (Feature 09), and runtime-facing bot lifecycle (Feature 12) converge in this phase.
+**Goal:** Operate multiple isolated paper bots against Binance USDⓈ-M Futures live public data. Live streaming implementation (Feature 08), paper pipeline assembly (Feature 09), and runtime-facing bot lifecycle (Feature 12) converge in this phase.
 
 ### Deliverables
 
@@ -260,13 +260,13 @@ Daily loss limits, maximum drawdown, and trading sessions are deferred until the
 
 ---
 
-## Phase 11: Binance Testnet Trading (Feature 09 testnet slice)
+## Phase 11: Binance USDⓈ-M Futures Testnet Trading (Feature 09 testnet slice)
 
-**Goal:** Validate authenticated broker execution and reconciliation without production orders. Adds the Binance Spot testnet adapter after paper execution and reconciliation are stable.
+**Goal:** Validate authenticated broker execution and reconciliation without production orders. Adds the Binance USDⓈ-M Futures testnet adapter after paper execution and reconciliation are stable.
 
 ### Deliverables
 
-- [ ] Binance Spot testnet adapter
+- [ ] Binance USDⓈ-M Futures testnet adapter
 - [ ] Submit, fill, cancel, and reconcile orders
 - [ ] Environment-secret authentication
 - [ ] Explicit paper/testnet account separation
@@ -304,7 +304,7 @@ Daily loss limits, maximum drawdown, and trading sessions are deferred until the
 ## Deferred Scope
 
 - [ ] OANDA integration (provider and broker adapter)
-- [ ] Futures markets
+- [ ] Binance COIN-M Futures
 - [ ] Production live trading (requires safety gate and production adapter)
 - [ ] Multiple accounts
 - [ ] Multiple net/hedged positions per instrument
@@ -322,10 +322,10 @@ The MVP is complete when one trader can:
 2. Load or import historical data.
 3. Run a deterministic backtest with reproducible dataset identity.
 4. Review persisted results and metrics.
-5. Run multiple paper bots against Binance Spot live public data.
+5. Run multiple paper bots against Binance USDⓈ-M Futures live public data.
 6. Monitor bot status, positions, P&L, and trades.
 7. Recover active bots safely after an Atlas restart.
-8. Validate broker execution on Binance Spot testnet.
+8. Validate broker execution on Binance USDⓈ-M Futures testnet.
 9. Review completed trades in the journal and analytics views.
 
-The same strategy code and risk rules are reused across backtesting and paper trading, with testnet execution added through the same broker-agnostic execution contract.
+The same strategy code and risk rules are reused across backtesting and paper trading, with USDⓈ-M Futures testnet execution added through the same broker-agnostic execution contract.

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Atlas is a single-user trading operations platform deployed remotely as one Docker Compose application. It manages version-pinned Python strategies through backtesting, paper trading, monitoring, and Binance Spot testnet validation.
+Atlas is a single-user trading operations platform deployed remotely as one Docker Compose application. It manages version-pinned Python strategies through backtesting, paper trading, monitoring, and Binance USDⓈ-M Futures testnet validation.
 
 The MVP is not multi-tenant, does not deploy arbitrary infrastructure, and does not use distributed messaging. PostgreSQL is the durable source of truth; the in-process EventBus coordinates work within one worker process.
 
@@ -102,12 +102,13 @@ columns. Volume semantics are explicit: `base_volume`, `quote_volume`, `trade_co
 `tick_volume`. OANDA's `tick_volume` (price-update count) is not the same as Binance's
 `base_volume` (traded asset quantity).
 
-**Rate-limit awareness:** Binance Spot REST API enforces a 1200-weight-per-minute ceiling.
-The combination of REST candle fetching, streaming subscription management, and periodic
-reconciliation in one worker process may approach this limit. Safe backoff (exponential
-retry with jitter and circuit-breaker integration) is required for all REST calls; the
-exact backoff implementation is deferred to the Binance adapter (Feature 09). Adapters
-must not block async code during backoff.
+**Rate-limit awareness:** Binance USDⓈ-M Futures REST API enforces weight-based rate
+limits with per-endpoint weights. The combination of REST candle fetching, streaming
+subscription management, and periodic reconciliation in one worker process may approach
+the applicable ceiling. Safe backoff (exponential retry with jitter and circuit-breaker
+integration) is required for all REST calls; the exact backoff implementation and the
+verified limit values are deferred to the Binance USDⓈ-M Futures authenticated adapter
+(Feature 09, Phase 11). Adapters must not block async code during backoff.
 
 ### Strategy Engine
 
@@ -165,7 +166,7 @@ Daily loss, maximum drawdown, and trading session controls are deferred follow-u
 
 The Execution Engine converts `RiskApproved` decisions into broker orders and owns order, fill, position, and trade transitions. The MVP uses one net position per account and instrument.
 
-The `Broker` interface exposes order submission, cancellation, account state, positions, and reconciliation. Paper execution is deterministic and uses the shared Broker fill algorithm for both backtests and live paper trading. The algorithm is identical in both modes; only the price source differs: in backtest replay the fill price comes from the next candle's open price, while in live paper mode it comes from the current executable market price supplied by the execution context. Binance Spot testnet execution is added later through the same interface.
+The `Broker` interface exposes order submission, cancellation, account state, positions, and reconciliation. Paper execution is deterministic and uses the shared Broker fill algorithm for both backtests and live paper trading. The algorithm is identical in both modes; only the price source differs: in backtest replay the fill price comes from the next candle's open price, while in live paper mode it comes from the current executable market price supplied by the execution context. Binance USDⓈ-M Futures testnet execution is added later through the same interface.
 
 **Trade lifecycle:** A `Trade` entity is created when a position opens and finalized when the position closes. It aggregates fills and carries gross/net P&L, fees, and market context. Trades are the canonical source of truth for journaling and analytics.
 

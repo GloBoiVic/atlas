@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from backend.core.account_mode import AccountMode
     from backend.data.models import Candle as CandleDomain
     from backend.execution.models import Fill, Order, Position, Trade
+    from backend.execution.paper_broker import FundingAdjustment
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,6 +207,9 @@ class ExecutionRepository(Protocol):
     ) -> list[Order]:
         """Return durable orders which still require broker reconciliation."""
 
+    async def get_orders(self, *, account_id: UUID, mode: AccountMode) -> list[Order]:
+        """Return all durable orders for paper-broker restart reconstruction."""
+
     async def append_fill(self, fill: Fill) -> Fill:
         """Append one fill, returning the existing fill on duplicate broker ID."""
 
@@ -214,6 +218,14 @@ class ExecutionRepository(Protocol):
 
     async def get_fills(self, *, account_id: UUID, mode: AccountMode) -> list[Fill]:
         """Return durable fills for reconciliation."""
+
+    async def save_funding_adjustment(self, adjustment: FundingAdjustment) -> FundingAdjustment:
+        """Persist one idempotent funding settlement."""
+
+    async def get_funding_adjustments(
+        self, *, account_id: UUID, instrument_id: UUID | None, mode: AccountMode
+    ) -> list[FundingAdjustment]:
+        """Return funding settlements for one account/instrument/mode scope."""
 
     async def get_positions(self, *, account_id: UUID, mode: AccountMode) -> list[Position]:
         """Return durable active positions for reconciliation."""

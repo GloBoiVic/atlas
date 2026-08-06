@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 
     from backend.data.models import Candle as CandleDomain
     from backend.execution.models import Fill, Order, Position, Trade
+    from backend.execution.paper_broker import FundingAdjustment
 
 from backend.persistence.repositories.candle_semantics import validate_candle_query
 from backend.persistence.repositories.protocols import (
@@ -258,6 +259,7 @@ class InMemoryExecutionRepository:
         self._positions: dict[tuple[UUID, UUID, AccountMode], Position] = {}
         self._trades: dict[UUID, Trade] = {}
         self._reconciliations: dict[UUID, ReconciliationRecord] = {}
+        self._funding: dict[tuple[UUID, UUID, AccountMode, object], FundingAdjustment] = {}
         self._lock = asyncio.Lock()
 
     async def create_order(self, order: Order) -> Order:
@@ -290,6 +292,14 @@ class InMemoryExecutionRepository:
                 and order.status.value not in {"filled", "canceled", "rejected", "expired"}
             ]
 
+    async def get_orders(self, *, account_id: UUID, mode: AccountMode) -> list[Order]:
+        async with self._lock:
+            return [
+                order
+                for order in self._orders.values()
+                if order.account_id == account_id and order.mode == mode
+            ]
+
     async def update_order(self, order: Order) -> Order:
         async with self._lock:
             self._orders[order.client_order_id] = order
@@ -320,6 +330,33 @@ class InMemoryExecutionRepository:
                 for fill in self._fills.values()
                 if fill.account_id == account_id and order_modes.get(fill.order_id) == mode
             ]
+
+    async def save_funding_adjustment(self, adjustment: FundingAdjustment) -> FundingAdjustment:
+        timestamp = adjustment.funding_timestamp or adjustment.applied_at
+        if adjustment.instrument_id is None:
+            raise ValueError("funding adjustment requires an instrument")
+        key = (adjustment.account_id, adjustment.instrument_id, adjustment.mode, timestamp)
+        async with self._lock:
+            existing = self._funding.get(key)
+            if existing is not None:
+                return existing
+            self._funding[key] = adjustment
+            return adjustment
+
+    async def get_funding_adjustments(
+        self, *, account_id: UUID, instrument_id: UUID | None, mode: AccountMode
+    ) -> list[FundingAdjustment]:
+        async with self._lock:
+            return sorted(
+                (
+                    adjustment
+                    for adjustment in self._funding.values()
+                    if adjustment.account_id == account_id
+                    and (instrument_id is None or adjustment.instrument_id == instrument_id)
+                    and adjustment.mode == mode
+                ),
+                key=lambda adjustment: adjustment.funding_timestamp or adjustment.applied_at,
+            )
 
     async def get_positions(self, *, account_id: UUID, mode: AccountMode) -> list[Position]:
         async with self._lock:

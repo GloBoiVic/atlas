@@ -1,5 +1,37 @@
 # Current Feature
 
+## Feature 09 Phase 8 — Tier 2 review fixes — complete (2026-08-05)
+
+- [x] Reconstructed paper balance on restore from durable fill fees/realized P&L and funding,
+      with idempotent Decimal semantics and regression coverage for profitable closes.
+- [x] Added behavioral funding, maintenance-ordering, position-lifecycle, mode-filtering, and
+      FundingAdjustment boundary tests; funding now reads the broker's authoritative position.
+- [x] Aligned FundingAdjustment required fields with the non-null persistence contract.
+- [x] Focused tests: 18 passed; changed-slice Ruff and mypy clean.
+
+Validation: full backend pytest 427 passed; 1 pre-existing frontend Dockerfile assertion failed.
+Full Ruff clean; changed-slice mypy clean. No commit created.
+
+Last updated: 2026-08-05
+
+## Feature 09 Phase 8 — live USDⓈ-M Futures paper pipeline — complete (2026-08-05)
+
+- [x] Added the explicit `MarketContext` → `ExecutableMarket` adapter with Decimal/UTC,
+      provider/instrument validation, and no live `next_candle_open`.
+- [x] Added isolated `LivePaperPipeline` assembly over the existing feed, StrategyEngine,
+      RiskEngine, ExecutionEngine, and Futures-aware PaperBroker contracts.
+- [x] Added account/instrument/mode-scoped durable funding settlements with idempotent keys,
+      operational mark sampling, deterministic maintenance ordering, and final-state persistence.
+- [x] Added paper restart reconstruction from durable orders, fills, positions, and funding facts;
+      no broker snapshot was introduced.
+- [x] Updated Feature 09 Phase 8 acceptance status and added focused adapter/recovery tests.
+
+Validation: focused execution/migration/model tests 49 passed; full backend pytest 422 passed,
+1 pre-existing frontend Dockerfile assertion failed; changed-slice Ruff and mypy clean.
+Blocker: PostgreSQL/Docker integration was not available in this environment.
+
+Last updated: 2026-08-05
+
 ## Feature 08 — Task 6 LiveProviderRegistry and documentation gate — complete (2026-08-05)
 
 - [x] Add separate broker-agnostic live-provider factory registry with deterministic duplicate/
@@ -428,6 +460,36 @@ Last updated: 2026-08-04
 - [x] Updated `CURRENT.md` with completed slices and remaining validation state
 - [x] No application source code, dependencies, migrations, or `.env` modified
 - [x] Feature 04 final validation gate passed: 256 tests, Ruff clean, mypy clean
+
+## Feature 09 — Documentation reconciliation complete (2026-08-05)
+
+- [x] Reconciled 7 context files to Binance USDⓈ-M Futures per `dispatch/ARCHITECTURE.md`
+- [x] Ran documentation consistency checks — 1 finding reported below
+- [x] No application source code, dependencies, migrations, or `.env` modified
+- [x] No Feature 09 paper pipeline implemented
+
+### Changes applied
+
+| File | Changes |
+|------|---------|
+| `context/architecture.md` | Purpose line, rate-limit paragraph (USDⓈ-M Futures, safe phrasing, no unverified numbers), Broker interface testnet reference |
+| `context/project-brief.md` | "first concrete integration" → live-data/execution USDⓈ-M Futures; authenticated adapter → Phase 11; paper-to-testnet workflow |
+| `context/roadmap.md` | Overview workflow, Phase 3/8/11 goals, deferred scope (COIN-M), MVP completion criteria all updated to USDⓈ-M Futures |
+| `context/tech-stack.md` | WebSocket section names `fstream` integration |
+| `context/features/09-live-trading.md` | Phase 11 title/description, configuration broker name (`binance_usdm`), BinanceBroker example replaced with deferred Phase 11 stub (no `defaultType: spot`), acceptance criterion |
+| `context/features/10-journal-analytics.md` | Removed stale "Spot" qualifier from 24/7 annualization note |
+| `context/features/13-polish-testing.md` | Testnet boundary wording — removed "Binance Spot" qualifier |
+
+### Consistency check — 1 finding
+
+**Finding F1 (stale — resolved 2026-08-05):** `context/features/08-live-data-streaming.md`
+line 48 stated "Binance Spot live streaming... are deferred." — corrected to state that
+Feature 08 provides Binance USDⓈ-M Futures live streaming and Feature 09 consumes it.
+OANDA streaming and COIN-M Futures remain deferred.
+
+All other remaining `Binance Spot` references in `context/` are intentional historical
+references (Feature 03/05 historical provider, data format docs, library-docs implementation
+note) per ARCHITECTURE.md preservation rule.
 
 ## What comes next
 
