@@ -12,9 +12,9 @@ def test_frontend_dockerfile_preserves_standalone_runtime_contract() -> None:
     assert "output: \"standalone\"" in (ROOT / "frontend/next.config.ts").read_text()
     assert "RUN mkdir -p public && npm run build" in dockerfile
     assert "COPY --from=builder /app/public ./public" in dockerfile
-    assert "COPY --from=builder /app/.next/standalone ./.next/standalone" in dockerfile
+    assert "COPY --from=builder /app/.next/standalone ./" in dockerfile
     assert "COPY --from=builder /app/.next/static ./.next/static" in dockerfile
     assert "ENV NODE_ENV=production" in dockerfile
     assert "ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}" in dockerfile
-    assert 'CMD ["node", ".next/standalone/server.js"]' in dockerfile
+    assert 'CMD ["node", "server.js"]' in dockerfile
     assert 'CMD ["npm", "start"]' not in dockerfile
