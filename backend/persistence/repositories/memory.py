@@ -1,17 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from backend.core.account_mode import AccountMode
 
 if TYPE_CHECKING:
-    from datetime import datetime
-
     from backend.data.models import Candle as CandleDomain
     from backend.execution.models import Fill, Order, Position, Trade
     from backend.execution.paper_broker import FundingAdjustment
+    from backend.journal.models import JournalEntry
 
 from backend.persistence.repositories.candle_semantics import validate_candle_query
 from backend.persistence.repositories.protocols import (
@@ -247,6 +248,65 @@ class InMemoryCandleRepository(CandleRepository):
                 and start <= candle.open_time <= end
             ]
         return sorted(matching, key=lambda candle: (candle.open_time, self._make_key(candle)))
+
+
+class InMemoryJournalRepository:
+    """Concurrency-safe journal repository used by service and contract tests."""
+
+    def __init__(self, entries: list[JournalEntry] | None = None) -> None:
+        self._entries = {entry.id: entry for entry in entries or []}
+        self._by_trade_id = {entry.trade_id: entry.id for entry in entries or []}
+        self._lock = asyncio.Lock()
+
+    async def create(self, entry: JournalEntry) -> JournalEntry:
+        async with self._lock:
+            existing_id = self._by_trade_id.get(entry.trade_id)
+            if existing_id is not None:
+                return self._entries[existing_id]
+            self._entries[entry.id] = entry
+            self._by_trade_id[entry.trade_id] = entry.id
+            return entry
+
+    async def save(self, entry: JournalEntry) -> JournalEntry:
+        return await self.create(entry)
+
+    async def get(self, entry_id: UUID) -> JournalEntry | None:
+        async with self._lock:
+            return self._entries.get(entry_id)
+
+    async def get_by_trade_id(self, trade_id: UUID) -> JournalEntry | None:
+        async with self._lock:
+            entry_id = self._by_trade_id.get(trade_id)
+            return self._entries.get(entry_id) if entry_id is not None else None
+
+    async def list_entries(
+        self,
+        *,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        bot_id: UUID | None = None,
+    ) -> list[JournalEntry]:
+        from backend.persistence.repositories.journal import _validate_range
+
+        _validate_range(start, end)
+        async with self._lock:
+            entries = [
+                entry
+                for entry in self._entries.values()
+                if (start is None or entry.opened_at >= start)
+                and (end is None or entry.opened_at <= end)
+                and (bot_id is None or entry.bot_id == bot_id)
+            ]
+        return sorted(entries, key=lambda entry: (entry.opened_at, entry.id))
+
+    async def update_notes(self, entry_id: UUID, notes: str | None) -> JournalEntry | None:
+        async with self._lock:
+            entry = self._entries.get(entry_id)
+            if entry is None:
+                return None
+            updated = replace(entry, notes=notes, updated_at=datetime.now(UTC))
+            self._entries[entry_id] = updated
+            return updated
 
 
 class InMemoryExecutionRepository:

@@ -76,6 +76,7 @@ def test_metadata_registers_all_bot_foreign_key_targets() -> None:
             "backtest_runs",
             "backtest_trades",
             "funding_adjustments",
+            "journal_entries",
         }
     assert Strategy.__table__.c.name.unique is True
     assert StrategyVersion.__table__.c.strategy_id.foreign_keys

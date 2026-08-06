@@ -410,12 +410,52 @@ class FundingAdjustment(Base):
     applied_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class JournalEntryModel(Base):
+    """Historical journal projection attached to one execution trade."""
+
+    __tablename__ = "journal_entries"
+    __table_args__ = (Index("idx_journal_strategy", "strategy_name"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    account_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("accounts.id"), nullable=False)
+    bot_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("bots.id"))
+    strategy_version_id: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("strategy_versions.id")
+    )
+    trade_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("trades.id"), nullable=False, unique=True
+    )
+    instrument_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("instruments.id"))
+    symbol: Mapped[str] = mapped_column(String(50), nullable=False)
+    direction: Mapped[str] = mapped_column(String(10), nullable=False)
+    entry_price: Mapped[Decimal] = mapped_column(Numeric(28, 12), nullable=False)
+    exit_price: Mapped[Decimal | None] = mapped_column(Numeric(28, 12))
+    quantity: Mapped[Decimal] = mapped_column(Numeric(28, 12), nullable=False)
+    pnl: Mapped[Decimal | None] = mapped_column(Numeric(28, 12))
+    strategy_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    signal: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, default=dict)
+    market_conditions: Mapped[dict[str, object]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
+    notes: Mapped[str | None] = mapped_column(Text)
+    risk_metadata: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, default=dict)
+    opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
+    )
+
+
 # Persistence names remain explicit internally to avoid confusing ORM rows with the
 # immutable execution-domain contracts; these aliases provide the conventional public names.
 Order = ExecutionOrder
 Fill = ExecutionFill
 Position = ExecutionPosition
 Trade = ExecutionTrade
+JournalEntry = JournalEntryModel
 
 
 class BacktestRunModel(Base):

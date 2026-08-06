@@ -1,6 +1,8 @@
+from backend.persistence.repositories.journal import SqlAlchemyJournalRepository
 from backend.persistence.repositories.memory import (
     InMemoryCandleRepository,
     InMemoryInstrumentRepository,
+    InMemoryJournalRepository,
     InMemorySupervisorRepositories,
 )
 from backend.persistence.repositories.protocols import (
@@ -10,6 +12,7 @@ from backend.persistence.repositories.protocols import (
     ExecutionRepository,
     InstrumentRecord,
     InstrumentRepository,
+    JournalRepository,
     LifecycleUpdate,
     ReconciliationRecord,
     ReconciliationRepository,
@@ -28,14 +31,17 @@ __all__ = [
     "ExecutionRepository",
     "InMemoryCandleRepository",
     "InMemoryInstrumentRepository",
+    "InMemoryJournalRepository",
     "InMemorySupervisorRepositories",
     "InstrumentRecord",
     "InstrumentRepository",
+    "JournalRepository",
     "LifecycleUpdate",
     "ReconciliationRecord",
     "ReconciliationRepository",
     "SqlAlchemyCandleRepository",
     "SqlAlchemyInstrumentRepository",
     "SqlAlchemySupervisorRepositories",
+    "SqlAlchemyJournalRepository",
     "SupervisorRepositories",
 ]

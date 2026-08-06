@@ -16,6 +16,7 @@ from backend.persistence.models import (  # noqa: F401
     ExecutionPosition,
     ExecutionTrade,
     Instrument,
+    JournalEntryModel,
     ReconciliationRun,
     Strategy,
     StrategyVersion,

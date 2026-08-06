@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from backend.data.models import Candle as CandleDomain
     from backend.execution.models import Fill, Order, Position, Trade
     from backend.execution.paper_broker import FundingAdjustment
+    from backend.journal.models import JournalEntry
 
 
 @dataclass(frozen=True, slots=True)
@@ -243,3 +244,31 @@ class ExecutionRepository(Protocol):
 
     async def get_trade_by_position(self, position_id: UUID) -> Trade | None:
         """Load the open trade associated with a net position."""
+
+
+class JournalRepository(Protocol):
+    """Persistence boundary for immutable trade snapshots and mutable notes."""
+
+    async def create(self, entry: JournalEntry) -> JournalEntry:
+        """Create once by ``trade_id``, returning the existing entry on replay."""
+
+    async def save(self, entry: JournalEntry) -> JournalEntry:
+        """Compatibility spelling for idempotent creation."""
+
+    async def get(self, entry_id: UUID) -> JournalEntry | None:
+        """Return an entry by its ID."""
+
+    async def get_by_trade_id(self, trade_id: UUID) -> JournalEntry | None:
+        """Return the entry anchored to a trade."""
+
+    async def list_entries(
+        self,
+        *,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        bot_id: UUID | None = None,
+    ) -> list[JournalEntry]:
+        """List entries using inclusive UTC opened-at bounds and an optional bot filter."""
+
+    async def update_notes(self, entry_id: UUID, notes: str | None) -> JournalEntry | None:
+        """Update only human-authored notes."""
