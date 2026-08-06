@@ -101,3 +101,52 @@ export async function createBacktest(
   const response = await api.post<BacktestRun>('/backtests', request);
   return response.data;
 }
+
+export interface JournalEntry {
+  id: string;
+  account_id: string;
+  trade_id: string;
+  bot_id: string | null;
+  strategy_version_id: string | null;
+  instrument_id: string | null;
+  symbol: string;
+  direction: "long" | "short" | string;
+  entry_price: string;
+  exit_price: string | null;
+  quantity: string;
+  pnl: string | null;
+  strategy_name: string;
+  signal: Record<string, unknown>;
+  market_conditions: Record<string, unknown>;
+  notes: string | null;
+  risk_metadata: Record<string, unknown>;
+  opened_at: string;
+  closed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface JournalListFilters {
+  start_date?: string;
+  end_date?: string;
+  bot_id?: string;
+}
+
+export interface JournalNotesUpdateRequest {
+  notes: string | null;
+}
+
+export async function listJournalEntries(
+  filters: JournalListFilters = {},
+): Promise<JournalEntry[]> {
+  const response = await api.get<JournalEntry[]>('/journal', { params: filters });
+  return response.data;
+}
+
+export async function updateJournalNotes(
+  id: string,
+  request: JournalNotesUpdateRequest,
+): Promise<JournalEntry> {
+  const response = await api.patch<JournalEntry>(`/journal/${id}/notes`, request);
+  return response.data;
+}

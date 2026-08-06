@@ -75,3 +75,26 @@ Last updated: 2026-08-04
 **Pattern notes:** Status uses text plus semantic color. Metrics keep API Decimal
 strings in `font-atlas-mono`; absolute monetary drawdown is labeled explicitly and
 is not converted into a percentage.
+
+### Journal page and entry rows
+
+File: `frontend/src/app/journal/journal-view.tsx`
+Last updated: 2026-08-05
+
+| Property         | Class |
+| ---------------- | ----- |
+| Background       | `bg-atlas-bg`, `bg-atlas-surface`, `bg-atlas-bg-elevated` |
+| Border           | `border border-atlas-border` |
+| Border radius    | `rounded-atlas`, `rounded-atlas-md`, `rounded-atlas-pill` |
+| Text — primary   | `text-atlas-fg` |
+| Text — secondary | `text-atlas-fg-secondary` |
+| Spacing          | `px-atlas-5 sm:px-atlas-6`, `py-atlas-5`, `gap-atlas-4`, `gap-atlas-5` |
+| Typography       | `text-atlas-md`, `text-atlas-lg`, `text-atlas-xs`, `font-atlas-semibold`, `font-atlas-mono` |
+| Hover/focus      | `hover:bg-atlas-bg-elevated`, `focus:ring-2 focus:ring-atlas-accent/30` |
+| Shadow           | none |
+| Accent usage     | `text-atlas-accent`, `bg-atlas-accent`, semantic positive/negative tokens |
+
+**Pattern notes:** Journal rows prioritize identity, immutable Decimal-string trade facts, and
+P&L. Signal and market context use a native disclosure panel so detail does not overwhelm the
+scan path. Notes are the only editable field; saves are explicit, pending, and notified with
+Sonner. Mobile rows stack while desktop preserves a scan-friendly data grid.
