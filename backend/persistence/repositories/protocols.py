@@ -17,6 +17,23 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True, slots=True)
+class StrategyVersionRecord:
+    """Persistence-neutral strategy identity shared by services."""
+
+    id: UUID
+    name: str
+    version: str
+    commit_sha: str
+
+
+class StrategyVersionRepository(Protocol):
+    """Look up a persisted strategy version identity."""
+
+    async def get(self, strategy_version_id: UUID) -> StrategyVersionRecord | None:
+        """Return the persisted strategy version identity, if it exists."""
+
+
+@dataclass(frozen=True, slots=True)
 class BotRecord:
     """Persistence-neutral bot data needed by the supervisor."""
 

@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 import structlog
@@ -13,6 +13,7 @@ import structlog
 from backend.backtester.engine import BacktesterEngine
 from backend.backtester.models import BacktestConfig, BacktestRun, BacktestStatus
 from backend.data.models import Instrument
+from backend.persistence.repositories.protocols import StrategyVersionRecord
 
 if TYPE_CHECKING:
     from backend.backtester.models import BacktestTrade
@@ -20,26 +21,14 @@ if TYPE_CHECKING:
         BacktestRepository,
         CandleRepository,
         InstrumentRepository,
+        StrategyVersionRepository,
     )
     from backend.strategy.registry import StrategyRegistry
 
 logger = structlog.get_logger(__name__).bind(component="BacktestService")
 MAX_ERROR_LENGTH = 1000
 
-
-@dataclass(frozen=True, slots=True)
-class StrategyVersionRecord:
-    """Trusted persisted identity used to select a deployed strategy factory."""
-
-    id: UUID
-    name: str
-    version: str
-    commit_sha: str
-
-
-class StrategyVersionRepository(Protocol):
-    async def get(self, strategy_version_id: UUID) -> StrategyVersionRecord | None:
-        """Return the persisted strategy version identity."""
+__all__ = ["BacktestRunConflict", "BacktestService", "StrategyVersionRecord"]
 
 
 class BacktestRunConflict(RuntimeError):

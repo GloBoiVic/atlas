@@ -16,6 +16,8 @@ from backend.persistence.repositories.protocols import (
     LifecycleUpdate,
     ReconciliationRecord,
     ReconciliationRepository,
+    StrategyVersionRecord,
+    StrategyVersionRepository,
     SupervisorRepositories,
 )
 from backend.persistence.repositories.sqlalchemy import (
@@ -39,6 +41,8 @@ __all__ = [
     "LifecycleUpdate",
     "ReconciliationRecord",
     "ReconciliationRepository",
+    "StrategyVersionRecord",
+    "StrategyVersionRepository",
     "SqlAlchemyCandleRepository",
     "SqlAlchemyInstrumentRepository",
     "SqlAlchemySupervisorRepositories",
