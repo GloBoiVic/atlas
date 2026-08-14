@@ -34,7 +34,7 @@ RUNNING Deployment receives canonical data: OANDA EUR/USD → 1m → 15m MID →
 
 ## Warm-Up / Strategy State / Catch-Up
 
-Before new exposure: required history loaded, indicators initialized (100 EMA, 14 ATR for reference). No exposure created during warm-up. Persist Strategy state (direction, reference levels, sweep_time, confirmation_bars_elapsed). State must survive restart — no reliance on process memory. After downtime: process missed bars chronologically to reconstruct state. Replaying bars ≠ submitting stale entries. Catch-up may update state but must not blindly execute stale entry opportunities.
+Before new exposure: required history loaded, indicators initialized (100 EMA, 14 ATR for reference). No exposure created during warm-up; with exposure disallowed the Strategy returns NO_ACTION, remains SEARCHING with all pending setup fields cleared, and neither selects a reference nor creates or advances a setup. Persist Strategy state (direction, reference levels, sweep_time, window-candle count since reference selection, last evaluated bar end). State must survive restart — no reliance on process memory. After downtime: process missed bars chronologically to reconstruct state. Replaying bars ≠ submitting stale entries. Catch-up may update state but must not blindly execute stale entry opportunities.
 
 ## Position Rule / PAPER vs LIVE / LIVE Activation
 
