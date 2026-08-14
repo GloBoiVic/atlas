@@ -36,8 +36,14 @@ def test_migration_cycle(migration_url: str) -> None:
         config = alembic_config(migration_url)
         command.upgrade(config, "head")
         inspector = inspect(engine)
-        assert inspector.get_table_names() == ["alembic_version"]
+        assert inspector.get_table_names() == [
+            "alembic_version",
+            "strategies",
+            "strategy_versions",
+        ]
+        command.check(config)
         command.downgrade(config, "base")
+        assert inspect(engine).get_table_names() == ["alembic_version"]
         command.upgrade(config, "head")
     finally:
         engine.dispose()

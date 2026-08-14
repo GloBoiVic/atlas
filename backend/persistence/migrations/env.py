@@ -4,12 +4,12 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from backend.config import get_settings
-from backend.persistence.base import Base
+from backend.persistence import models
 
 config = context.config
 if config.config_file_name:
     fileConfig(config.config_file_name)
-target_metadata = Base.metadata
+target_metadata = models.Base.metadata
 
 
 def run_migrations_offline() -> None:

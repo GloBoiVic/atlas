@@ -1,0 +1,557 @@
+"""Immutable, serializable primitives at the public Strategy boundary."""
+
+from collections.abc import Mapping
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+from enum import StrEnum
+from typing import Any, cast
+from uuid import UUID
+
+from .market_data import Bar, DomainError, InputError, Instrument, Timeframe
+
+
+class ParameterError(InputError):
+    pass
+
+
+class StateError(DomainError):
+    pass
+
+
+class VersionError(DomainError):
+    pass
+
+
+class EvaluationError(DomainError):
+    pass
+
+
+class Direction(StrEnum):
+    LONG = "LONG"
+    SHORT = "SHORT"
+
+
+class Position(StrEnum):
+    FLAT = "FLAT"
+    LONG = "LONG"
+    SHORT = "SHORT"
+
+
+class Action(StrEnum):
+    NO_ACTION = "NO_ACTION"
+    OPEN_LONG = "OPEN_LONG"
+    OPEN_SHORT = "OPEN_SHORT"
+    CLOSE_POSITION = "CLOSE_POSITION"
+    UPDATE_PROTECTION = "UPDATE_PROTECTION"
+
+
+class Phase(StrEnum):
+    SEARCHING = "SEARCHING"
+    REFERENCE_IDENTIFIED = "REFERENCE_IDENTIFIED"
+    AWAITING_CONFIRMATION = "AWAITING_CONFIRMATION"
+
+
+class TargetMethodology(StrEnum):
+    R_MULTIPLE = "R_MULTIPLE"
+
+
+def _utc(value: datetime, name: str) -> datetime:
+    if (
+        type(value) is not datetime
+        or value.tzinfo is None
+        or value.utcoffset() != timedelta(0)
+    ):
+        raise InputError(f"{name} must be timezone-aware UTC")
+    return value
+
+
+def _dec(value: Decimal, name: str) -> Decimal:
+    if type(value) is not Decimal:
+        raise InputError(f"{name} must be a Decimal")
+    if not value.is_finite():
+        raise InputError(f"{name} must be finite")
+    return value
+
+
+@dataclass(frozen=True, slots=True)
+class StrategyParameters:
+    ema_period: int = 100
+    atr_period: int = 14
+    stop_buffer: Decimal = Decimal("0.5")
+    target_r: Decimal = Decimal("1.7")
+    expiry_window: int = 5
+
+    def __post_init__(self) -> None:
+        for name in ("ema_period", "atr_period", "expiry_window"):
+            value = getattr(self, name)
+            if type(value) is not int or value <= 0:
+                raise ParameterError(f"{name} must be a positive integer")
+        if self.expiry_window != 5:
+            raise ParameterError("Phase 1 expiry_window is fixed at five received bars")
+        for name in ("stop_buffer", "target_r"):
+            try:
+                value = _dec(getattr(self, name), name)
+            except (TypeError, ValueError) as error:
+                raise ParameterError(str(error)) from error
+            if value <= 0:
+                raise ParameterError(f"{name} must be positive")
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "ema_period": self.ema_period,
+            "atr_period": self.atr_period,
+            "stop_buffer": str(self.stop_buffer),
+            "target_r": str(self.target_r),
+            "expiry_window": self.expiry_window,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ParameterSchema:
+    key: str
+    label: str
+    type: str
+    default: int | str | None
+    nullable: bool
+    minimum: int | str | None
+    maximum: int | str | None
+    description: str
+    allowed_values: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if any(
+            type(value) is not str
+            for value in (self.key, self.label, self.type, self.description)
+        ):
+            raise ParameterError("parameter descriptor text fields must be strings")
+        if any(
+            not value for value in (self.key, self.label, self.type, self.description)
+        ):
+            raise ParameterError("parameter descriptor text fields must not be empty")
+        if type(self.nullable) is not bool or type(self.allowed_values) is not tuple:
+            raise ParameterError("parameter descriptor fields have invalid types")
+        if any(type(value) is not str for value in self.allowed_values):
+            raise ParameterError("allowed_values must contain strings")
+        if len(set(self.allowed_values)) != len(self.allowed_values):
+            raise ParameterError("allowed_values must not contain duplicates")
+        for name in ("default", "minimum", "maximum"):
+            value = getattr(self, name)
+            if value is not None and type(value) not in (int, str):
+                raise ParameterError(f"{name} must be an explicit JSON primitive")
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "key": self.key,
+            "label": self.label,
+            "type": self.type,
+            "default": self.default,
+            "nullable": self.nullable,
+            "min": self.minimum,
+            "max": self.maximum,
+            "description": self.description,
+            "allowed_values": list(self.allowed_values),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class StrategyContext:
+    evaluation_time: datetime
+    instrument: Instrument
+    bars: tuple[Bar, ...]
+    position: Position = Position.FLAT
+    exposure_allowed: bool = True
+
+    def __post_init__(self) -> None:
+        if type(self.instrument) is not Instrument:
+            raise InputError("instrument must be an Instrument")
+        if type(self.bars) is not tuple or any(
+            type(bar) is not Bar for bar in self.bars
+        ):
+            raise InputError("bars must be a tuple of Bar values")
+        if type(self.position) is not Position:
+            raise InputError("position must be a Position")
+        _utc(self.evaluation_time, "evaluation_time")
+        if self.instrument is not Instrument.EUR_USD:
+            raise InputError("only EUR/USD is supported")
+        if type(self.exposure_allowed) is not bool:
+            raise InputError("exposure_allowed must be bool")
+        for previous, current in zip(self.bars, self.bars[1:], strict=False):
+            if current.start_time <= previous.start_time:
+                raise InputError("bars must be strictly ordered and unique")
+        if any(bar.end_time > self.evaluation_time for bar in self.bars):
+            raise InputError("bars must end at or before evaluation_time")
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "evaluation_time": self.evaluation_time.isoformat().replace("+00:00", "Z"),
+            "instrument": self.instrument.value,
+            "bars": [bar.to_json() for bar in self.bars],
+            "position": self.position.value,
+            "exposure_allowed": self.exposure_allowed,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class StopProposal:
+    price: Decimal
+    direction: Direction
+
+    def __post_init__(self) -> None:
+        try:
+            _dec(self.price, "price")
+        except (TypeError, ValueError) as error:
+            raise InputError(str(error)) from error
+        if type(self.direction) is not Direction:
+            raise InputError("direction must be a Direction")
+
+    def to_json(self) -> dict[str, str]:
+        return {"price": str(self.price), "direction": self.direction.value}
+
+
+@dataclass(frozen=True, slots=True)
+class TargetProposal:
+    methodology: TargetMethodology = TargetMethodology.R_MULTIPLE
+    multiple: Decimal = Decimal("1.7")
+
+    def __post_init__(self) -> None:
+        if type(self.methodology) is not TargetMethodology:
+            raise InputError("methodology must be a TargetMethodology")
+        try:
+            multiple = _dec(self.multiple, "multiple")
+        except (TypeError, ValueError) as error:
+            raise InputError(str(error)) from error
+        if self.methodology is not TargetMethodology.R_MULTIPLE or multiple <= 0:
+            raise InputError("target must be a positive R_MULTIPLE")
+
+    def resolve(self, entry: Decimal, stop: Decimal, direction: Direction) -> Decimal:
+        if type(direction) is not Direction:
+            raise InputError("direction must be a Direction")
+        _dec(entry, "entry")
+        _dec(stop, "stop")
+        risk = abs(entry - stop)
+        if risk <= 0:
+            raise InputError("entry and stop must define positive risk")
+        return (
+            entry + self.multiple * risk
+            if direction is Direction.LONG
+            else entry - self.multiple * risk
+        )
+
+    def to_json(self) -> dict[str, str]:
+        return {"methodology": self.methodology.value, "multiple": str(self.multiple)}
+
+
+@dataclass(frozen=True, slots=True)
+class Rationale:
+    reason_code: str
+    fields: tuple[tuple[str, str], ...] = ()
+
+    def __post_init__(self) -> None:
+        if type(self.reason_code) is not str or type(self.fields) is not tuple:
+            raise InputError("rationale must contain strict immutable fields")
+        if not self.reason_code:
+            raise InputError("rationale reason_code must not be empty")
+        if any(
+            type(item) is not tuple
+            or len(item) != 2
+            or type(item[0]) is not str
+            or type(item[1]) is not str
+            for item in self.fields
+        ):
+            raise InputError("rationale fields must be string pairs")
+        keys = [item[0] for item in self.fields]
+        if len(set(keys)) != len(keys):
+            raise InputError("rationale fields must not contain duplicate keys")
+
+    def to_json(self) -> dict[str, Any]:
+        return {"reason_code": self.reason_code, "fields": dict(self.fields)}
+
+
+@dataclass(frozen=True, slots=True)
+class StrategyDecision:
+    action: Action
+    rationale: Rationale
+    direction: Direction | None = None
+    decision_time: datetime | None = None
+    stop: StopProposal | None = None
+    target: TargetProposal | None = None
+
+    def __post_init__(self) -> None:
+        if type(self.action) is not Action:
+            raise InputError("action must be an Action")
+        if type(self.rationale) is not Rationale:
+            raise InputError("rationale must be a Rationale")
+        if self.direction is not None and type(self.direction) is not Direction:
+            raise InputError("direction must be a Direction")
+        if self.stop is not None and type(self.stop) is not StopProposal:
+            raise InputError("stop must be a StopProposal")
+        if self.target is not None and type(self.target) is not TargetProposal:
+            raise InputError("target must be a TargetProposal")
+        if self.decision_time is not None:
+            _utc(self.decision_time, "decision_time")
+        opening = self.action in (Action.OPEN_LONG, Action.OPEN_SHORT)
+        if opening:
+            if self.decision_time is None:
+                raise InputError("OPEN decisions require a UTC decision time")
+            if self.direction is None or self.stop is None or self.target is None:
+                raise InputError("OPEN decisions require direction, stop, and target")
+            expected = (
+                Direction.LONG if self.action is Action.OPEN_LONG else Direction.SHORT
+            )
+            if self.direction is not expected or self.stop.direction is not expected:
+                raise InputError(
+                    "OPEN action, direction, and stop direction must match"
+                )
+        elif (
+            self.direction is not None
+            or self.stop is not None
+            or self.target is not None
+        ):
+            raise InputError("non-opening decisions cannot contain opening geometry")
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "action": self.action.value,
+            "direction": self.direction.value if self.direction else None,
+            "decision_time": self.decision_time.isoformat().replace("+00:00", "Z")
+            if self.decision_time
+            else None,
+            "stop": self.stop.to_json() if self.stop else None,
+            "target": self.target.to_json() if self.target else None,
+            "rationale": self.rationale.to_json(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class StrategyState:
+    schema_version: int = 1
+    phase: Phase = Phase.SEARCHING
+    direction: Direction | None = None
+    reference_high: Decimal | None = None
+    reference_low: Decimal | None = None
+    reference_time: datetime | None = None
+    sweep_time: datetime | None = None
+    window_bars: int = 0
+    last_evaluated_bar_end: datetime | None = None
+
+    def __post_init__(self) -> None:
+        if type(self.schema_version) is not int or type(self.window_bars) is not int:
+            raise StateError("schema_version and window_bars must be integers")
+        if self.schema_version != 1 or not 0 <= self.window_bars <= 5:
+            raise StateError("unsupported schema or window count")
+        if type(self.phase) is not Phase:
+            raise StateError("phase must be a Phase")
+        if self.direction is not None and type(self.direction) is not Direction:
+            raise StateError("direction must be a Direction")
+        for name in ("reference_high", "reference_low"):
+            value = getattr(self, name)
+            if value is not None:
+                try:
+                    _dec(value, name)
+                except (TypeError, ValueError) as error:
+                    raise StateError(str(error)) from error
+        for name in ("reference_time", "sweep_time", "last_evaluated_bar_end"):
+            value = getattr(self, name)
+            if value is not None:
+                try:
+                    _utc(value, name)
+                except (TypeError, ValueError) as error:
+                    raise StateError(str(error)) from error
+        active = self.phase is not Phase.SEARCHING
+        if active != (
+            self.reference_high is not None
+            and self.reference_low is not None
+            and self.reference_time is not None
+        ):
+            raise StateError("reference fields do not match phase")
+        if active and self.direction is None:
+            raise StateError("active state requires a direction")
+        if self.phase is Phase.SEARCHING and (
+            self.direction is not None
+            or self.sweep_time is not None
+            or self.window_bars
+        ):
+            raise StateError("searching state contains setup fields")
+        if self.phase is Phase.REFERENCE_IDENTIFIED and self.sweep_time is not None:
+            raise StateError("reference phase cannot have a sweep")
+        if self.phase is Phase.AWAITING_CONFIRMATION and (
+            self.sweep_time is None or self.window_bars == 0
+        ):
+            raise StateError("awaiting confirmation requires a sweep")
+
+    @classmethod
+    def from_json(cls, value: Mapping[str, Any]) -> "StrategyState":
+        required = {
+            "schema_version",
+            "phase",
+            "direction",
+            "reference_high",
+            "reference_low",
+            "reference_time",
+            "sweep_time",
+            "window_bars",
+            "last_evaluated_bar_end",
+        }
+        if type(value) is not dict:
+            raise StateError("state JSON must contain exactly the state fields")
+        payload = cast(dict[str, Any], value)
+        if set(payload) != required:
+            raise StateError("state JSON must contain exactly the state fields")
+
+        def decimal(name: str) -> Decimal | None:
+            raw: Any = payload[name]
+            if raw is None:
+                return None
+            if type(raw) is not str:
+                raise StateError(f"{name} must be a Decimal string")
+            try:
+                return Decimal(raw)
+            except Exception as error:
+                raise StateError(f"invalid Decimal in {name}") from error
+
+        def timestamp(name: str) -> datetime | None:
+            raw: Any = payload[name]
+            if raw is None:
+                return None
+            if type(raw) is not str:
+                raise StateError(f"{name} must be an ISO timestamp")
+            try:
+                return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            except ValueError as error:
+                raise StateError(f"invalid timestamp in {name}") from error
+
+        try:
+            phase = Phase(payload["phase"])
+            direction = (
+                Direction(payload["direction"])
+                if payload["direction"] is not None
+                else None
+            )
+        except (TypeError, ValueError) as error:
+            raise StateError("invalid state enum") from error
+        try:
+            return cls(
+                schema_version=payload["schema_version"],
+                phase=phase,
+                direction=direction,
+                reference_high=decimal("reference_high"),
+                reference_low=decimal("reference_low"),
+                reference_time=timestamp("reference_time"),
+                sweep_time=timestamp("sweep_time"),
+                window_bars=payload["window_bars"],
+                last_evaluated_bar_end=timestamp("last_evaluated_bar_end"),
+            )
+        except StateError:
+            raise
+        except (TypeError, ValueError) as error:
+            raise StateError("invalid state envelope") from error
+
+    def to_json(self) -> dict[str, Any]:
+        def stamp(value: datetime | None) -> str | None:
+            return value.isoformat().replace("+00:00", "Z") if value else None
+
+        return {
+            "schema_version": self.schema_version,
+            "phase": self.phase.value,
+            "direction": self.direction.value if self.direction else None,
+            "reference_high": str(self.reference_high)
+            if self.reference_high is not None
+            else None,
+            "reference_low": str(self.reference_low)
+            if self.reference_low is not None
+            else None,
+            "reference_time": stamp(self.reference_time),
+            "sweep_time": stamp(self.sweep_time),
+            "window_bars": self.window_bars,
+            "last_evaluated_bar_end": stamp(self.last_evaluated_bar_end),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class StrategyEvaluation:
+    decision: StrategyDecision
+    next_state: StrategyState
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.decision) is not StrategyDecision
+            or type(self.next_state) is not StrategyState
+        ):
+            raise InputError("evaluation must contain a decision and state")
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "decision": self.decision.to_json(),
+            "next_state": self.next_state.to_json(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class StrategyVersion:
+    id: UUID
+    strategy_key: str
+    version_number: int
+    source_fingerprint: str
+    implementation_key: str
+    parameter_schema: tuple[ParameterSchema, ...]
+    primary_timeframe: Timeframe = Timeframe.M15
+    warm_up_bars: int = 100
+    state_schema_version: int = 1
+    created_at: datetime = datetime.min.replace(tzinfo=UTC)
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.id) is not UUID
+            or type(self.strategy_key) is not str
+            or type(self.implementation_key) is not str
+            or type(self.source_fingerprint) is not str
+        ):
+            raise VersionError("version identity fields have invalid types")
+        if (
+            type(self.version_number) is not int
+            or type(self.warm_up_bars) is not int
+            or type(self.state_schema_version) is not int
+        ):
+            raise VersionError("version fields must be integers")
+        if type(self.primary_timeframe) is not Timeframe:
+            raise VersionError("primary_timeframe must be a Timeframe")
+        if type(self.parameter_schema) is not tuple or any(
+            type(item) is not ParameterSchema for item in self.parameter_schema
+        ):
+            raise VersionError("parameter_schema must be a tuple of descriptors")
+        if (
+            self.version_number <= 0
+            or self.warm_up_bars < 0
+            or self.state_schema_version <= 0
+        ):
+            raise VersionError(
+                "version numbers must be positive and warm-up nonnegative"
+            )
+        if (
+            len(self.source_fingerprint) != 64
+            or self.source_fingerprint != self.source_fingerprint.lower()
+        ):
+            raise VersionError("source fingerprint must be lowercase SHA-256")
+        if any(
+            character not in "0123456789abcdef" for character in self.source_fingerprint
+        ):
+            raise VersionError("source fingerprint must be hexadecimal")
+        try:
+            _utc(self.created_at, "created_at")
+        except (TypeError, ValueError) as error:
+            raise VersionError(str(error)) from error
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "id": str(self.id),
+            "strategy_key": self.strategy_key,
+            "version_number": self.version_number,
+            "source_fingerprint": self.source_fingerprint,
+            "implementation_key": self.implementation_key,
+            "parameter_schema": [item.to_json() for item in self.parameter_schema],
+            "primary_timeframe": self.primary_timeframe.value,
+            "warm_up_bars": self.warm_up_bars,
+            "state_schema_version": self.state_schema_version,
+            "created_at": self.created_at.isoformat().replace("+00:00", "Z"),
+        }
