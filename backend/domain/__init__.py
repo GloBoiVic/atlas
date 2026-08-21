@@ -2,11 +2,14 @@
 
 from .market_data import (
     Bar,
+    DatasetSnapshot,
     DomainError,
     InputError,
     Instrument,
     PriceComponent,
+    Provider,
     Timeframe,
+    VenueInstrument,
 )
 from .strategy import (
     Action,
@@ -33,6 +36,7 @@ from .strategy import (
 __all__ = [
     "Action",
     "Bar",
+    "DatasetSnapshot",
     "Direction",
     "DomainError",
     "EvaluationError",
@@ -43,6 +47,7 @@ __all__ = [
     "Phase",
     "Position",
     "PriceComponent",
+    "Provider",
     "Rationale",
     "StateError",
     "StopProposal",
@@ -55,5 +60,6 @@ __all__ = [
     "TargetMethodology",
     "TargetProposal",
     "Timeframe",
+    "VenueInstrument",
     "VersionError",
 ]

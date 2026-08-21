@@ -1,6 +1,8 @@
-# Atlas Phase 0
+# Atlas Phase 2 — Historical Data
 
-Foundation only: Next.js, FastAPI, synchronous SQLAlchemy/PostgreSQL, Alembic baseline, and `atlas-runtime`; no trading functionality.
+Atlas currently provides the historical EUR/USD data slice: OANDA Practice M1
+candles, immutable dataset snapshots, and deterministic M15 derivation. There
+are no trading, live, or API routes in this slice.
 
 ## Prerequisites
 
@@ -10,13 +12,17 @@ Foundation only: Next.js, FastAPI, synchronous SQLAlchemy/PostgreSQL, Alembic ba
 
 ## 1. Environment setup
 
-Copy `.env.example` to `.env` and edit values for your machine. `.env` is gitignored; never commit it or copy real credentials from anywhere else into it.
+Copy `.env.example` to `.env` and edit values for your machine. `.env` is
+gitignored. The OANDA token is optional for coverage, snapshot, and derivation;
+load and refresh fail clearly when it is absent.
 
 ```bash
 cp .env.example .env
 ```
 
-`.env.example` ships with local development defaults; adjust `ATLAS_DATABASE_URL` in `.env` to your own PostgreSQL credentials and database names.
+`.env.example` contains only a placeholder token. Put a real OANDA Practice
+token only in your untracked `.env`; it is sent only as an Authorization header
+to the fixed HTTPS Practice endpoint and is never a CLI argument or output.
 
 ## 2. Install dependencies
 
@@ -46,7 +52,27 @@ uv run alembic check
 
 Migrations live in `backend/persistence/migrations` and read `ATLAS_DATABASE_URL` from `.env`.
 
-## 4. Run the stack
+## 4. Historical data commands
+
+All ranges must be explicit UTC, minute-aligned, positive, half-open ranges.
+Commands print stable summaries; `--json` produces compact sorted-key JSON.
+
+```bash
+uv run atlas-data load-missing --start 2025-01-06T00:00:00Z --end 2025-01-07T00:00:00Z
+uv run atlas-data refresh --start 2025-01-06T00:00:00Z --end 2025-01-07T00:00:00Z
+uv run atlas-data coverage --start 2025-01-06T00:00:00Z --end 2025-01-07T00:00:00Z --warm-up-bars 50
+uv run atlas-data snapshot --start 2025-01-06T00:00:00Z --end 2025-01-07T00:00:00Z
+uv run atlas-data derive-m15 --snapshot-fingerprint <sha256> --component MID
+```
+
+Failures have a nonzero exit status. No raw database UUIDs or credentials are
+normal output. OANDA failures are bounded and sanitized; a timeout or partial
+provider failure never means that coverage is valid. Unknown holidays and
+unexpected observations fail closed. M15 is derived only from immutable
+snapshot membership; no forward fill, interpolation, or synthetic bars are
+created. OANDA Practice historical candles are the only external capability.
+
+## 5. Run the stack
 
 Run each command in its own terminal. Python application source and backend tests live directly under the `backend/` Python package.
 
@@ -72,17 +98,20 @@ Liveness is process-only; readiness checks PostgreSQL and returns sanitized 503 
 
 **Stopping:** press Ctrl+C in each terminal. The runtime also exits cleanly on SIGTERM.
 
-## 5. Validation
+## 6. Validation
 
 ```bash
 uv run ruff format --check backend
 uv run ruff check backend
 uv run pyright backend
-uv run pytest -m "not integration"
-uv run pytest -m integration
-npm run check:web
+uv run pytest -m "not integration and not external"
+ATLAS_TEST_DATABASE_URL=<dedicated *_test DB> uv run pytest -m integration
 npx playwright install chromium
+npm run check:web
 npm run test:e2e
 ```
 
 Integration tests require `ATLAS_TEST_DATABASE_URL` exported in your shell, pointing at a dedicated PostgreSQL database whose name ends in `_test` (e.g. `atlas_test`). Keep it out of `.env` — Atlas settings reject unknown `ATLAS_*` variables. Playwright e2e tests start their own web server (`npm run dev:web`) unless one is already running on port 3000.
+
+The credentialed OANDA check is separately marked `external`, is opt-in, uses a
+small closed historical range, and never calls account or trading endpoints.

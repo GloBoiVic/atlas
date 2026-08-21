@@ -5,11 +5,17 @@ from uuid import uuid4
 import pytest
 
 from backend.domain.market_data import (
+    ALIGNMENT_CONVENTION,
+    FINGERPRINT_SCHEMA,
+    SESSION_POLICY,
     Bar,
+    DatasetSnapshot,
     InputError,
     Instrument,
     PriceComponent,
+    Provider,
     Timeframe,
+    VenueInstrument,
 )
 from backend.domain.strategy import (
     Action,
@@ -80,6 +86,139 @@ def test_bar_rejects_invalid_contract_input(change: dict[str, object]) -> None:
 def test_bar_rejects_off_grid_15m_start() -> None:
     with pytest.raises(InputError):
         bar(datetime(2026, 1, 1, 10, 1, tzinfo=UTC))
+
+
+def test_market_data_boundary_accepts_m1_bid_and_ask() -> None:
+    for component in (PriceComponent.BID, PriceComponent.ASK):
+        candle = Bar(
+            Instrument.EUR_USD,
+            Timeframe.M1,
+            component,
+            datetime(2026, 1, 1, 10, 1, tzinfo=UTC),
+            datetime(2026, 1, 1, 10, 2, tzinfo=UTC),
+            Decimal("1.09"),
+            Decimal("1.11"),
+            Decimal("1.08"),
+            Decimal("1.10"),
+            volume=Decimal("2"),
+        )
+        assert candle.provider is Provider.OANDA
+        assert candle.to_json()["volume"] == "2"
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"provider": "OANDA"},
+        {
+            "instrument": Instrument.EUR_USD,
+            "provider": Provider.OANDA,
+            "provider_symbol": "EURUSD",
+        },
+        {
+            "instrument": Instrument.EUR_USD,
+            "provider": Provider.OANDA,
+            "provider_symbol": "EUR_USD",
+            "extra": True,
+        },
+    ],
+)
+def test_venue_instrument_rejects_invalid_mapping(values: dict[str, object]) -> None:
+    with pytest.raises((InputError, TypeError)):
+        VenueInstrument(**values)  # type: ignore[arg-type]
+
+
+def test_dataset_snapshot_validates_and_serializes_descriptor() -> None:
+    snapshot = DatasetSnapshot(
+        uuid4(),
+        VenueInstrument(Instrument.EUR_USD, Provider.OANDA, "EUR_USD"),
+        Timeframe.M1,
+        (PriceComponent.ASK, PriceComponent.BID, PriceComponent.MID),
+        datetime(2026, 1, 1, 10, 0, tzinfo=UTC),
+        datetime(2026, 1, 1, 11, 0, tzinfo=UTC),
+        ALIGNMENT_CONVENTION,
+        SESSION_POLICY,
+        FINGERPRINT_SCHEMA,
+        "a" * 64,
+        {"status": "VALID", "bar_count": 180},
+        datetime(2026, 1, 1, 12, tzinfo=UTC),
+    )
+    assert snapshot.to_json()["components"] == ["ASK", "BID", "MID"]
+    with pytest.raises(InputError):
+        DatasetSnapshot(
+            uuid4(),
+            snapshot.venue_instrument,
+            Timeframe.M15,
+            snapshot.components,
+            snapshot.coverage_start,
+            snapshot.coverage_end,
+            ALIGNMENT_CONVENTION,
+            SESSION_POLICY,
+            FINGERPRINT_SCHEMA,
+            "a" * 63,
+            {"status": "VALID"},
+            snapshot.created_at,
+        )
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"open": Decimal("0")},
+        {"high": Decimal("1.05")},
+        {"volume": Decimal("-1")},
+        {"end_time": datetime(2026, 1, 1, 10, 16, tzinfo=UTC)},
+    ],
+)
+def test_bar_rejects_invalid_values_timing_and_volume(
+    change: dict[str, object],
+) -> None:
+    values: dict[str, object] = {
+        "instrument": Instrument.EUR_USD,
+        "provider": Provider.OANDA,
+        "timeframe": Timeframe.M15,
+        "price_component": PriceComponent.MID,
+        "start_time": datetime(2026, 1, 1, 10, 0, tzinfo=UTC),
+        "end_time": datetime(2026, 1, 1, 10, 15, tzinfo=UTC),
+        "open": Decimal("1.09"),
+        "high": Decimal("1.11"),
+        "low": Decimal("1.08"),
+        "close": Decimal("1.10"),
+    }
+    values.update(change)
+    with pytest.raises(InputError):
+        Bar(**values)  # type: ignore[arg-type]
+
+
+def test_context_rejects_wrong_market_data_dimensions() -> None:
+    start = datetime(2026, 1, 1, 10, 0, tzinfo=UTC)
+    invalid = (
+        Bar(
+            Instrument.EUR_USD,
+            Timeframe.M1,
+            PriceComponent.MID,
+            start,
+            start + timedelta(minutes=1),
+            Decimal("1.09"),
+            Decimal("1.11"),
+            Decimal("1.08"),
+            Decimal("1.10"),
+        ),
+        Bar(
+            Instrument.EUR_USD,
+            Timeframe.M15,
+            PriceComponent.BID,
+            start,
+            start + timedelta(minutes=15),
+            Decimal("1.09"),
+            Decimal("1.11"),
+            Decimal("1.08"),
+            Decimal("1.10"),
+        ),
+    )
+    for candle in invalid:
+        with pytest.raises(InputError):
+            StrategyContext(candle.end_time, Instrument.EUR_USD, (candle,))
 
 
 def test_context_rejects_duplicate_or_future_bars() -> None:

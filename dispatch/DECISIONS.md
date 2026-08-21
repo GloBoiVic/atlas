@@ -1,3 +1,3 @@
 # Decisions
 
-No active workstream.
+No active decisions.

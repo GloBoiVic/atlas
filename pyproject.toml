@@ -13,15 +13,16 @@ dependencies = [
   "pydantic-settings>=2,<3",
   "sqlalchemy>=2,<3",
   "alembic>=1,<2",
+  "httpx<1",
   "psycopg[binary]>=3,<4",
 ]
 
 [project.scripts]
 atlas-runtime = "backend.runtime.main:main"
+atlas-data = "backend.market_data.cli:main"
 
 [dependency-groups]
 dev = [
-  "httpx<1",
   "pytest>=8,<9",
   "pyright>=1,<2",
   "ruff>=0.8,<1",
@@ -32,7 +33,10 @@ packages = ["backend"]
 
 [tool.pytest.ini_options]
 testpaths = ["backend/tests"]
-markers = ["integration: requires a dedicated PostgreSQL test database"]
+markers = [
+  "integration: requires a dedicated PostgreSQL test database",
+  "external: opt-in credentialed external provider validation",
+]
 
 [tool.ruff]
 line-length = 88

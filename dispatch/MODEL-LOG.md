@@ -1,3 +1,3 @@
 # Model Log
 
-No active workstream.
+No active model log.

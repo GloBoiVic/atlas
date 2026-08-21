@@ -8,7 +8,15 @@ from enum import StrEnum
 from typing import Any, cast
 from uuid import UUID
 
-from .market_data import Bar, DomainError, InputError, Instrument, Timeframe
+from .market_data import (
+    Bar,
+    DomainError,
+    InputError,
+    Instrument,
+    PriceComponent,
+    Provider,
+    Timeframe,
+)
 
 
 class ParameterError(InputError):
@@ -176,6 +184,14 @@ class StrategyContext:
             raise InputError("only EUR/USD is supported")
         if type(self.exposure_allowed) is not bool:
             raise InputError("exposure_allowed must be bool")
+        if any(
+            bar.instrument is not self.instrument
+            or bar.provider is not Provider.OANDA
+            or bar.timeframe is not Timeframe.M15
+            or bar.price_component is not PriceComponent.MID
+            for bar in self.bars
+        ):
+            raise InputError("StrategyContext requires OANDA EUR/USD M15 MID bars")
         for previous, current in zip(self.bars, self.bars[1:], strict=False):
             if current.start_time <= previous.start_time:
                 raise InputError("bars must be strictly ordered and unique")

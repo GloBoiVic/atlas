@@ -17,3 +17,33 @@ review artifact in `dispatch/`. Prior dispatch artifacts remain untouched in `di
 - **Non-blocking review observations:** (1) historical archived-version execution remains a later loader decision; (2) the source snapshot secret detector is intentionally narrow, not exhaustive; (3) Phase 1 remains deliberately fixed to EUR/USD MID 15m; (4) target resolution correctly remains caller-supplied entry geometry rather than fabricated execution data; (5) persistence downgrade is intentionally destructive and must remain an explicit operator action. None blocks this phase.
 - **State/authorization:** Commit `eed18db Implement Phase 1 reference strategy` was fast-forward merged into `main`.
 - **One-off dispatch inventory/material summary:** `dispatch/PHASE-1-BLUEPRINT.md` — approved scope, contract, EMA/ATR formulas, W1–W5 state machine, persistence shape, exclusions, and validation matrix; `dispatch/PHASE-1-READY.md` — verified READY receipt for the root, isolated path, branch, SHA, scope, and recovery/no-Git conditions; final independent completion review — R1 approval recorded above (no separate Phase 1 report artifact is present in root `dispatch/`). No secrets are recorded.
+- **Memory-save receipt:** `memory.md` successfully updated on 2026-08-14 after user approval; no secrets.
+
+<!-- completion-id: phase-2-historical-data-dataset-snapshot -->
+## Phase 2 Historical Data to DatasetSnapshot — completion record
+
+- **Date/status:** 2026-08-21 — terminal closure approved; final independent review **PASS**.
+- **Scope:** EUR/USD OANDA Practice historical completed M1 BID/MID/ASK ingestion, coverage and
+  gap validation, immutable corrected bar variants, deterministic M15 derivation, immutable
+  DatasetSnapshot persistence, narrow `atlas-data` CLI, and operator documentation. Experiment,
+  Risk, execution, live trading, streaming, scheduling, API, and UI remain out of scope.
+- **Acceptance evidence:** `uv run pytest -m integration` PASS 14/14 including DB CLI; Ruff
+  format/check, Pyright, and `uv run pytest -m "not integration and not external"` PASS with
+  126 tests; `uv run alembic current` and standalone `uv run alembic check` PASS with both DB
+  URLs pointed to the local `atlas_test` owner; one OANDA Practice EUR/USD historical smoke
+  test PASS for `[2026-08-18T13:00:00Z,2026-08-18T14:00:00Z)`, HTTP 200, with no account,
+  trading, live, or DB calls.
+- **Review:** Final independent review PASS; no Critical or Important findings. P2-05 and P2-06
+  are complete. Phase 3 is eligible after closure.
+- **Deferred Minors:** wrong-provider coverage; explicit timeframe mapping; serialization/
+  docstring cleanup; full integrity-summary shape; speculative aliases; hardcoded M1 header;
+  idempotent snapshot lookup coverage; service error-path and byte-serialization coverage;
+  summary-key casing; generic partial-fetch failure class. None blocks closure.
+- **Git/state:** No commits, pushes, merges, branch deletion, or worktree cleanup performed.
+- **Report inventory/material summary:** `dispatch/PHASE-2-BLUEPRINT.md` — authoritative scope,
+  contracts, invariants, gates, and acceptance criteria; `dispatch/PHASE-2-EXPLORATION.md` —
+  repository/context findings, risks, and narrow-slice recommendation; `dispatch/PHASE-2-READY.md`
+  — current feature-branch authorization and recovery constraints; all are preserved. No unknown
+  or user-authored reports were deleted.
+- **Memory-save receipt:** `memory.md` successfully updated on 2026-08-21 after explicit user
+  authorization; no secrets recorded. Terminal reset eligibility is satisfied.

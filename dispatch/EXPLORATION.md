@@ -1,3 +1,3 @@
 # Exploration
 
-No active workstream.
+No active exploration.

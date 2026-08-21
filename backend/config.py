@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     environment: Environment = Environment.DEVELOPMENT
     log_level: LogLevel = LogLevel.INFO
     database_connect_timeout_seconds: int = Field(default=3, ge=1, le=30)
+    oanda_api_token: SecretStr | None = None
+    oanda_connect_timeout_seconds: int = Field(default=5, ge=1, le=30)
+    oanda_read_timeout_seconds: int = Field(default=20, ge=1, le=120)
 
     @field_validator("database_url")
     @classmethod
