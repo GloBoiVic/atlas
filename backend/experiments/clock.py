@@ -27,6 +27,31 @@ class ClockPhase(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class M1Observation:
+    """One complete, chronological executable-resolution observation."""
+
+    start_time: datetime
+    end_time: datetime
+    bars: tuple[SnapshotBar, ...]
+
+    def __post_init__(self) -> None:
+        components = tuple(item.bar.price_component for item in self.bars)
+        if components != (
+            PriceComponent.ASK,
+            PriceComponent.BID,
+            PriceComponent.MID,
+        ):
+            raise ValueError("M1 observations require exactly ASK, BID, and MID")
+        if self.end_time != self.start_time + timedelta(minutes=1):
+            raise ValueError("M1 observation must span exactly one minute")
+        if any(
+            item.bar.start_time != self.start_time or item.bar.end_time != self.end_time
+            for item in self.bars
+        ):
+            raise ValueError("M1 observation bars must share one complete interval")
+
+
+@dataclass(frozen=True, slots=True)
 class ClockFrame:
     """One UTC M15 frontier, with decision and post-decision data separated."""
 
@@ -36,6 +61,7 @@ class ClockFrame:
     decision_bar: Bar
     executable_opens: tuple[SnapshotBar, ...]
     exposure_allowed: bool
+    execution_observations: tuple[M1Observation, ...] = ()
 
     @property
     def warmup(self) -> bool:
@@ -90,7 +116,7 @@ class SimulationClock:
             raise ValueError("insufficient completed M15 bars for warmup")
         self._warmup_ends = frozenset(
             bar.end_time for bar in warmup[-warmup_m15_bars:]
-        )
+        ) if warmup_m15_bars else frozenset()
 
     @staticmethod
     def _index_m1(
@@ -110,6 +136,14 @@ class SimulationClock:
                 )
             ):
                 raise ValueError("SimulationClock requires OANDA EUR/USD M1 bars")
+            if (
+                bar.start_time.tzinfo is None
+                or bar.start_time.utcoffset() != timedelta(0)
+                or bar.start_time.second
+                or bar.start_time.microsecond
+                or bar.end_time != bar.start_time + timedelta(minutes=1)
+            ):
+                raise ValueError("M1 bars must be UTC, minute-aligned, one-minute bars")
             bucket = by_start.setdefault(bar.start_time, [])
             if any(
                 existing.bar.price_component is bar.price_component
@@ -133,10 +167,53 @@ class SimulationClock:
                 or bar.price_component is not PriceComponent.MID
             ):
                 raise ValueError("SimulationClock requires OANDA EUR/USD M15 MID bars")
+            if (
+                bar.end_time != bar.start_time + timedelta(minutes=15)
+                or bar.start_time.tzinfo is None
+                or bar.start_time.utcoffset() != timedelta(0)
+                or bar.start_time.minute % 15
+                or bar.start_time.second
+                or bar.start_time.microsecond
+            ):
+                raise ValueError("M15 bars must be UTC, aligned, complete bars")
             if bar.end_time in result:
                 raise ValueError("duplicate M15 decision frontier")
             result[bar.end_time] = bar
         return dict(sorted(result.items()))
+
+    def observations(
+        self,
+        start: datetime | None = None,
+        end: datetime | None = None,
+    ) -> Iterator[M1Observation]:
+        """Yield complete M1 BID/ASK/MID observations without lookahead.
+
+        The default range is the requested half-open trading period.  Scheduled
+        session closures are absent by policy; an incomplete open-session minute
+        is rejected rather than being turned into a synthetic observation.
+        """
+        start = self.trading_start if start is None else _minute_utc(start, "start")
+        end = self.trading_end if end is None else _minute_utc(end, "end")
+        if end <= start:
+            raise ValueError("observation range must be positive")
+        for minute in sorted(at for at in self._m1 if start <= at < end):
+            if not is_session_open_minute(minute):
+                continue
+            items = self._m1[minute]
+            by_component = {item.bar.price_component: item for item in items}
+            if set(by_component) != {
+                PriceComponent.ASK,
+                PriceComponent.BID,
+                PriceComponent.MID,
+            }:
+                raise ValueError(f"incomplete M1 observation at {minute.isoformat()}")
+            yield M1Observation(
+                minute,
+                minute + timedelta(minutes=1),
+                tuple(by_component[component] for component in (
+                    PriceComponent.ASK, PriceComponent.BID, PriceComponent.MID
+                )),
+            )
 
     def frames(self) -> Iterator[ClockFrame]:
         """Yield warmup and trading frontiers in strictly increasing order."""
@@ -169,6 +246,17 @@ class SimulationClock:
                 for item in self._m1.get(frontier, ())
                 if item.bar.price_component in (PriceComponent.BID, PriceComponent.ASK)
             )
+            execution = ()
+            if phase is ClockPhase.DECISION and is_session_open_minute(frontier):
+                items = self._m1.get(frontier, ())
+                if {item.bar.price_component for item in items} == {
+                    PriceComponent.ASK,
+                    PriceComponent.BID,
+                    PriceComponent.MID,
+                }:
+                    execution = tuple(
+                        self.observations(frontier, frontier + timedelta(minutes=1))
+                    )
             yield ClockFrame(
                 frontier,
                 phase,
@@ -176,10 +264,22 @@ class SimulationClock:
                 decision_bar,
                 opens,
                 exposure_allowed,
+                execution,
             )
 
     def __iter__(self) -> Iterator[ClockFrame]:
         return self.frames()
 
 
-__all__ = ["ClockFrame", "ClockPhase", "SimulationClock"]
+def _minute_utc(value: datetime, name: str) -> datetime:
+    if (
+        value.tzinfo is None
+        or value.utcoffset() != timedelta(0)
+        or value.second
+        or value.microsecond
+    ):
+        raise ValueError(f"{name} must be UTC and minute-aligned")
+    return value.astimezone(UTC)
+
+
+__all__ = ["ClockFrame", "ClockPhase", "M1Observation", "SimulationClock"]

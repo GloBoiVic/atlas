@@ -227,11 +227,11 @@ class DatasetSnapshotBarModel(Base):
 class ExperimentModel(Base):
     __tablename__ = "experiments"
     __table_args__ = (
-        CheckConstraint("status IN ('RUNNING', 'COMPLETED', 'FAILED')", name="valid_status"),
+        CheckConstraint("status IN ('PENDING', 'RUNNING', 'COMPLETED', 'FAILED')", name="valid_status"),
         CheckConstraint("trading_end > trading_start", name="valid_trading_range"),
         CheckConstraint("starting_capital > 0 AND starting_capital <> 'NaN'::numeric", name="positive_starting_capital"),
         CheckConstraint("risk_per_trade > 0 AND risk_per_trade < 1 AND risk_per_trade <> 'NaN'::numeric", name="valid_risk_per_trade"),
-        CheckConstraint("(status = 'RUNNING' AND completed_at IS NULL) OR (status IN ('COMPLETED', 'FAILED') AND completed_at IS NOT NULL)", name="status_completion_consistency"),
+        CheckConstraint("(status IN ('PENDING', 'RUNNING') AND completed_at IS NULL) OR (status IN ('COMPLETED', 'FAILED') AND completed_at IS NOT NULL)", name="status_completion_consistency"),
         CheckConstraint("failure_category IS NULL OR failure_category IN ('VALIDATION', 'MARKET_DATA', 'STRATEGY', 'RISK', 'EXECUTION', 'PERSISTENCE')", name="valid_failure_category"),
         CheckConstraint("failure_code IS NULL OR failure_code ~ '^[A-Z0-9_]+$'", name="sanitized_failure_code"),
         CheckConstraint("failure_detail IS NULL OR (length(failure_detail) BETWEEN 1 AND 500 AND failure_detail !~ '[[:cntrl:]]')", name="sanitized_failure_detail"),
@@ -241,7 +241,7 @@ class ExperimentModel(Base):
     strategy_version_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("strategy_versions.id", ondelete="RESTRICT"), nullable=False)
     dataset_snapshot_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("dataset_snapshots.id", ondelete="RESTRICT"), nullable=False)
     venue_instrument_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("venue_instruments.id", ondelete="RESTRICT"), nullable=False)
-    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'RUNNING'"))
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'PENDING'"))
     trading_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     trading_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     starting_capital: Mapped[Decimal] = mapped_column(Numeric(24, 10), nullable=False)
@@ -300,6 +300,7 @@ class RiskDecisionModel(Base):
         CheckConstraint("phase IN ('PRE_FLIGHT', 'PRE_SUBMISSION')", name="valid_phase"),
         CheckConstraint("outcome IN ('APPROVED', 'REJECTED')", name="valid_outcome"),
         CheckConstraint("quantity IS NULL OR (quantity > 0 AND quantity <> 'NaN'::numeric)", name="positive_quantity"),
+        CheckConstraint("actual_risk IS NULL OR (actual_risk >= 0 AND actual_risk <> 'NaN'::numeric)", name="phase_4_actual_risk"),
         UniqueConstraint("trade_intent_id", "phase", name="uq_risk_decisions_intent_phase"),
     )
     id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
@@ -314,6 +315,7 @@ class RiskDecisionModel(Base):
     quote_bid: Mapped[Decimal | None] = mapped_column(Numeric(20, 10), nullable=True)
     quote_ask: Mapped[Decimal | None] = mapped_column(Numeric(20, 10), nullable=True)
     rejection_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    actual_risk: Mapped[Decimal | None] = mapped_column(Numeric(24, 10), nullable=True)
     evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
@@ -325,6 +327,7 @@ class OrderModel(Base):
         CheckConstraint("current_status IN ('PENDING_SUBMISSION', 'SUBMITTED', 'FILLED', 'CANCELED', 'REJECTED', 'EXPIRED', 'UNKNOWN')", name="valid_status"),
         CheckConstraint("quantity > 0 AND quantity <> 'NaN'::numeric", name="positive_quantity"),
         UniqueConstraint("client_correlation_id", name="uq_orders_client_correlation_id"),
+        UniqueConstraint("parent_entry_order_id", "purpose", name="uq_orders_parent_purpose"),
     )
     id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
     experiment_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("experiments.id", ondelete="RESTRICT"), nullable=False)
@@ -339,6 +342,9 @@ class OrderModel(Base):
     client_correlation_id: Mapped[str] = mapped_column(String(100), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP"))
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    parent_entry_order_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("orders.id", ondelete="RESTRICT"), nullable=True
+    )
 
 
 class FillModel(Base):
@@ -348,6 +354,7 @@ class FillModel(Base):
         CheckConstraint("quantity > 0 AND quantity <> 'NaN'::numeric AND execution_price > 0 AND execution_price <> 'NaN'::numeric", name="positive_financials"),
         UniqueConstraint("order_id", "sequence_number", name="uq_fills_order_sequence"),
         UniqueConstraint("external_execution_id", name="uq_fills_external_execution_id"),
+        CheckConstraint("price_basis IS NULL OR price_basis IN ('OPEN', 'OPEN_GAP', 'INTRABAR_STOP', 'INTRABAR_TARGET', 'END_CLOSE')", name="phase_4_price_basis"),
     )
     id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
     order_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("orders.id", ondelete="RESTRICT"), nullable=False)
@@ -357,6 +364,13 @@ class FillModel(Base):
     executed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     external_execution_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
     fee: Mapped[Decimal] = mapped_column(Numeric(24, 10), nullable=False, server_default=text("0"))
+    source_market_bar_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("market_bars.id", ondelete="RESTRICT"), nullable=True
+    )
+    price_basis: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    executable_reference_price: Mapped[Decimal | None] = mapped_column(Numeric(20, 10), nullable=True)
+    slippage_per_unit: Mapped[Decimal | None] = mapped_column(Numeric(20, 10), nullable=True)
+    slippage_cost: Mapped[Decimal | None] = mapped_column(Numeric(24, 10), nullable=True)
 
 
 class PositionModel(Base):
@@ -383,6 +397,8 @@ class TradeModel(Base):
         CheckConstraint("status IN ('OPEN', 'COMPLETED')", name="valid_status"),
         CheckConstraint("quantity > 0 AND quantity <> 'NaN'::numeric AND entry_price > 0 AND entry_price <> 'NaN'::numeric", name="positive_entry_financials"),
         CheckConstraint("status = 'OPEN' OR (exit_price IS NOT NULL AND closed_at IS NOT NULL AND gross_pnl IS NOT NULL)", name="completed_trade_facts"),
+        CheckConstraint("exit_reason IS NULL OR exit_reason IN ('TAKE_PROFIT', 'STOP_LOSS', 'END_OF_EXPERIMENT')", name="phase_4_exit_reason"),
+        CheckConstraint("financing_cost IS NULL OR financing_cost = 0", name="phase_4_financing_excluded"),
         UniqueConstraint("experiment_id", "sequence_number", name="uq_trades_experiment_sequence"),
     )
     id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
@@ -400,3 +416,76 @@ class TradeModel(Base):
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     gross_pnl: Mapped[Decimal | None] = mapped_column(Numeric(24, 10), nullable=True)
     exit_reason: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    initial_risk: Mapped[Decimal | None] = mapped_column(Numeric(24, 10), nullable=True)
+    commission_cost: Mapped[Decimal | None] = mapped_column(Numeric(24, 10), nullable=True)
+    financing_cost: Mapped[Decimal | None] = mapped_column(Numeric(24, 10), nullable=True)
+    net_pnl: Mapped[Decimal | None] = mapped_column(Numeric(24, 10), nullable=True)
+    r_multiple: Mapped[Decimal | None] = mapped_column(Numeric(24, 10), nullable=True)
+    intrabar_ambiguous: Mapped[bool] = mapped_column(nullable=False, server_default=text("false"))
+    ambiguity_policy: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    ambiguity_observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ambiguity_source_market_bar_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("market_bars.id", ondelete="RESTRICT"), nullable=True
+    )
+
+
+class OrderEventModel(Base):
+    __tablename__ = "order_events"
+    __table_args__ = (
+        CheckConstraint("sequence_number > 0", name="positive_sequence"),
+        CheckConstraint("event_type IN ('ORDER_CREATED', 'ORDER_SUBMITTED', 'ORDER_FILLED', 'ORDER_CANCELED')", name="valid_event_type"),
+        UniqueConstraint("order_id", "sequence_number", name="uq_order_events_order_sequence"),
+    )
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    order_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("orders.id", ondelete="RESTRICT"), nullable=False)
+    sequence_number: Mapped[int] = mapped_column(nullable=False)
+    event_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    source_market_bar_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("market_bars.id", ondelete="RESTRICT"), nullable=True)
+    details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+
+
+class ExperimentEquityPointModel(Base):
+    __tablename__ = "experiment_equity_points"
+    __table_args__ = (
+        PrimaryKeyConstraint("experiment_id", "sequence_number"),
+        UniqueConstraint("experiment_id", "observed_at", name="uq_equity_points_experiment_time"),
+    )
+    experiment_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("experiments.id", ondelete="RESTRICT"), nullable=False)
+    sequence_number: Mapped[int] = mapped_column(nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    balance: Mapped[Decimal] = mapped_column(Numeric(24, 10), nullable=False)
+    realized_pnl: Mapped[Decimal] = mapped_column(Numeric(24, 10), nullable=False)
+    unrealized_pnl: Mapped[Decimal] = mapped_column(Numeric(24, 10), nullable=False)
+    equity: Mapped[Decimal] = mapped_column(Numeric(24, 10), nullable=False)
+    running_peak: Mapped[Decimal] = mapped_column(Numeric(24, 10), nullable=False)
+    drawdown_amount: Mapped[Decimal] = mapped_column(Numeric(24, 10), nullable=False)
+    drawdown_percent: Mapped[Decimal] = mapped_column(Numeric(24, 10), nullable=False)
+    valuation_bid: Mapped[Decimal | None] = mapped_column(Numeric(20, 10), nullable=True)
+    valuation_ask: Mapped[Decimal | None] = mapped_column(Numeric(20, 10), nullable=True)
+    source_bid_market_bar_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("market_bars.id", ondelete="RESTRICT"), nullable=True)
+    source_ask_market_bar_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("market_bars.id", ondelete="RESTRICT"), nullable=True)
+
+
+class ExperimentResultModel(Base):
+    __tablename__ = "experiment_results"
+    __table_args__ = (
+        CheckConstraint("output_fingerprint ~ '^[0-9a-f]{64}$'", name="sha256_output_fingerprint"),
+        CheckConstraint("financing_cost IS NULL OR financing_cost = 0", name="financing_excluded"),
+    )
+    experiment_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("experiments.id", ondelete="RESTRICT"), primary_key=True)
+    result_schema_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    trade_count: Mapped[int] = mapped_column(nullable=False)
+    ambiguous_trade_count: Mapped[int] = mapped_column(nullable=False)
+    gross_pnl: Mapped[Decimal] = mapped_column(Numeric(24, 10), nullable=False)
+    commission_cost: Mapped[Decimal] = mapped_column(Numeric(24, 10), nullable=False)
+    financing_cost: Mapped[Decimal | None] = mapped_column(Numeric(24, 10), nullable=True)
+    modeled_net_pnl: Mapped[Decimal] = mapped_column(Numeric(24, 10), nullable=False)
+    ending_balance: Mapped[Decimal] = mapped_column(Numeric(24, 10), nullable=False)
+    ending_equity: Mapped[Decimal] = mapped_column(Numeric(24, 10), nullable=False)
+    net_return: Mapped[Decimal] = mapped_column(Numeric(24, 10), nullable=False)
+    max_drawdown_amount: Mapped[Decimal] = mapped_column(Numeric(24, 10), nullable=False)
+    max_drawdown_percent: Mapped[Decimal] = mapped_column(Numeric(24, 10), nullable=False)
+    financing_disclosure: Mapped[str] = mapped_column(String(100), nullable=False)
+    completed_market_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    output_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)

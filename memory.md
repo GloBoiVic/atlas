@@ -9,6 +9,7 @@ Last updated: 2026-08-21
 - **Phase 1 — Reference Strategy (COMPLETE, REVIEW APPROVED):** implementation commit `eed18db` and documentation commit `b6d9a31`, both on `main`. The reference strategy is EUR/USD MID on 15m, with immutable persisted `StrategyVersion` records. The reference calculation uses EMA-100 with an SMA seed followed by recursive alpha `2/101`, ATR-14 using Wilder smoothing without fabricating the first true range, and the W1–W5 reference window. Trend is reference-only; state safety gates and completed-candle/no-lookahead rules are enforced.
 - **Phase 2 — Historical Data to DatasetSnapshot (COMPLETE, REVIEW PASS 2026-08-21):** EUR/USD OANDA Practice completed M1 BID/MID/ASK ingestion, coverage/gap validation, immutable correction variants, deterministic snapshot-only M15 derivation, immutable DatasetSnapshot persistence, and the narrow `atlas-data` CLI/operator documentation. Acceptance evidence and deferred Minors are recorded in `dispatch/COMPLETED.md`.
 - **Phase 3 — First Historical Trade (COMPLETE, REVIEW PASS 2026-08-21):** deterministic persisted EUR/USD LONG and SHORT Experiments through Strategy → TradeIntent → RiskDecision → Order → Fill → Position → Trade, with immutable snapshot provenance, no-lookahead clocking, centralized Risk, pure simulated execution, Fill-authoritative exposure, sanitized fail-closed failures, and `PHASE3_OPEN_CHECKPOINT_V1`. Phase 4/API/UI/broker/runtime behavior remains excluded.
+- **Phase 4 — Historical Execution (COMPLETE, REVIEW PASS 2026-08-21):** deterministic persisted M1 execution/M15 evaluation for the fixed EMA Sweep Engulfing EUR/USD slice, including executable BID/ASK pricing, adverse slippage, protection, multi-Trade accounting, equity/results provenance, semantic fingerprints, and terminal failure handling. No PAPER/LIVE, broker, API, UI, runtime, or generalized infrastructure.
 
 ## Decisions made
 
@@ -22,6 +23,7 @@ Last updated: 2026-08-21
 - Phase 2 is backend-plus-CLI only; Experiment execution, Risk, orders, live trading, streaming, scheduling, API, and UI remain deferred.
 - Phase 3 uses exactly eight approved new tables in migration `0004_phase_3_first_trade`; forward migration `0005_phase_3_failure_persistence` adds immutable terminal failure facts. No TradingAccount, Deployment, RiskProfile, OrderEvent, equity-history, SystemEvent, or generalized infrastructure was added.
 - OBS-2 was resolved with test-only PostgreSQL integration isolation. OBS-1 (NY-calendar/partial-break warmup coupling) and OBS-3 (runner Pyright hygiene) remain non-blocking follow-ups.
+- Phase 4 uses configured adverse slippage before PRE_SUBMISSION sizing and closes open exposure at END_OF_EXPERIMENT before terminal equity sampling; both are covered by permanent end-to-end tests.
 
 ## Problems solved
 
@@ -31,6 +33,7 @@ Last updated: 2026-08-21
 - **Reference Strategy verification:** 81 non-integration tests plus 5 PostgreSQL integration tests pass; Ruff, Pyright, and Alembic checks pass.
 - **Phase 2 verification:** integration 14/14 including DB CLI; Ruff format/check; Pyright; 126 non-integration/non-external tests; Alembic current/check; and one bounded OANDA Practice historical smoke test with no account/trading/live/DB calls.
 - **Phase 3 verification:** LONG/SHORT golden flows, migration cycle, failure persistence, Fill application, snapshot reads, quality checks, and semantic reruns passed. Final sequential full-suite rechecks each yielded 170 passed and 1 skipped; integration-only yielded 18 passed.
+- **Phase 4 verification:** independent validation and review PASS; full suite 180 passed and 1 skipped, focused remediation checks passed, Ruff/compileall/Alembic head/forbidden-import gates passed. Minor follow-ups C/D remain accepted: explicit snapshot integrity/coverage validation and session-closed frontier/mid-stream gap handling.
 
 ## Eureka moments
 
@@ -39,7 +42,7 @@ Last updated: 2026-08-21
 
 ## Current state
 
-- Phase 0, Flat Backend, Phase 1 Reference Strategy, Phase 2 Historical Data to DatasetSnapshot, and Phase 3 First Historical Trade are **closed and APPROVED/PASS** (recorded in `dispatch/COMPLETED.md`).
+- Phase 0, Flat Backend, Phase 1 Reference Strategy, Phase 2 Historical Data to DatasetSnapshot, Phase 3 First Historical Trade, and Phase 4 Historical Execution are **closed and APPROVED/PASS** (recorded in `dispatch/COMPLETED.md`).
 - Phase 1 verification is green: 81 non-integration tests plus 5 PostgreSQL integration tests; Ruff, Pyright, and Alembic checks pass.
 - `main` was clean at the last verification. The feature worktree is retained; there is no automatic cleanup.
 - Environment facts: uv 0.12.3, Python 3.13.3, PostgreSQL 18.4, Node v24.18.0 (deviation from blueprint's Node 22 LTS — documented O2, all gates pass).
@@ -53,13 +56,13 @@ Last updated: 2026-08-21
 
 ## Next session starts with
 
-1. Phase 3 is closed and recorded in `dispatch/COMPLETED.md`; preserve the feature branch and uncommitted task context unless explicitly instructed otherwise.
-2. Any future work starts by reviewing the Phase 3 record and the two non-blocking follow-ups; do not expand into Phase 4 without approval.
+1. Phase 4 is closed and recorded in `dispatch/COMPLETED.md`; preserve the feature branch and uncommitted task context unless explicitly instructed otherwise.
+2. Any future work starts by reviewing the Phase 4 record and its two non-blocking follow-ups; do not expand scope without approval.
 3. Keep 5m and 1m strategy timeframes deferred; do not generalize beyond approved scope without confirmation.
 
 ## Open questions
 
-- Whether and when to address Phase 3 OBS-1 and OBS-3; neither blocks the completed Phase 3 slice.
+- Whether and when to address Phase 3 OBS-1/OBS-3 and Phase 4 findings C/D; none blocks the completed slices.
 - Whether to address O1 (`allowedDevOrigins`) and O3 (`httpx2`/StarletteDeprecationWarning) in a later session — both explicitly non-blocking.
 - `context/index.md` has never been created; decide with the human whether one is wanted.
 

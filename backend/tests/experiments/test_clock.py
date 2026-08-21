@@ -89,4 +89,41 @@ def test_warmup_is_ordered_before_trading_and_disables_exposure() -> None:
 def test_clock_rejects_non_aligned_trading_range() -> None:
     with pytest.raises(ValueError, match="M15-aligned"):
         SimulationClock((), (), trading_start=datetime(2026, 1, 5, 10, 1, tzinfo=UTC),
-                        trading_end=datetime(2026, 1, 5, 11, tzinfo=UTC))
+                         trading_end=datetime(2026, 1, 5, 11, tzinfo=UTC))
+
+
+def test_zero_warmup_does_not_emit_historical_frames() -> None:
+    start = datetime(2026, 1, 5, 10, tzinfo=UTC)
+    m15 = (_m15(start - timedelta(minutes=15)), _m15(start))
+    m1 = tuple(
+        _m1(start - timedelta(minutes=minute), PriceComponent.MID, "1.1000")
+        for minute in (1,)
+    ) + tuple(
+        _m1(start + timedelta(minutes=minute), PriceComponent.MID, "1.1000")
+        for minute in (14,)
+    )
+    frames = tuple(SimulationClock(
+        m1, m15, trading_start=start, trading_end=start + timedelta(minutes=15)
+    ))
+    assert all(frame.phase is ClockPhase.DECISION for frame in frames)
+
+
+def test_observations_are_complete_chronological_and_half_open() -> None:
+    start = datetime(2026, 1, 5, 10, tzinfo=UTC)
+    m1 = tuple(
+        item
+        for minute in (0, 1, 2)
+        for item in (
+            _m1(start + timedelta(minutes=minute), PriceComponent.MID, "1.1000"),
+            _m1(start + timedelta(minutes=minute), PriceComponent.BID, "1.0999"),
+            _m1(start + timedelta(minutes=minute), PriceComponent.ASK, "1.1001"),
+        )
+    )
+    clock = SimulationClock(
+        m1, (), trading_start=start, trading_end=start + timedelta(minutes=15)
+    )
+    observations = tuple(clock.observations())
+    assert [item.start_time for item in observations] == [
+        start, start + timedelta(minutes=1), start + timedelta(minutes=2)
+    ]
+    assert all(len(item.bars) == 3 for item in observations)

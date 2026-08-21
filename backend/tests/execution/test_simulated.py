@@ -7,8 +7,6 @@ import pytest
 
 from backend.execution.contract import (
     ExecutionObservation,
-    ExecutionRejected,
-    ExecutionRejection,
     Order,
 )
 from backend.execution.simulated import SimulatedExecutionAdapter
@@ -62,20 +60,53 @@ def test_exits_fill_at_requested_price_on_open(
     assert fill.execution_price == Decimal(expected)
 
 
-def test_stop_gap_and_intrabar_touch_fail_closed() -> None:
-    adapter = SimulatedExecutionAdapter()
-    with pytest.raises(ExecutionRejected) as gap:
-        adapter.execute(
-            order("STOP", "STOP_LOSS", "LONG", "1.1000"),
-            obs("1.0990", "1.0992"),
-        )
-    assert gap.value.code is ExecutionRejection.UNSUPPORTED_PHASE3_STOP_GAP
-    with pytest.raises(ExecutionRejected) as touch:
-        adapter.execute(
-            order("LIMIT", "TAKE_PROFIT", "LONG", "1.1050"),
-            obs("1.1000", "1.1002", intrabar_trigger=True),
-        )
-    assert touch.value.code is ExecutionRejection.UNSUPPORTED_PHASE3_INTRABAR_TRIGGER
+def test_stop_gap_and_intrabar_touch_are_simulated() -> None:
+    adapter = SimulatedExecutionAdapter(slippage_ticks=2)
+    gap = adapter.execute(
+        order("STOP", "STOP_LOSS", "LONG", "1.1000"),
+        obs("1.0990", "1.0992"),
+    )
+    assert gap.execution_price == Decimal("1.09898")
+    target = adapter.execute(
+        order("LIMIT", "TAKE_PROFIT", "LONG", "1.1050"),
+        obs("1.1000", "1.1002", bid_high=Decimal("1.1051"), bid_low=Decimal("1.0999")),
+    )
+    assert target.execution_price == Decimal("1.1050")
+    assert target.price_basis == "INTRABAR_TARGET"
+
+
+def test_dual_touch_is_adverse_first_and_preserves_source_provenance() -> None:
+    from uuid import uuid4
+
+    stop = order("STOP", "STOP_LOSS", "LONG", "1.1000")
+    target = order("LIMIT", "TAKE_PROFIT", "LONG", "1.1050")
+    bid_id, ask_id = uuid4(), uuid4()
+    decision = SimulatedExecutionAdapter().execute_protection(
+        stop,
+        target,
+        obs("1.1002", "1.1004", bid_high=Decimal("1.1051"), bid_low=Decimal("1.0998"),
+            bid_source_market_bar_id=bid_id, ask_source_market_bar_id=ask_id),
+    )
+    assert decision.ambiguous is True
+    assert decision.ambiguity_policy == "STOP_LOSS_ADVERSE_FIRST_V1"
+    assert decision.fill is not None
+    assert decision.fill.source_market_bar_id == bid_id
+    assert decision.fill.price_basis == "INTRABAR_STOP"
+
+
+def test_end_close_is_executable_side_with_adverse_slippage() -> None:
+    adapter = SimulatedExecutionAdapter(slippage_ticks=1)
+    fill = adapter.execute(
+        order("MARKET", "EXIT", "LONG"),
+        obs(
+            "1.1000",
+            "1.1002",
+            bid_close=Decimal("1.1010"),
+            ask_close=Decimal("1.1012"),
+        ),
+    )
+    assert fill.execution_price == Decimal("1.10099")
+    assert fill.price_basis == "END_CLOSE"
 
 
 def test_order_creation_and_execution_do_not_mutate_exposure_or_inputs() -> None:

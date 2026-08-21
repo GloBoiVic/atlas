@@ -1,4 +1,4 @@
-"""Pure contracts shared by Phase 3 execution adapters."""
+"""Pure, deterministic contracts for historical simulated execution."""
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -12,12 +12,16 @@ class ExecutionInputError(ValueError):
 
 
 class ExecutionRejection(StrEnum):
+    NOT_TRIGGERED = "NOT_TRIGGERED"
+    INVALID_SLIPPAGE = "INVALID_SLIPPAGE"
+    # Retained as compatibility values for the Phase 3 runner; Phase 4 never
+    # uses them for a valid historical observation.
     UNSUPPORTED_PHASE3_STOP_GAP = "UNSUPPORTED_PHASE3_STOP_GAP"
     UNSUPPORTED_PHASE3_INTRABAR_TRIGGER = "UNSUPPORTED_PHASE3_INTRABAR_TRIGGER"
 
 
 class ExecutionRejected(ValueError):
-    """A valid order which cannot be safely simulated in Phase 3."""
+    """A valid order which did not produce a fill."""
 
     def __init__(self, code: ExecutionRejection) -> None:
         self.code = code
@@ -57,14 +61,15 @@ class Order:
             raise ExecutionInputError("order direction must be LONG or SHORT")
         valid = {
             ("MARKET", "ENTRY"),
+            ("MARKET", "EXIT"),
             ("LIMIT", "TAKE_PROFIT"),
             ("STOP", "STOP_LOSS"),
         }
         if (self.order_type, self.purpose) not in valid:
-            raise ExecutionInputError("order is not supported by Phase 3 execution")
-        if self.purpose == "ENTRY" and self.requested_price is not None:
+            raise ExecutionInputError("unsupported simulated order")
+        if self.purpose in {"ENTRY", "EXIT"} and self.requested_price is not None:
             raise ExecutionInputError("market entry cannot have a requested price")
-        if self.purpose != "ENTRY":
+        if self.purpose not in {"ENTRY", "EXIT"}:
             if self.requested_price is None:
                 raise ExecutionInputError("exit order requires a requested price")
             _positive(self.requested_price, "requested price")
@@ -72,11 +77,7 @@ class Order:
 
 @dataclass(frozen=True, slots=True)
 class ExecutionObservation:
-    """Only prices available at the post-decision M1 open.
-
-    Optional completed-bar ranges are accepted solely to identify an
-    unsupported intrabar trigger; they are never used to invent a fill.
-    """
+    """One complete M1 BID/ASK observation and its immutable provenance."""
 
     observed_at: datetime
     bid_open: Decimal
@@ -85,6 +86,10 @@ class ExecutionObservation:
     bid_low: Decimal | None = None
     ask_high: Decimal | None = None
     ask_low: Decimal | None = None
+    bid_close: Decimal | None = None
+    ask_close: Decimal | None = None
+    bid_source_market_bar_id: UUID | None = None
+    ask_source_market_bar_id: UUID | None = None
     intrabar_trigger: bool = False
 
     def __post_init__(self) -> None:
@@ -97,6 +102,14 @@ class ExecutionObservation:
             value = getattr(self, name)
             if value is not None:
                 _positive(value, name)
+        for name in ("bid_close", "ask_close"):
+            value = getattr(self, name)
+            if value is not None:
+                _positive(value, name)
+        for name in ("bid_source_market_bar_id", "ask_source_market_bar_id"):
+            value = getattr(self, name)
+            if value is not None and type(value) is not UUID:
+                raise ExecutionInputError(f"{name} must be a UUID")
         if type(self.intrabar_trigger) is not bool:
             raise ExecutionInputError("intrabar_trigger must be bool")
 
@@ -111,14 +124,34 @@ class Fill:
     execution_price: Decimal
     executed_at: datetime
     fee: Decimal = Decimal("0")
+    source_market_bar_id: UUID | None = None
+    price_basis: str = "OPEN"
+    executable_reference_price: Decimal | None = None
+    slippage_per_unit: Decimal = Decimal("0")
+    slippage_cost: Decimal = Decimal("0")
 
     def __post_init__(self) -> None:
         if type(self.order_id) is not UUID or self.sequence_number != 1:
             raise ExecutionInputError("Phase 3 Fill must be sequence one")
         _positive(self.quantity, "fill quantity")
         _positive(self.execution_price, "execution price")
-        if type(self.fee) is not Decimal or not self.fee.is_finite() or self.fee != 0:
-            raise ExecutionInputError("Phase 3 Fill fee must be zero")
+        for name in ("fee", "slippage_per_unit", "slippage_cost"):
+            value = getattr(self, name)
+            if type(value) is not Decimal or not value.is_finite() or value < 0:
+                raise ExecutionInputError(
+                    f"{name} must be a finite non-negative Decimal"
+                )
+        if (
+            self.source_market_bar_id is not None
+            and type(self.source_market_bar_id) is not UUID
+        ):
+            raise ExecutionInputError("source_market_bar_id must be a UUID")
+        if self.price_basis not in {
+            "OPEN", "OPEN_GAP", "INTRABAR_STOP", "INTRABAR_TARGET", "END_CLOSE"
+        }:
+            raise ExecutionInputError("unsupported price basis")
+        if self.executable_reference_price is not None:
+            _positive(self.executable_reference_price, "executable reference price")
         _utc(self.executed_at, "fill timestamp")
 
 

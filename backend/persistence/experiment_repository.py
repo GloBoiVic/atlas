@@ -13,7 +13,13 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .models import ExperimentAccountModel, ExperimentModel, PositionModel
+from .models import (
+    ExperimentAccountModel,
+    ExperimentEquityPointModel,
+    ExperimentModel,
+    ExperimentResultModel,
+    PositionModel,
+)
 
 
 def _sanitize_failure_detail(detail: str) -> str:
@@ -54,6 +60,11 @@ class ExperimentRepository:
             risk_config=dict(risk_config),
             simulation_config=dict(simulation_config),
             model_version=model_version,
+            status=(
+                "PENDING"
+                if model_version == "PHASE4_HISTORICAL_EXECUTION_V1"
+                else "RUNNING"
+            ),
         )
         session.add(row)
         session.flush()
@@ -94,8 +105,8 @@ class ExperimentRepository:
         )
         if row is None:
             raise ValueError("experiment does not exist")
-        if row.status != "RUNNING":
-            raise ValueError("only a running experiment may be completed")
+        if row.status not in {"PENDING", "RUNNING"}:
+            raise ValueError("only a pending or running experiment may be completed")
         row.status = "COMPLETED"
         row.completed_at = completed_at
         session.flush()
@@ -118,8 +129,8 @@ class ExperimentRepository:
         )
         if row is None:
             raise ValueError("experiment does not exist")
-        if row.status != "RUNNING":
-            raise ValueError("only a running experiment may fail")
+        if row.status not in {"PENDING", "RUNNING"}:
+            raise ValueError("only a pending or running experiment may fail")
         if category not in {
             "VALIDATION", "MARKET_DATA", "STRATEGY", "RISK", "EXECUTION", "PERSISTENCE"
         }:
@@ -136,6 +147,34 @@ class ExperimentRepository:
         row.failure_category = category
         row.failure_code = code
         row.failure_detail = sanitized
+        session.flush()
+        return row
+
+    def mark_running(self, session: Session, experiment_id: UUID) -> ExperimentModel:
+        row = session.scalar(
+            select(ExperimentModel)
+            .where(ExperimentModel.id == experiment_id)
+            .with_for_update()
+        )
+        if row is None or row.status != "PENDING":
+            raise ValueError("only a pending experiment may run")
+        row.status = "RUNNING"
+        session.flush()
+        return row
+
+    def append_equity_point(
+        self, session: Session, **values: object
+    ) -> ExperimentEquityPointModel:
+        row = ExperimentEquityPointModel(**values)  # type: ignore[arg-type]
+        session.add(row)
+        session.flush()
+        return row
+
+    def create_result(
+        self, session: Session, **values: object
+    ) -> ExperimentResultModel:
+        row = ExperimentResultModel(**values)  # type: ignore[arg-type]
+        session.add(row)
         session.flush()
         return row
 

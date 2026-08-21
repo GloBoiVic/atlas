@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from .models import (
     FillModel,
+    OrderEventModel,
     OrderModel,
     RiskDecisionModel,
     TradeIntentModel,
@@ -56,6 +57,7 @@ class TradingRepository:
         risk_decision_id: UUID, order_type: str, purpose: str, direction: str,
         quantity: Decimal, client_correlation_id: str,
         requested_price: Decimal | None = None, order_id: UUID | None = None,
+        parent_entry_order_id: UUID | None = None,
     ) -> OrderModel:
         row = OrderModel(
             id=order_id, experiment_id=experiment_id,
@@ -63,7 +65,28 @@ class TradingRepository:
             order_type=order_type, purpose=purpose, direction=direction,
             quantity=quantity, requested_price=requested_price,
             client_correlation_id=client_correlation_id,
+            parent_entry_order_id=parent_entry_order_id,
         )
+        session.add(row)
+        session.flush()
+        self.append_order_event(
+            session,
+            order_id=row.id,
+            sequence_number=1,
+            event_type="ORDER_CREATED",
+            occurred_at=row.created_at,
+            details={},
+        )
+        return row
+
+    def append_order_event(self, session: Session, **values: object) -> OrderEventModel:
+        row = OrderEventModel(**values)  # type: ignore[arg-type]
+        session.add(row)
+        session.flush()
+        return row
+
+    def create_fill(self, session: Session, **values: object) -> FillModel:
+        row = FillModel(**values)  # type: ignore[arg-type]
         session.add(row)
         session.flush()
         return row

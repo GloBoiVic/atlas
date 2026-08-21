@@ -17,6 +17,7 @@ from backend.persistence.models import (
     ExperimentModel,
     FillModel,
     InstrumentModel,
+    OrderEventModel,
     OrderModel,
     PositionModel,
     RiskDecisionModel,
@@ -91,7 +92,7 @@ def _seed(session: Session) -> tuple[ExperimentModel, OrderModel]:
         venue_instrument_id=venue.id, trading_start=now,
         trading_end=now + timedelta(hours=1), starting_capital=Decimal("10000"),
         risk_per_trade=Decimal("0.01"), parameter_snapshot={}, risk_config={},
-        simulation_config={}, model_version="PHASE3_OPEN_CHECKPOINT_V1",
+        simulation_config={}, model_version="PHASE4_HISTORICAL_EXECUTION_V1",
     )
     session.add(experiment)
     session.flush()
@@ -149,6 +150,12 @@ def test_entry_fill_is_the_only_exposure_transition(session: Session) -> None:
     assert session.scalar(
         select(OrderModel.current_status).where(OrderModel.id == order.id)
     ) == "FILLED"
+    events = session.scalars(
+        select(OrderEventModel)
+        .where(OrderEventModel.order_id == order.id)
+        .order_by(OrderEventModel.sequence_number)
+    ).all()
+    assert [event.event_type for event in events] == ["ORDER_SUBMITTED", "ORDER_FILLED"]
 
 
 def test_failed_fill_rolls_back_all_projections(session: Session) -> None:

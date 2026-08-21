@@ -59,3 +59,13 @@ review artifact in `dispatch/`. Prior dispatch artifacts remain untouched in `di
 - **Material reports:** `PHASE-3-BLUEPRINT.md`; workstream `READY.md`, `TASK-01`…`TASK-10` (including `TASK-08A`), `VALIDATION.md`, `REVIEW.md`, and `RECORD.md`.
 - **State/authorization:** branch and uncommitted task context preserved; no Git operation, cleanup, reset, or deletion performed. `memory.md` was updated only after explicit confirmation; no terminal reset or deletion was performed.
 - **Memory-save receipt:** `Memory saved to memory.md.` on 2026-08-21 after explicit user confirmation; secret-safe update only, no secrets recorded. Terminal closure is complete; no reset or deletion was performed.
+
+<!-- completion-id: phase-4-historical-execution -->
+## Phase 4 Historical Execution — completion record
+
+- **Date/status:** 2026-08-21 — terminal closure approved; final independent R1 review **PASS**.
+- **Outcome/path:** deterministic persisted EUR/USD historical Experiment execution for the approved fixed slice, with chronological M1/M15 frontier semantics, BID/ASK execution, configured adverse slippage, protection, multi-Trade accounting, equity/results provenance, semantic fingerprints, and inspectable terminal failures. Workstream preserved at `dispatch/workstreams/phase-4-historical-execution/`.
+- **Evidence:** `VALIDATION.md` PASS; full suite **180 passed, 1 skipped**; focused remediation checks PASS; Ruff, compileall, Alembic head `0006_phase_4_persistence`, and forbidden-import boundary checks PASS. `REVIEW.md` R1 PASS with 0 Important findings.
+- **Non-blocking follow-ups:** Review findings C/D remain accepted: explicit DatasetSnapshot integrity/coverage validation and session-closed decision-frontier/mid-stream gap handling.
+- **State:** No Git operations, cleanup, reset, branch deletion, or workstream deletion performed. Application, tests, context, and selected workstream artifacts are preserved.
+- **Memory-save receipt:** `Memory saved to memory.md.` verified on 2026-08-21; secret-safe update only, no secrets recorded. Closure is complete.
