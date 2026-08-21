@@ -18,7 +18,7 @@ from .strategy import (
     ParameterError,
     ParameterSchema,
     Phase,
-    Position,
+    PositionState,
     Rationale,
     StateError,
     StopProposal,
@@ -32,6 +32,7 @@ from .strategy import (
     TargetProposal,
     VersionError,
 )
+from .trading import FinancialPositionState, Position, TradingInputError
 
 __all__ = [
     "Action",
@@ -40,12 +41,14 @@ __all__ = [
     "Direction",
     "DomainError",
     "EvaluationError",
+    "FinancialPositionState",
     "InputError",
     "Instrument",
     "ParameterError",
     "ParameterSchema",
-    "Phase",
     "Position",
+    "Phase",
+    "PositionState",
     "PriceComponent",
     "Provider",
     "Rationale",
@@ -59,6 +62,7 @@ __all__ = [
     "StrategyVersion",
     "TargetMethodology",
     "TargetProposal",
+    "TradingInputError",
     "Timeframe",
     "VenueInstrument",
     "VersionError",

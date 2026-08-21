@@ -83,6 +83,32 @@ class BarBatchResult:
     unchanged: int = 0
 
 
+@dataclass(frozen=True, slots=True)
+class SnapshotBarSourceIdentity:
+    """Durable identity of the exact market-bar observation in a snapshot."""
+
+    market_bar_id: UUID
+    content_fingerprint: str
+    source_request_id: str | None
+    retrieved_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class SnapshotBar:
+    """A snapshot member together with provenance needed by an Experiment."""
+
+    bar: Bar
+    source: SnapshotBarSourceIdentity
+
+
+@dataclass(frozen=True, slots=True)
+class SnapshotFrontier:
+    """The two membership-bounded reads needed at one M1 frontier."""
+
+    completed: tuple[SnapshotBar, ...]
+    executable_opens: tuple[SnapshotBar, ...]
+
+
 def _utc(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() != timedelta(0):
         raise ValueError("repository timestamps must be UTC")
@@ -462,25 +488,107 @@ class DatasetSnapshotRepository:
         return snapshot
 
     def members(self, session: Session, snapshot_id: UUID) -> tuple[Bar, ...]:
+        return tuple(
+            item.bar
+            for item in self.ordered_members_with_sources(
+                session, snapshot_id, None, None
+            )
+        )
+
+    def ordered_members_with_sources(
+        self,
+        session: Session,
+        snapshot_id: UUID,
+        start: datetime | None,
+        end: datetime | None,
+        components: Sequence[PriceComponent] | None = None,
+    ) -> tuple[SnapshotBar, ...]:
+        """Read only immutable snapshot membership, ordered by minute/component.
+
+        The join intentionally has no ``is_current`` predicate.  A later mutable
+        correction may replace the current projection, but an Experiment must
+        continue to read the exact MarketBar row captured by its snapshot.
+        Ranges are half-open and must remain inside snapshot coverage.
+        """
         snapshot = session.get(DatasetSnapshotModel, snapshot_id)
         if snapshot is None:
             raise ValueError("dataset snapshot does not exist")
-        venue = session.get(VenueInstrumentModel, snapshot.venue_instrument_id)
-        if venue is None:
-            raise RuntimeError("snapshot venue instrument does not exist")
-        instrument = session.get(InstrumentModel, venue.instrument_id)
-        if instrument is None:
-            raise RuntimeError("snapshot instrument does not exist")
+        coverage_start = _database_utc(snapshot.coverage_start)
+        coverage_end = _database_utc(snapshot.coverage_end)
+        if start is None:
+            start = coverage_start
+        if end is None:
+            end = coverage_end
+        _utc(start)
+        _utc(end)
+        if start < coverage_start or end > coverage_end or end <= start:
+            raise ValueError("snapshot read range is outside snapshot coverage")
+        allowed = {PriceComponent(value) for value in snapshot.components}
+        wanted = tuple(
+            sorted(allowed, key=lambda component: component.value)
+            if components is None
+            else sorted(set(components), key=lambda component: component.value)
+        )
+        if not wanted or any(component not in allowed for component in wanted):
+            raise ValueError("snapshot read requested unsupported price component")
+        venue, instrument = self._snapshot_venue_rows(session, snapshot)
         rows = session.scalars(
             select(MarketBarModel)
             .join(
                 DatasetSnapshotBarModel,
                 DatasetSnapshotBarModel.market_bar_id == MarketBarModel.id,
             )
-            .where(DatasetSnapshotBarModel.dataset_snapshot_id == snapshot_id)
+            .where(
+                DatasetSnapshotBarModel.dataset_snapshot_id == snapshot_id,
+                MarketBarModel.start_time >= start,
+                MarketBarModel.start_time < end,
+                MarketBarModel.price_component.in_([item.value for item in wanted]),
+            )
             .order_by(MarketBarModel.start_time, MarketBarModel.price_component)
         ).all()
-        return tuple(_bar(row, _venue(venue, instrument)) for row in rows)
+        return tuple(
+            SnapshotBar(
+                _bar(row, _venue(venue, instrument)),
+                SnapshotBarSourceIdentity(
+                    row.id,
+                    row.content_fingerprint,
+                    row.source_request_id,
+                    _database_utc(row.retrieved_at),
+                ),
+            )
+            for row in rows
+        )
+
+    def read_frontier(
+        self, session: Session, snapshot_id: UUID, frontier: datetime
+    ) -> SnapshotFrontier:
+        """Read the completed M1 ending at T and executable opens starting at T."""
+        _utc(frontier)
+        completed = self.ordered_members_with_sources(
+            session,
+            snapshot_id,
+            frontier - timedelta(minutes=1),
+            frontier,
+        )
+        opens = self.ordered_members_with_sources(
+            session,
+            snapshot_id,
+            frontier,
+            frontier + timedelta(minutes=1),
+            (PriceComponent.BID, PriceComponent.ASK),
+        )
+        return SnapshotFrontier(completed, opens)
+
+    def _snapshot_venue_rows(
+        self, session: Session, snapshot: DatasetSnapshotModel
+    ) -> tuple[VenueInstrumentModel, InstrumentModel]:
+        venue = session.get(VenueInstrumentModel, snapshot.venue_instrument_id)
+        if venue is None:
+            raise RuntimeError("snapshot venue instrument does not exist")
+        instrument = session.get(InstrumentModel, venue.instrument_id)
+        if instrument is None:
+            raise RuntimeError("snapshot instrument does not exist")
+        return venue, instrument
 
     def _to_domain(
         self, session: Session, row: DatasetSnapshotModel
@@ -514,4 +622,7 @@ __all__ = [
     "DatasetSnapshotRepository",
     "MarketDataRepository",
     "PERSISTED_M1_RESOLUTION",
+    "SnapshotBar",
+    "SnapshotBarSourceIdentity",
+    "SnapshotFrontier",
 ]

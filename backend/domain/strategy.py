@@ -40,7 +40,7 @@ class Direction(StrEnum):
     SHORT = "SHORT"
 
 
-class Position(StrEnum):
+class PositionState(StrEnum):
     FLAT = "FLAT"
     LONG = "LONG"
     SHORT = "SHORT"
@@ -167,7 +167,7 @@ class StrategyContext:
     evaluation_time: datetime
     instrument: Instrument
     bars: tuple[Bar, ...]
-    position: Position = Position.FLAT
+    position: PositionState = PositionState.FLAT
     exposure_allowed: bool = True
 
     def __post_init__(self) -> None:
@@ -177,8 +177,8 @@ class StrategyContext:
             type(bar) is not Bar for bar in self.bars
         ):
             raise InputError("bars must be a tuple of Bar values")
-        if type(self.position) is not Position:
-            raise InputError("position must be a Position")
+        if type(self.position) is not PositionState:
+            raise InputError("position must be a PositionState")
         _utc(self.evaluation_time, "evaluation_time")
         if self.instrument is not Instrument.EUR_USD:
             raise InputError("only EUR/USD is supported")

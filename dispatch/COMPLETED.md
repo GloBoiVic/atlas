@@ -47,3 +47,15 @@ review artifact in `dispatch/`. Prior dispatch artifacts remain untouched in `di
   or user-authored reports were deleted.
 - **Memory-save receipt:** `memory.md` successfully updated on 2026-08-21 after explicit user
   authorization; no secrets recorded. Terminal reset eligibility is satisfied.
+
+<!-- completion-id: phase-3-first-historical-trade -->
+## Phase 3 First Historical Trade — completion record
+
+- **Date/status:** 2026-08-21 — implementation and final independent R1 review **PASS**; terminal closure complete after explicit `/remember save` user confirmation.
+- **Scope:** deterministic persisted EUR/USD LONG and SHORT historical Experiments through Strategy → TradeIntent → RiskDecision → Order → Fill → Position → Trade, with immutable snapshot provenance, no-lookahead clocking, centralized Risk, pure simulated execution, Fill-authoritative exposure, sanitized fail-closed failures, and `PHASE3_OPEN_CHECKPOINT_V1`; Phase 4/API/UI/broker/runtime behavior excluded.
+- **Evidence:** golden LONG/SHORT flows, migration cycle, failure persistence, Fill boundary, snapshot-only reads, supporting integration tests, non-integration suite, quality checks, and semantic reruns passed. Final isolation recheck: sequential full `pytest -q` runs from residue-present and base-schema states each **170 passed, 1 skipped**; integration-only **18 passed**.
+- **Migration/model boundary:** `0004_phase_3_first_trade` adds exactly the eight approved Phase 3 tables; forward `0005_phase_3_failure_persistence` adds immutable terminal failure facts. No TradingAccount, Deployment, RiskProfile, OrderEvent, equity-history, SystemEvent, or generalized infrastructure.
+- **Review/dispositions:** `dispatch/workstreams/first-historical-trade/REVIEW.md` R1 **PASS**; Important OBS-2 resolved by test-only isolation. Minor OBS-1 (NY-calendar/partial-break warmup coupling) and OBS-3 (runner Pyright hygiene) remain non-blocking follow-ups.
+- **Material reports:** `PHASE-3-BLUEPRINT.md`; workstream `READY.md`, `TASK-01`…`TASK-10` (including `TASK-08A`), `VALIDATION.md`, `REVIEW.md`, and `RECORD.md`.
+- **State/authorization:** branch and uncommitted task context preserved; no Git operation, cleanup, reset, or deletion performed. `memory.md` was updated only after explicit confirmation; no terminal reset or deletion was performed.
+- **Memory-save receipt:** `Memory saved to memory.md.` on 2026-08-21 after explicit user confirmation; secret-safe update only, no secrets recorded. Terminal closure is complete; no reset or deletion was performed.

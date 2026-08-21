@@ -43,12 +43,39 @@ def test_migration_cycle(migration_url: str) -> None:
             "alembic_version",
             "dataset_snapshot_bars",
             "dataset_snapshots",
+            "experiment_accounts",
+            "experiments",
+            "fills",
             "instruments",
             "market_bars",
+            "orders",
+            "positions",
+            "risk_decisions",
             "strategies",
             "strategy_versions",
+            "trade_intents",
+            "trades",
             "venue_instruments",
         ]
+        assert {column["name"] for column in inspector.get_columns("experiments")} >= {
+            "failure_category", "failure_code", "failure_detail"
+        }
+        assert {
+            constraint["name"]
+            for constraint in inspector.get_unique_constraints("trade_intents")
+        } >= {"uq_trade_intents_experiment_frontier"}
+        assert {
+            constraint["name"]
+            for constraint in inspector.get_unique_constraints("risk_decisions")
+        } >= {"uq_risk_decisions_intent_phase"}
+        assert {
+            constraint["name"]
+            for constraint in inspector.get_unique_constraints("fills")
+        } >= {"uq_fills_order_sequence"}
+        assert {
+            constraint["name"]
+            for constraint in inspector.get_unique_constraints("positions")
+        } >= {"uq_positions_experiment_instrument"}
         command.check(config)
         command.downgrade(config, "base")
         assert inspect(engine).get_table_names() == ["alembic_version"]

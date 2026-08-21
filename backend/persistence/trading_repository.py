@@ -1,0 +1,83 @@
+"""Small repositories for immutable trading facts and order projections."""
+
+from collections.abc import Mapping
+from datetime import datetime
+from decimal import Decimal
+from uuid import UUID
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from .models import (
+    FillModel,
+    OrderModel,
+    RiskDecisionModel,
+    TradeIntentModel,
+)
+
+
+class TradingRepository:
+    """Persistence operations that do not apply a Fill.
+
+    In particular, creating an Order only records an instruction; it never
+    touches Position, Trade, or account state.  Fill application lives in its
+    own explicit boundary.
+    """
+
+    def create_intent(
+        self, session: Session, *, experiment_id: UUID, strategy_version_id: UUID,
+        venue_instrument_id: UUID, decision_frontier: datetime, action: str,
+        direction: str | None, proposed_stop: Decimal | None,
+        target_multiple: Decimal | None, rationale: Mapping[str, object],
+        intent_id: UUID | None = None,
+    ) -> TradeIntentModel:
+        row = TradeIntentModel(
+            id=intent_id, experiment_id=experiment_id,
+            strategy_version_id=strategy_version_id,
+            venue_instrument_id=venue_instrument_id,
+            decision_frontier=decision_frontier, action=action,
+            direction=direction, proposed_stop=proposed_stop,
+            target_multiple=target_multiple, rationale=dict(rationale),
+        )
+        session.add(row)
+        session.flush()
+        return row
+
+    def create_risk_decision(
+        self, session: Session, **values: object
+    ) -> RiskDecisionModel:
+        row = RiskDecisionModel(**values)  # type: ignore[arg-type]
+        session.add(row)
+        session.flush()
+        return row
+
+    def create_order(
+        self, session: Session, *, experiment_id: UUID, trade_intent_id: UUID,
+        risk_decision_id: UUID, order_type: str, purpose: str, direction: str,
+        quantity: Decimal, client_correlation_id: str,
+        requested_price: Decimal | None = None, order_id: UUID | None = None,
+    ) -> OrderModel:
+        row = OrderModel(
+            id=order_id, experiment_id=experiment_id,
+            trade_intent_id=trade_intent_id, risk_decision_id=risk_decision_id,
+            order_type=order_type, purpose=purpose, direction=direction,
+            quantity=quantity, requested_price=requested_price,
+            client_correlation_id=client_correlation_id,
+        )
+        session.add(row)
+        session.flush()
+        return row
+
+    def get_order(self, session: Session, order_id: UUID) -> OrderModel | None:
+        return session.get(OrderModel, order_id)
+
+    def fills_for_order(
+        self, session: Session, order_id: UUID
+    ) -> tuple[FillModel, ...]:
+        return tuple(session.scalars(
+            select(FillModel).where(FillModel.order_id == order_id)
+            .order_by(FillModel.sequence_number)
+        ).all())
+
+
+__all__ = ["TradingRepository"]

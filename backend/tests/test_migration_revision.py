@@ -10,4 +10,4 @@ def test_alembic_revision_ids_fit_default_version_column() -> None:
     scripts = ScriptDirectory.from_config(config)
 
     assert all(len(script.revision) <= 32 for script in scripts.walk_revisions())
-    assert scripts.get_heads() == ["0003_phase_2_market_data"]
+    assert scripts.get_heads() == ["0005_phase_3_failure_persistence"]

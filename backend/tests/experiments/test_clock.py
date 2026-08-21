@@ -1,0 +1,92 @@
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+from uuid import uuid4
+
+import pytest
+
+from backend.domain.market_data import (
+    Bar,
+    Instrument,
+    PriceComponent,
+    Timeframe,
+)
+from backend.experiments.clock import ClockPhase, SimulationClock
+from backend.persistence.market_data_repository import (
+    SnapshotBar,
+    SnapshotBarSourceIdentity,
+)
+
+
+def _m1(start: datetime, component: PriceComponent, value: str) -> SnapshotBar:
+    price = Decimal(value)
+    bar = Bar(
+        Instrument.EUR_USD,
+        Timeframe.M1,
+        component,
+        start,
+        start + timedelta(minutes=1),
+        price, price + Decimal(".001"), price - Decimal(".001"), price,
+    )
+    return SnapshotBar(bar, SnapshotBarSourceIdentity(uuid4(), "a" * 64, None, start))
+
+
+def _m15(start: datetime, value: str = "1.1000") -> Bar:
+    price = Decimal(value)
+    return Bar(
+        Instrument.EUR_USD, Timeframe.M15, PriceComponent.MID, start,
+        start + timedelta(minutes=15), price, price + Decimal(".001"),
+        price - Decimal(".001"), price,
+    )
+
+
+def test_signal_bar_is_not_reused_as_post_decision_execution_data() -> None:
+    start = datetime(2026, 1, 5, 10, tzinfo=UTC)
+    m1 = tuple(
+        item
+        for minute in (start + timedelta(minutes=14), start + timedelta(minutes=15))
+        for item in (
+            _m1(minute, PriceComponent.MID, "1.1000"),
+            _m1(minute, PriceComponent.BID, "1.0999"),
+            _m1(minute, PriceComponent.ASK, "1.1001"),
+        )
+    )
+    frame = next(iter(SimulationClock(
+        m1, (_m15(start),), trading_start=start - timedelta(minutes=15),
+        trading_end=start + timedelta(minutes=30), warmup_m15_bars=0,
+    )))
+    assert frame.phase is ClockPhase.DECISION
+    assert frame.frontier == start + timedelta(minutes=15)
+    assert {item.bar.start_time for item in frame.completed_m1} == {
+        start + timedelta(minutes=14)
+    }
+    assert {item.bar.start_time for item in frame.executable_opens} == {
+        start + timedelta(minutes=15)
+    }
+    assert all(
+        item.bar.price_component in (PriceComponent.BID, PriceComponent.ASK)
+        for item in frame.executable_opens
+    )
+    assert not set(frame.completed_m1).intersection(frame.executable_opens)
+
+
+def test_warmup_is_ordered_before_trading_and_disables_exposure() -> None:
+    first = datetime(2026, 1, 5, 9, 45, tzinfo=UTC)
+    m15 = (_m15(first), _m15(first + timedelta(minutes=15)))
+    m1 = tuple(
+        _m1(first + timedelta(minutes=minute), PriceComponent.MID, "1.1000")
+        for minute in (14, 29, 30)
+    )
+    frames = tuple(SimulationClock(
+        m1, m15, trading_start=first + timedelta(minutes=15),
+        trading_end=first + timedelta(minutes=45), warmup_m15_bars=1,
+    ))
+    assert frames[0].phase is ClockPhase.WARMUP
+    assert not frames[0].exposure_allowed
+    assert frames[1].phase is ClockPhase.DECISION
+    assert frames[1].exposure_allowed
+
+
+def test_clock_rejects_non_aligned_trading_range() -> None:
+    with pytest.raises(ValueError, match="M15-aligned"):
+        SimulationClock((), (), trading_start=datetime(2026, 1, 5, 10, 1, tzinfo=UTC),
+                        trading_end=datetime(2026, 1, 5, 11, tzinfo=UTC))

@@ -15,7 +15,7 @@ from backend.domain.strategy import (
     ParameterError,
     ParameterSchema,
     Phase,
-    Position,
+    PositionState,
     Rationale,
     StopProposal,
     StrategyContext,
@@ -114,7 +114,7 @@ class EmaSweepEngulfingStrategy:
     ) -> StrategyEvaluation:
         self._validate_parameters(parameters)
         # Safety gates clear setup state, but the contract frontier still moves.
-        if not context.exposure_allowed or context.position is not Position.FLAT:
+        if not context.exposure_allowed or context.position is not PositionState.FLAT:
             current_end = context.bars[-1].end_time if context.bars else None
             return StrategyEvaluation(
                 StrategyDecision(Action.NO_ACTION, Rationale("EXPOSURE_NOT_ALLOWED")),

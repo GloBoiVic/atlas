@@ -162,7 +162,14 @@ def test_missing_ranges_and_snapshot_membership_are_immutable_boundary(
     repo.apply_bar_batch(
         session,
         mapping.id,
-        tuple(BarBatchItem(bar, start + timedelta(minutes=2)) for bar in bars),
+        tuple(
+            BarBatchItem(
+                bar,
+                start + timedelta(minutes=2),
+                f"request-{bar.price_component.value}",
+            )
+            for bar in bars
+        ),
     )
     assert (
         repo.missing_ranges(
@@ -219,6 +226,43 @@ def test_missing_ranges_and_snapshot_membership_are_immutable_boundary(
     stored = DatasetSnapshotRepository().create_validated(session, snapshot, rows)
     assert DatasetSnapshotRepository().members(session, stored.id) == tuple(
         sorted(bars, key=lambda bar: (bar.start_time, bar.price_component.value))
+    )
+    snapshot_repo = DatasetSnapshotRepository()
+    captured = snapshot_repo.ordered_members_with_sources(
+        session, stored.id, start, start + timedelta(minutes=1)
+    )
+    assert [item.bar.price_component for item in captured] == sorted(
+        PriceComponent, key=lambda component: component.value
+    )
+    assert {item.source.source_request_id for item in captured} == {
+        "request-ASK",
+        "request-BID",
+        "request-MID",
+    }
+
+    # A correction changes the mutable head only.  The snapshot read remains
+    # pinned to the originally captured MarketBar identities and values.
+    corrected = BarBatchItem(
+        _bar(start, PriceComponent.MID, "1.2500"),
+        start + timedelta(minutes=4),
+        "correction-1",
+    )
+    repo.apply_bar_batch(session, mapping.id, (corrected,))
+    reread = snapshot_repo.ordered_members_with_sources(
+        session, stored.id, start, start + timedelta(minutes=1)
+    )
+    assert reread == captured
+    assert reread[2].bar.close == Decimal("1.1000")
+    assert (
+        session.scalar(
+            select(MarketBarModel.content_fingerprint).where(
+                MarketBarModel.venue_instrument_id == mapping.id,
+                MarketBarModel.start_time == start,
+                MarketBarModel.price_component == PriceComponent.MID.value,
+                MarketBarModel.is_current.is_(True),
+            )
+        )
+        != reread[2].source.content_fingerprint
     )
 
 
