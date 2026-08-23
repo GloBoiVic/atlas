@@ -1,6 +1,6 @@
 # Memory — Atlas Phase 3 First Historical Trade
 
-Last updated: 2026-08-21
+Last updated: 2026-08-23
 
 ## What was built
 
@@ -10,6 +10,8 @@ Last updated: 2026-08-21
 - **Phase 2 — Historical Data to DatasetSnapshot (COMPLETE, REVIEW PASS 2026-08-21):** EUR/USD OANDA Practice completed M1 BID/MID/ASK ingestion, coverage/gap validation, immutable correction variants, deterministic snapshot-only M15 derivation, immutable DatasetSnapshot persistence, and the narrow `atlas-data` CLI/operator documentation. Acceptance evidence and deferred Minors are recorded in `dispatch/COMPLETED.md`.
 - **Phase 3 — First Historical Trade (COMPLETE, REVIEW PASS 2026-08-21):** deterministic persisted EUR/USD LONG and SHORT Experiments through Strategy → TradeIntent → RiskDecision → Order → Fill → Position → Trade, with immutable snapshot provenance, no-lookahead clocking, centralized Risk, pure simulated execution, Fill-authoritative exposure, sanitized fail-closed failures, and `PHASE3_OPEN_CHECKPOINT_V1`. Phase 4/API/UI/broker/runtime behavior remains excluded.
 - **Phase 4 — Historical Execution (COMPLETE, REVIEW PASS 2026-08-21):** deterministic persisted M1 execution/M15 evaluation for the fixed EMA Sweep Engulfing EUR/USD slice, including executable BID/ASK pricing, adverse slippage, protection, multi-Trade accounting, equity/results provenance, semantic fingerprints, and terminal failure handling. No PAPER/LIVE, broker, API, UI, runtime, or generalized infrastructure.
+- **Phase 5 — Experiment Workflow (COMPLETE, REVIEW PASS 2026-08-23):** configure, validate coverage, create, run, observe status, and inspect completed/failed/zero-Trade Experiments from the UI — headline metrics, equity/drawdown, Trade list/detail, assumptions/provenance — via FastAPI contract (`backend/api/experiments.py`) + Next.js frontend, preserving Phase 4 reproducibility/no-lookahead invariants and enforcing the UTC session policy across all PG paths. Diagnostics are closed contracts, default-off and leak-free. No Phase 6, PAPER/LIVE, comparison, optimization, cancellation, export, workers, or WebSockets.
+- **Product Vision Alignment (COMPLETE, REVIEW PASS 2026-08-23):** documentation-only surgical alignment of authoritative product context with the approved proprietary, licensed, local-first Atlas Workstation vision. `context/product/vision.md` is now the single authoritative home for the canonical **Build → Experiment → PAPER → LIVE → Monitor → Improve** lifecycle, the proprietary/licensed direction, and the local-first/customer-controlled operating model; `context/product/product-principles.md` references the lifecycle via link and adds one concise Safety-Independent Licensing Boundary principle; `context/architecture/architecture.md` Purpose references `../product/vision.md` directly instead of restating the lifecycle. No application code, roadmap changes, commercial infrastructure, or alignment audit.
 
 ## Decisions made
 
@@ -24,6 +26,7 @@ Last updated: 2026-08-21
 - Phase 3 uses exactly eight approved new tables in migration `0004_phase_3_first_trade`; forward migration `0005_phase_3_failure_persistence` adds immutable terminal failure facts. No TradingAccount, Deployment, RiskProfile, OrderEvent, equity-history, SystemEvent, or generalized infrastructure was added.
 - OBS-2 was resolved with test-only PostgreSQL integration isolation. OBS-1 (NY-calendar/partial-break warmup coupling) and OBS-3 (runner Pyright hygiene) remain non-blocking follow-ups.
 - Phase 4 uses configured adverse slippage before PRE_SUBMISSION sizing and closes open exposure at END_OF_EXPERIMENT before terminal equity sampling; both are covered by permanent end-to-end tests.
+- **Product vision decisions (locked, documentation-only):** canonical lifecycle is **Build → Experiment → PAPER → LIVE → Monitor → Improve**, owned in full only by `context/product/vision.md`; `product-principles.md` and `architecture.md` reference it via relative links (one authoritative home per decision). The product direction is declarative proprietary/licensed/local-first (no license types, pricing, telemetry, hosting, distribution, or enforcement design), and "customer-controlled" is local-first (not offline-only, not SaaS): the app/runtime/durable state run under the customer's control with broker/market-data remaining external dependencies. Current scope stays single-trader; "Not multi-user SaaS" is no longer qualified as "initially". The Safety-Independent Licensing Boundary principle (`product-principles.md`) keeps any future licensing/commercial mechanism outside the capital-safety path and can never weaken correctness, fail-closed behavior, broker-hosted protection, reconciliation, exposure visibility, or safe risk-reducing actions — future boundary only, no current task. Do not authorize licensing/SaaS/multi-tenancy/billing/installers/cloud infrastructure/SDK packaging/Phase 6 work without explicit instruction.
 
 ## Problems solved
 
@@ -34,6 +37,8 @@ Last updated: 2026-08-21
 - **Phase 2 verification:** integration 14/14 including DB CLI; Ruff format/check; Pyright; 126 non-integration/non-external tests; Alembic current/check; and one bounded OANDA Practice historical smoke test with no account/trading/live/DB calls.
 - **Phase 3 verification:** LONG/SHORT golden flows, migration cycle, failure persistence, Fill application, snapshot reads, quality checks, and semantic reruns passed. Final sequential full-suite rechecks each yielded 170 passed and 1 skipped; integration-only yielded 18 passed.
 - **Phase 4 verification:** independent validation and review PASS; full suite 180 passed and 1 skipped, focused remediation checks passed, Ruff/compileall/Alembic head/forbidden-import gates passed. Minor follow-ups C/D remain accepted: explicit snapshot integrity/coverage validation and session-closed frontier/mid-stream gap handling.
+- **Phase 5 verification:** independent full-workstream validation and terminal R1 review PASS (no Critical/Important findings; four Minor non-blocking); backend suite 219 passed / 1 skipped (single skip = external OANDA credential), Alembic upgrade/downgrade/upgrade cycle to `0007_phase_5_metric_contract`, frontend lint/typecheck/unit/build, byte-identical generated OpenAPI contract, Ruff and `git diff --check` clean, and canonical E2E 5/5 (`--workers=1`, isolated `atlas_test`, non-UTC host).
+- **Product Vision Alignment verification:** independent full-workstream validation PASS and terminal R1 review PASS; `git diff` confirms exactly `3 files changed, 9 insertions(+), 5 deletions(-)` confined to the three prescribed context files (`context/product/vision.md`, `context/product/product-principles.md`, `context/architecture/architecture.md`); `context/roadmap/roadmap.md` and all `context/features/*` unchanged; no legacy `Build → Test → Deploy → Monitor → Improve`/`test → deploy` lifecycle text remains in `context/`; canonical lifecycle present in full only in `vision.md` and by link elsewhere; relative links resolve; no Backtest/Bot terminology; two Minor non-blocking findings.
 
 ## Eureka moments
 
@@ -42,7 +47,7 @@ Last updated: 2026-08-21
 
 ## Current state
 
-- Phase 0, Flat Backend, Phase 1 Reference Strategy, Phase 2 Historical Data to DatasetSnapshot, Phase 3 First Historical Trade, and Phase 4 Historical Execution are **closed and APPROVED/PASS** (recorded in `dispatch/COMPLETED.md`).
+- Phase 0, Flat Backend, Phase 1 Reference Strategy, Phase 2 Historical Data to DatasetSnapshot, Phase 3 First Historical Trade, Phase 4 Historical Execution, Phase 5 Experiment Workflow, and Product Vision Alignment are **closed and APPROVED/PASS** (recorded in `dispatch/COMPLETED.md`).
 - Phase 1 verification is green: 81 non-integration tests plus 5 PostgreSQL integration tests; Ruff, Pyright, and Alembic checks pass.
 - `main` was clean at the last verification. The feature worktree is retained; there is no automatic cleanup.
 - Environment facts: uv 0.12.3, Python 3.13.3, PostgreSQL 18.4, Node v24.18.0 (deviation from blueprint's Node 22 LTS — documented O2, all gates pass).
@@ -53,16 +58,17 @@ Last updated: 2026-08-21
   - M1: wheel includes retained backend tests (recorded fact). M2: pre-existing env-only warnings. M3: `rg` unavailable — use `grep -rn`/`shasum` equivalents.
   - Phase 2 Minors: wrong-provider coverage; explicit timeframe mapping; serialization/docstring cleanup; full integrity-summary shape; speculative aliases; hardcoded M1 header; idempotent snapshot lookup coverage; service error-path and byte-serialization coverage; summary-key casing; generic partial-fetch failure class.
   - Phase 3 follow-ups: OBS-1 NY-calendar/partial-break warmup coupling and OBS-3 runner Pyright errors. Both are non-blocking.
+  - Phase 5 Minors (non-blocking): `autoflush=True` in `create_session_factory` (approved Task 16 correction) vs ARCHITECTURE.md UTC blueprint's documented `autoflush=False` — blueprint text not reconciled; chart setup-context window does not literally meet the "EMA period + 20 preceding bars" requirement (presentation-only, EMA canonical); `pyright backend` (strict) non-clean pre-existing gate (1132 errors; 757 at Phase 4 baseline); `format:check:web` flags `experiment-workflow.tsx` and generated `tests/e2e/.fixtures.json`.
 
 ## Next session starts with
 
-1. Phase 4 is closed and recorded in `dispatch/COMPLETED.md`; preserve the feature branch and uncommitted task context unless explicitly instructed otherwise.
-2. Any future work starts by reviewing the Phase 4 record and its two non-blocking follow-ups; do not expand scope without approval.
+1. Phase 5 Experiment Workflow and Product Vision Alignment are closed and recorded in `dispatch/COMPLETED.md`; preserve the feature branches (`feature/phase-5-experiment-workflow`, HEAD `67c24b714f3c128cfefab0581118638194063de8`; `feature/product-vision-alignment`) and uncommitted task context unless explicitly instructed otherwise.
+2. Any future work starts by reviewing the Phase 5 record (four non-blocking Minor follow-ups) and the Product Vision Alignment record (two non-blocking Minor findings); do not expand scope without approval.
 3. Keep 5m and 1m strategy timeframes deferred; do not generalize beyond approved scope without confirmation.
 
 ## Open questions
 
-- Whether and when to address Phase 3 OBS-1/OBS-3 and Phase 4 findings C/D; none blocks the completed slices.
+- Whether and when to address Phase 3 OBS-1/OBS-3, Phase 4 findings C/D, Phase 5 Minors 1-4, and Product Vision Alignment Minors 1-2; none blocks the completed slices.
 - Whether to address O1 (`allowedDevOrigins`) and O3 (`httpx2`/StarletteDeprecationWarning) in a later session — both explicitly non-blocking.
 - `context/index.md` has never been created; decide with the human whether one is wanted.
 

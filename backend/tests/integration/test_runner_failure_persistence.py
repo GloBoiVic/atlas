@@ -13,6 +13,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
 from backend.experiments.runner import ExperimentRunner
+from backend.persistence.database import configure_utc_session_timezone
 from backend.strategies.registry import StrategyRegistry
 
 pytestmark = pytest.mark.integration
@@ -27,7 +28,7 @@ def runner_database_url() -> str:
 
 
 def test_runner_persists_sanitized_terminal_failure(runner_database_url: str) -> None:
-    engine = create_engine(runner_database_url)
+    engine = configure_utc_session_timezone(create_engine(runner_database_url))
     try:
         config = Config(str(Path(__file__).parents[3] / "alembic.ini"))
         config.set_main_option("script_location", "backend/persistence/migrations")

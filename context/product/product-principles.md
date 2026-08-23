@@ -2,7 +2,7 @@
 
 ## Strategy First
 
-The Strategy lifecycle is the organizing principle of Atlas. Features should make it easier to Build → Test → Deploy → Monitor → Improve. Do not allow secondary infrastructure or tooling to become the product.
+The Strategy lifecycle is the organizing principle of Atlas. Features should make it easier to move through the canonical product lifecycle — [Build → Experiment → PAPER → LIVE → Monitor → Improve](vision.md). Do not allow secondary infrastructure or tooling to become the product.
 
 ## Same Methodology Everywhere
 
@@ -55,6 +55,10 @@ For PAPER/LIVE: broker truth > stale Atlas projection. Reconcile after uncertain
 ## Protect Existing Exposure
 
 When degraded: preserve protection → prevent unintended new exposure → establish authoritative state → resume safely. Risk-reducing actions remain possible where safe.
+
+## Safety-Independent Licensing Boundary
+
+Any future licensing or commercial mechanism stays outside the capital-safety path: it must never weaken correctness, fail-closed behavior, broker-hosted protection, reconciliation, visibility of existing exposure, or safe risk-reducing actions. A future invalid or unavailable entitlement may block activation or new exposure, but must never strand or conceal existing exposure or prevent protection, reconciliation, or safe risk reduction. This is a future boundary only; it creates no current implementation task.
 
 ## Completed Data Only
 

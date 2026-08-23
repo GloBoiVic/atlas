@@ -11,7 +11,10 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from backend.domain.market_data import Timeframe
 from backend.domain.strategy import ParameterSchema, StrategyVersion
-from backend.persistence.database import create_session_factory
+from backend.persistence.database import (
+    configure_utc_session_timezone,
+    create_session_factory,
+)
 from backend.persistence.strategy_repository import StrategyRepository
 from backend.strategies.fingerprint import SourceArchive, archive_source
 
@@ -20,7 +23,7 @@ pytestmark = pytest.mark.integration
 
 @pytest.fixture(scope="module")
 def persistence_database(database_url: str):
-    engine = create_engine(database_url)
+    engine = configure_utc_session_timezone(create_engine(database_url))
     with engine.begin() as connection:
         connection.execute(text("DROP SCHEMA public CASCADE"))
         connection.execute(text("CREATE SCHEMA public"))

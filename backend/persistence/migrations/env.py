@@ -5,6 +5,7 @@ from sqlalchemy import engine_from_config, pool
 
 from backend.config import get_settings
 from backend.persistence import models
+from backend.persistence.database import configure_utc_session_timezone
 
 config = context.config
 if config.config_file_name:
@@ -35,6 +36,7 @@ def run_migrations_online() -> None:
             "connect_timeout": get_settings().database_connect_timeout_seconds
         },
     )
+    configure_utc_session_timezone(connectable)
     with connectable.connect() as connection:
         context.configure(
             connection=connection, target_metadata=target_metadata, compare_type=True

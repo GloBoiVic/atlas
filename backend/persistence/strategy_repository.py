@@ -48,6 +48,14 @@ class StrategyRepository:
             .order_by(StrategyVersionModel.version_number)
         ).all()
 
+    def list_all_versions(self, session: Session) -> Sequence[StrategyVersionModel]:
+        """Focused option read; immutable versions are newest-first by identity."""
+        return session.scalars(
+            select(StrategyVersionModel)
+            .join(StrategyModel)
+            .order_by(StrategyModel.strategy_key, StrategyVersionModel.version_number)
+        ).all()
+
     def create_version(
         self,
         session: Session,
@@ -147,8 +155,14 @@ def version_to_domain(row: StrategyVersionModel) -> StrategyVersion:
         for item in row.parameter_schema
     )
     created_at = row.created_at
+    # PostgreSQL ``timestamptz`` may be returned with the connection timezone,
+    # while test doubles/legacy rows may be naive. Persisted Atlas timestamps
+    # are UTC instants: normalize an aware value, and treat a naive persisted
+    # value as the documented UTC storage representation (never local time).
     if created_at.tzinfo is None:
         created_at = created_at.replace(tzinfo=UTC)
+    else:
+        created_at = created_at.astimezone(UTC)
     return StrategyVersion(
         id=row.id,
         strategy_key=row.strategy.strategy_key,

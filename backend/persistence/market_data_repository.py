@@ -378,6 +378,15 @@ class DatasetSnapshotRepository:
             raise ValueError("dataset snapshot does not exist")
         return self._to_domain(session, row)
 
+    def list_options(self, session: Session) -> tuple[DatasetSnapshot, ...]:
+        """Read immutable snapshot descriptors for configuration choices."""
+        rows = session.scalars(
+            select(DatasetSnapshotModel).order_by(
+                DatasetSnapshotModel.created_at, DatasetSnapshotModel.id
+            )
+        ).all()
+        return tuple(self._to_domain(session, row) for row in rows)
+
     def create_validated(
         self,
         session: Session,

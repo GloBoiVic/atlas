@@ -2,7 +2,7 @@
 
 ## What Atlas Is
 
-Atlas is an opinionated, strategy-first algorithmic trading workstation for independent systematic traders. Core lifecycle: Build → Test → Deploy → Monitor → Improve. One immutable StrategyVersion should move from historical research to paper trading to live trading without changing its trading methodology.
+Atlas is an opinionated, strategy-first algorithmic trading workstation for independent systematic traders. It is intended as a proprietary, licensed, local-first product: the application, runtime, and durable product state operate under the customer's control, with broker and market-data integrations remaining external dependencies. Core lifecycle: Build → Experiment → PAPER → LIVE → Monitor → Improve. One immutable StrategyVersion should move from historical research to paper trading to live trading without changing its trading methodology.
 
 ## Primary Goal
 
@@ -10,7 +10,7 @@ Help the trader answer: Does my strategy work? Is it profitable? Is risk under c
 
 ## Target User
 
-Built for a single independent systematic trader who writes Python strategies, wants deterministic Experiments, realistic paper trading, controlled live deployment, values reliability over feature count, and wants one coherent workflow. Not initially multi-user SaaS.
+Built for a single independent systematic trader who writes Python strategies, wants deterministic Experiments, realistic paper trading, controlled live deployment, values reliability over feature count, and wants one coherent workflow. Not multi-user SaaS: the current scope is a single-trader, customer-controlled workstation, not a hosted service.
 
 ## Strategy First
 
@@ -34,4 +34,4 @@ Automates execution but keeps trader in control. Trader should understand: what 
 
 ## Success
 
-Atlas succeeds when the trader can confidently take a Python trading hypothesis through build → test → deploy → monitor → improve with reproducible evidence, controlled Risk, reliable execution, and clear operational state.
+Atlas succeeds when the trader can confidently take a Python trading hypothesis through the canonical lifecycle — Build → Experiment → PAPER → LIVE → Monitor → Improve — with reproducible evidence, controlled Risk, reliable execution, and clear operational state.
