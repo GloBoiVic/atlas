@@ -36,6 +36,8 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, text
 
+from backend.persistence.database import configure_utc_session_timezone
+
 # Truncate every table in the current (public) schema except alembic_version.
 # Iterating pg_tables keeps the statement robust to the schema being absent
 # (a no-op) and avoids hard-coding the table set here, which test_migrations.py
@@ -97,7 +99,7 @@ def _isolate_integration_database() -> None:
     url = _test_database_url()
     if not url:
         return
-    engine = create_engine(url)
+    engine = configure_utc_session_timezone(create_engine(url))
     try:
         with engine.begin() as connection:
             connection.execute(_TRUNCATE_ALL)

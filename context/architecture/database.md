@@ -32,6 +32,8 @@ Persist exact financial values using PostgreSQL NUMERIC. Use Python Decimal wher
 
 Store timestamps in UTC. Use timezone-aware values. Do not persist machine-local timestamps as canonical trading time.
 
+**PostgreSQL session policy:** Every Atlas PostgreSQL session operates with `TimeZone = 'UTC'`. UTC is canonical for persisted trading, market-data, Experiment, runtime, and audit timestamps. Atlas establishes this setting for every new and pooled connection; it must not depend on PostgreSQL server, database, or role defaults, or on host, developer, or deployment locale. Application input, domain, and persistence boundaries require timezone-aware UTC datetimes; naive datetimes must be rejected rather than interpreted through a machine-local timezone. This policy does not change canonical UTC bar alignment or timestamp semantics.
+
 ## Immutable Historical Facts / Mutable Projections
 
 Immutable: StrategyVersion, DatasetSnapshot, completed Experiment config, TradeIntent, RiskDecision, OrderEvent, Fill, SystemEvent. Correction appends or creates new provenance. Mutable: Order.current_status, Position, Deployment.actual_status, runtime heartbeat/state.

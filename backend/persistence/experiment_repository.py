@@ -13,6 +13,11 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from backend.experiments.metric_contract import (
+    LEGACY_METRIC_SCHEMA_VERSION,
+    LEGACY_METRIC_STATES,
+)
+
 from .models import (
     ExperimentAccountModel,
     ExperimentEquityPointModel,
@@ -72,6 +77,47 @@ class ExperimentRepository:
 
     def get(self, session: Session, experiment_id: UUID) -> ExperimentModel | None:
         return session.get(ExperimentModel, experiment_id)
+
+    def get_for_update(
+        self, session: Session, experiment_id: UUID
+    ) -> ExperimentModel | None:
+        """Load one Experiment while holding its database row lock."""
+        return session.scalar(
+            select(ExperimentModel)
+            .where(ExperimentModel.id == experiment_id)
+            .with_for_update()
+        )
+
+    def has_run_facts(self, session: Session, experiment_id: UUID) -> bool:
+        """Return whether a RUNNING row has any committed simulation facts."""
+        from .models import (
+            ExperimentEquityPointModel,
+            FillModel,
+            OrderModel,
+            TradeIntentModel,
+            TradeModel,
+        )
+
+        for model in (
+            TradeIntentModel,
+            OrderModel,
+            TradeModel,
+            ExperimentEquityPointModel,
+            ExperimentResultModel,
+        ):
+            query = select(model.experiment_id).where(
+                model.experiment_id == experiment_id
+            )
+            if session.scalar(query) is not None:
+                return True
+        fill_query = (
+            select(FillModel.id)
+            .join(OrderModel, FillModel.order_id == OrderModel.id)
+            .where(OrderModel.experiment_id == experiment_id)
+        )
+        if session.scalar(fill_query) is not None:
+            return True
+        return False
 
     def create_account_and_position(
         self,
@@ -173,6 +219,8 @@ class ExperimentRepository:
     def create_result(
         self, session: Session, **values: object
     ) -> ExperimentResultModel:
+        values.setdefault("metric_states", dict(LEGACY_METRIC_STATES))
+        values.setdefault("metric_schema_version", LEGACY_METRIC_SCHEMA_VERSION)
         row = ExperimentResultModel(**values)  # type: ignore[arg-type]
         session.add(row)
         session.flush()

@@ -32,6 +32,7 @@ from backend.execution.simulated import ProtectionDecision, SimulatedExecutionAd
 from backend.experiments.runner import MODEL_VERSION, ExperimentRunner
 from backend.market_data.fingerprint import dataset_fingerprint
 from backend.market_data.session_calendar import is_session_open_minute
+from backend.persistence.database import configure_utc_session_timezone
 from backend.persistence.experiment_repository import ExperimentRepository
 from backend.persistence.market_data_repository import (
     BarBatchItem,
@@ -230,13 +231,12 @@ def _facts(session: Session, experiment_id: UUID) -> dict[str, Any]:
 
 @pytest.mark.parametrize("direction", ["LONG", "SHORT"])
 def test_persisted_golden_flow_and_semantic_rerun(database_url: str, direction: str) -> None:
-    engine = create_engine(database_url)
+    engine = configure_utc_session_timezone(create_engine(database_url))
     try:
         with Session(engine) as session, session.begin():
             session.execute(text("TRUNCATE experiments, dataset_snapshots, market_bars, strategy_versions, strategies, venue_instruments, instruments CASCADE"))
             experiment_id, snapshot_id, version_id = _seed(session, direction)
         with Session(engine) as session, session.begin():
-            session.execute(text("SET TIME ZONE 'UTC'"))
             result = ExperimentRunner(strategy_registry=_registry()).run(session, experiment_id)
             assert result.status == "COMPLETED" and result.trade_completed, result.failure
             completed = session.get(ExperimentModel, experiment_id)
@@ -279,7 +279,6 @@ def test_persisted_golden_flow_and_semantic_rerun(database_url: str, direction: 
             ExperimentRepository().create_account_and_position(session, rerun)
             rerun_id = rerun.id
         with Session(engine) as session, session.begin():
-            session.execute(text("SET TIME ZONE 'UTC'"))
             assert ExperimentRunner(strategy_registry=_registry()).run(session, rerun_id).status == "COMPLETED"
             rerun_facts = _facts(session, rerun_id)
             assert {k: v for k, v in rerun_facts.items() if k != "intent"} == {k: v for k, v in facts.items() if k != "intent"}
@@ -290,13 +289,12 @@ def test_persisted_golden_flow_and_semantic_rerun(database_url: str, direction: 
 
 @pytest.mark.parametrize("direction,slippage_ticks", [("LONG", 0), ("SHORT", 0), ("LONG", 2), ("SHORT", 2)])
 def test_phase4_remediation_is_reproducible_and_records_starting_equity(database_url: str, direction: str, slippage_ticks: int) -> None:
-    engine = create_engine(database_url)
+    engine = configure_utc_session_timezone(create_engine(database_url))
     try:
         with Session(engine) as session, session.begin():
             session.execute(text("TRUNCATE experiments, dataset_snapshots, market_bars, strategy_versions, strategies, venue_instruments, instruments CASCADE"))
             experiment_id, _, _ = _seed(session, direction, phase4=True, slippage_ticks=slippage_ticks)
         with Session(engine) as session, session.begin():
-            session.execute(text("SET TIME ZONE 'UTC'"))
             result = ExperimentRunner(strategy_registry=_registry()).run(session, experiment_id)
             assert result.status == "COMPLETED", result.failure
             experiment = session.get(ExperimentModel, experiment_id)
@@ -307,6 +305,9 @@ def test_phase4_remediation_is_reproducible_and_records_starting_equity(database
             equity = session.scalars(select(ExperimentEquityPointModel).where(ExperimentEquityPointModel.experiment_id == experiment_id).order_by(ExperimentEquityPointModel.sequence_number)).all()
             result_row = session.get(ExperimentResultModel, experiment_id)
             assert result_row is not None
+            assert experiment.completed_at is not None
+            assert experiment.completed_at > experiment.trading_end
+            assert result_row.metric_schema_version == "PHASE5_METRICS_V1"
             assert len(trades) >= 2
             assert {trade.direction for trade in trades} == {direction}
             assert all(order.risk_decision_id in {risk.id for risk in risks if risk.phase == "PRE_SUBMISSION"} for order in orders)
@@ -344,13 +345,12 @@ def test_phase4_remediation_is_reproducible_and_records_starting_equity(database
 
 
 def test_phase4_failure_has_no_result(database_url: str) -> None:
-    engine = create_engine(database_url)
+    engine = configure_utc_session_timezone(create_engine(database_url))
     try:
         with Session(engine) as session, session.begin():
             session.execute(text("TRUNCATE experiments, dataset_snapshots, market_bars, strategy_versions, strategies, venue_instruments, instruments CASCADE"))
             experiment_id, _, _ = _seed(session, "LONG", phase4=True, invalid_config=True)
         with Session(engine) as session, session.begin():
-            session.execute(text("SET TIME ZONE 'UTC'"))
             assert ExperimentRunner(strategy_registry=_registry()).run(session, experiment_id).status == "FAILED"
             assert session.get(ExperimentResultModel, experiment_id) is None
     finally:
@@ -358,13 +358,12 @@ def test_phase4_failure_has_no_result(database_url: str) -> None:
 
 
 def test_phase4_end_close_is_atomic_and_terminal_equity_reconciles(database_url: str) -> None:
-    engine = create_engine(database_url)
+    engine = configure_utc_session_timezone(create_engine(database_url))
     try:
         with Session(engine) as session, session.begin():
             session.execute(text("TRUNCATE experiments, dataset_snapshots, market_bars, strategy_versions, strategies, venue_instruments, instruments CASCADE"))
             experiment_id, _, _ = _seed(session, "LONG", phase4=True, end_open=True)
         with Session(engine) as session, session.begin():
-            session.execute(text("SET TIME ZONE 'UTC'"))
             class EndOnlyExecution(SimulatedExecutionAdapter):
                 def execute_protection(self, stop, target, observation):
                     return ProtectionDecision(None)

@@ -1,8 +1,52 @@
 @import 'tailwindcss';
 
+:root {
+  --atlas-background: oklch(0.985 0.004 250);
+  --atlas-ink: oklch(0.22 0.025 255);
+}
+
+@theme {
+  --color-atlas-blue: oklch(0.52 0.18 255);
+}
+
 body {
   margin: 0;
-  background: #f8fafc;
-  color: #0f172a;
-  font-family: Arial, sans-serif;
+  background: var(--atlas-background);
+  color: var(--atlas-ink);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+.nav-link {
+  @apply inline-flex min-h-10 items-center gap-2 rounded-md px-3 text-sm text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600;
+}
+.nav-link-active {
+  @apply bg-slate-100 font-medium text-slate-950;
+}
+.nav-link-disabled {
+  @apply cursor-not-allowed opacity-45;
+}
+.status {
+  @apply inline-flex items-center gap-1.5 whitespace-nowrap text-xs font-medium;
+}
+.status-muted {
+  @apply text-slate-500;
+}
+.status-success {
+  @apply text-emerald-700;
+}
+.status-danger {
+  @apply rounded-md bg-red-50 px-2.5 py-1.5 text-red-800;
+}
+
+.form-control {
+  @apply mt-1 block min-h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm font-normal text-slate-900 shadow-sm outline-none transition-colors placeholder:text-slate-500 focus:border-blue-600 focus:ring-2 focus:ring-blue-600/20;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

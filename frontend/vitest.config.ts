@@ -3,5 +3,9 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   root: __dirname,
   plugins: [react()],
-  test: { environment: 'jsdom', setupFiles: './tests/setup.ts' },
+  test: {
+    environment: 'jsdom',
+    setupFiles: './tests/setup.ts',
+    server: { deps: { inline: ['lightweight-charts'] } },
+  },
 });

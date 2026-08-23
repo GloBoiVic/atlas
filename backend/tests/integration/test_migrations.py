@@ -10,6 +10,8 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, inspect, text
 
+from backend.persistence.database import configure_utc_session_timezone
+
 pytestmark = pytest.mark.integration
 
 
@@ -31,7 +33,7 @@ def alembic_config(url: str) -> Config:
 
 
 def test_migration_cycle(migration_url: str) -> None:
-    engine = create_engine(migration_url)
+    engine = configure_utc_session_timezone(create_engine(migration_url))
     try:
         with engine.begin() as connection:
             connection.execute(text("DROP SCHEMA public CASCADE"))
@@ -79,7 +81,24 @@ def test_migration_cycle(migration_url: str) -> None:
             constraint["name"]
             for constraint in inspector.get_unique_constraints("positions")
         } >= {"uq_positions_experiment_instrument"}
+        assert {column["name"] for column in inspector.get_columns("experiment_results")} >= {
+            "sharpe_ratio", "profit_factor", "win_rate", "expectancy_net_pnl",
+            "metric_states", "metric_schema_version",
+        }
+        assert "ix_experiments_created_at_id_desc" in {
+            index["name"] for index in inspector.get_indexes("experiments")
+        }
         command.check(config)
+        command.downgrade(config, "0006_phase_4_persistence")
+        legacy_columns = {
+            column["name"] for column in inspect(engine).get_columns("experiment_results")
+        }
+        assert not {"sharpe_ratio", "metric_states", "metric_schema_version"} & legacy_columns
+        command.upgrade(config, "head")
+        assert {column["name"] for column in inspect(engine).get_columns("experiment_results")} >= {
+            "sharpe_ratio", "profit_factor", "win_rate", "expectancy_net_pnl",
+            "metric_states", "metric_schema_version",
+        }
         command.downgrade(config, "base")
         assert inspect(engine).get_table_names() == ["alembic_version"]
         command.upgrade(config, "head")
@@ -88,7 +107,7 @@ def test_migration_cycle(migration_url: str) -> None:
 
 
 def test_market_data_constraints_and_immutability(migration_url: str) -> None:
-    engine = create_engine(migration_url)
+    engine = configure_utc_session_timezone(create_engine(migration_url))
     try:
         config = alembic_config(migration_url)
         command.upgrade(config, "head")

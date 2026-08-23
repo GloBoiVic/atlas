@@ -12,6 +12,7 @@ from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
 
 from backend.execution.fill_application import apply_fill
+from backend.persistence.database import configure_utc_session_timezone
 from backend.persistence.models import (
     ExperimentAccountModel,
     ExperimentModel,
@@ -37,7 +38,7 @@ def session() -> Generator[Session]:
         pytest.skip("ATLAS_TEST_DATABASE_URL is not configured")
     if not urlparse(value).path.rsplit("/", 1)[-1].endswith("_test"):
         pytest.fail("integration tests require a database name ending in _test")
-    engine = create_engine(value)
+    engine = configure_utc_session_timezone(create_engine(value))
     with Session(engine) as db:
         yield db
         db.rollback()

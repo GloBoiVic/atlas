@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document defines the high-level architecture of Atlas — a strategy-first algorithmic trading workstation for independent systematic traders. The architecture exists to support one core lifecycle: Build → Test → Deploy → Monitor → Improve. The same StrategyVersion should move through Experiment → PAPER → LIVE without changing its trading methodology.
+This document defines the high-level architecture of Atlas — a strategy-first algorithmic trading workstation for independent systematic traders. The architecture exists to support the canonical product lifecycle defined in [Vision](../product/vision.md). The same StrategyVersion should move through Experiment → PAPER → LIVE without changing its trading methodology.
 
 ## Architectural Style
 

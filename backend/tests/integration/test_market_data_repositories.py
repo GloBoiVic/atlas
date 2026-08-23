@@ -26,6 +26,7 @@ from backend.domain.market_data import (
     VenueInstrument,
 )
 from backend.market_data.fingerprint import dataset_fingerprint
+from backend.persistence.database import configure_utc_session_timezone
 from backend.persistence.market_data_repository import (
     BarBatchItem,
     DatasetSnapshotRepository,
@@ -59,7 +60,7 @@ def prepare_repository_database() -> None:
 @pytest.fixture(autouse=True)
 def isolate_repository_facts() -> Generator[None]:
     """Keep committed concurrency fixtures from leaking across tests/modules."""
-    engine = create_engine(_url(), pool_pre_ping=True)
+    engine = configure_utc_session_timezone(create_engine(_url(), pool_pre_ping=True))
     statement = text(
         "TRUNCATE dataset_snapshot_bars, dataset_snapshots, market_bars, "
         "venue_instruments, instruments CASCADE"
@@ -91,7 +92,7 @@ def _bar(moment: datetime, component: PriceComponent, value: str = "1.1000") -> 
 
 @pytest.fixture()
 def repository_session() -> Generator[tuple[Session, Engine]]:
-    engine = create_engine(_url(), pool_pre_ping=True)
+    engine = configure_utc_session_timezone(create_engine(_url(), pool_pre_ping=True))
     session = Session(engine)
     session.begin()
     try:

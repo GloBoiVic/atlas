@@ -236,6 +236,7 @@ class ExperimentModel(Base):
         CheckConstraint("failure_code IS NULL OR failure_code ~ '^[A-Z0-9_]+$'", name="sanitized_failure_code"),
         CheckConstraint("failure_detail IS NULL OR (length(failure_detail) BETWEEN 1 AND 500 AND failure_detail !~ '[[:cntrl:]]')", name="sanitized_failure_detail"),
         CheckConstraint("(status = 'FAILED' AND failure_category IS NOT NULL AND failure_code IS NOT NULL AND failure_detail IS NOT NULL) OR (status <> 'FAILED' AND failure_category IS NULL AND failure_code IS NULL AND failure_detail IS NULL)", name="failure_consistency"),
+        Index("ix_experiments_created_at_id_desc", text("created_at DESC"), text("id DESC")),
     )
     id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
     strategy_version_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("strategy_versions.id", ondelete="RESTRICT"), nullable=False)
@@ -472,6 +473,15 @@ class ExperimentResultModel(Base):
     __table_args__ = (
         CheckConstraint("output_fingerprint ~ '^[0-9a-f]{64}$'", name="sha256_output_fingerprint"),
         CheckConstraint("financing_cost IS NULL OR financing_cost = 0", name="financing_excluded"),
+        CheckConstraint("sharpe_ratio IS NULL OR (sharpe_ratio <> 'NaN'::numeric AND sharpe_ratio <> 'Infinity'::numeric AND sharpe_ratio <> '-Infinity'::numeric)", name="result_sharpe_ratio_finite"),
+        CheckConstraint("profit_factor IS NULL OR (profit_factor <> 'NaN'::numeric AND profit_factor <> 'Infinity'::numeric AND profit_factor <> '-Infinity'::numeric)", name="result_profit_factor_finite"),
+        CheckConstraint("win_rate IS NULL OR (win_rate <> 'NaN'::numeric AND win_rate <> 'Infinity'::numeric AND win_rate <> '-Infinity'::numeric)", name="result_win_rate_finite"),
+        CheckConstraint("expectancy_net_pnl IS NULL OR (expectancy_net_pnl <> 'NaN'::numeric AND expectancy_net_pnl <> 'Infinity'::numeric AND expectancy_net_pnl <> '-Infinity'::numeric)", name="result_expectancy_net_pnl_finite"),
+        CheckConstraint("jsonb_typeof(metric_states) = 'object' AND metric_states ?& ARRAY['sharpe_ratio', 'profit_factor', 'win_rate', 'expectancy_net_pnl'] AND (metric_states->>'sharpe_ratio') IN ('VALUE', 'INFINITE', 'UNAVAILABLE', 'LEGACY_UNCOMPUTED') AND (metric_states->>'profit_factor') IN ('VALUE', 'INFINITE', 'UNAVAILABLE', 'LEGACY_UNCOMPUTED') AND (metric_states->>'win_rate') IN ('VALUE', 'INFINITE', 'UNAVAILABLE', 'LEGACY_UNCOMPUTED') AND (metric_states->>'expectancy_net_pnl') IN ('VALUE', 'INFINITE', 'UNAVAILABLE', 'LEGACY_UNCOMPUTED')", name="result_metric_state_keys"),
+        CheckConstraint("(metric_states->>'profit_factor' = 'INFINITE' AND profit_factor IS NULL) OR (metric_states->>'profit_factor' <> 'INFINITE')", name="result_metric_state_consistency"),
+        CheckConstraint("result_schema_version NOT LIKE 'PHASE5_%' OR metric_schema_version <> 'LEGACY_UNCOMPUTED'", name="result_phase5_metric_schema"),
+        CheckConstraint("profit_factor IS NULL OR profit_factor >= 0", name="result_profit_factor_nonnegative"),
+        CheckConstraint("win_rate IS NULL OR (win_rate >= 0 AND win_rate <= 1)", name="result_win_rate_range"),
     )
     experiment_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("experiments.id", ondelete="RESTRICT"), primary_key=True)
     result_schema_version: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -489,3 +499,15 @@ class ExperimentResultModel(Base):
     financing_disclosure: Mapped[str] = mapped_column(String(100), nullable=False)
     completed_market_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     output_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    sharpe_ratio: Mapped[Decimal | None] = mapped_column(Numeric(24, 10), nullable=True)
+    profit_factor: Mapped[Decimal | None] = mapped_column(Numeric(24, 10), nullable=True)
+    win_rate: Mapped[Decimal | None] = mapped_column(Numeric(24, 10), nullable=True)
+    expectancy_net_pnl: Mapped[Decimal | None] = mapped_column(Numeric(24, 10), nullable=True)
+    metric_states: Mapped[dict[str, str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'{\"sharpe_ratio\": \"LEGACY_UNCOMPUTED\", \"profit_factor\": \"LEGACY_UNCOMPUTED\", \"win_rate\": \"LEGACY_UNCOMPUTED\", \"expectancy_net_pnl\": \"LEGACY_UNCOMPUTED\"}'::jsonb"),
+    )
+    metric_schema_version: Mapped[str] = mapped_column(
+        String(100), nullable=False, server_default=text("'LEGACY_UNCOMPUTED'")
+    )

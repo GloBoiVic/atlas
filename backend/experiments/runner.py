@@ -8,7 +8,8 @@ execution, repository, and Fill boundaries and keeps their ordering explicit.
 
 import hashlib
 import json
-from collections.abc import Mapping
+import re
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -61,6 +62,8 @@ from backend.strategies.contract import evaluate_strategy
 from backend.strategies.registry import StrategyRegistry
 
 from .clock import ClockFrame, ClockPhase, M1Observation, SimulationClock
+from .metric_contract import PHASE5_METRIC_SCHEMA_VERSION, PHASE5_RESULT_SCHEMA_VERSION
+from .metrics import calculate_metrics
 
 
 class FailureCategory(StrEnum):
@@ -87,9 +90,185 @@ class ExperimentRunResult:
     failure: ExperimentFailure | None = None
 
 
+class Phase4DiagnosticStage(StrEnum):
+    PRECONDITIONS = "preconditions"
+    CONFIG_VALIDATION = "config_validation"
+    SNAPSHOT_MEMBER_LOAD = "snapshot_member_load"
+    M15_AGGREGATION = "m15_aggregation"
+    CLOCK_CONSTRUCTION = "clock_construction"
+    CLOCK_MATERIALIZATION = "clock_materialization"
+    INITIAL_EQUITY = "initial_equity"
+    STRATEGY_OBSERVATION_LOOP = "strategy_observation_loop"
+    END_CLOSE = "end_close"
+    RESULT_FINALIZATION = "result_finalization"
+    EXECUTION_ADAPTER_CONFIGURATION = "execution_adapter_configuration"
+    FINANCIAL_PROJECTION_LOAD = "financial_projection_load"
+    PRE_EXECUTION_INPUTS = "pre_execution_inputs"
+    WARMUP_EVALUATION = "warmup_evaluation"
+    DECISION_EVALUATION = "decision_evaluation"
+    ENTRY_ATTEMPT = "entry_attempt"
+    PROTECTION_APPLICATION = "protection_application"
+    EQUITY_SAMPLING = "equity_sampling"
+    TERMINAL_FACT_READ = "terminal_fact_read"
+    METRICS_CALCULATION = "metrics_calculation"
+    SEMANTIC_PAYLOAD = "semantic_payload"
+    RESULT_CREATE = "result_create"
+    MARK_COMPLETED = "mark_completed"
+
+
+@dataclass(frozen=True, slots=True)
+class Phase4ValueErrorDiagnostic:
+    event: str
+    experiment_id: UUID
+    model_version: str
+    run_path: str
+    stage: Phase4DiagnosticStage
+    reason_code: str
+    at: str | None = None
+
+    def as_dict(self) -> dict[str, object]:
+        result: dict[str, object] = {
+            "event": self.event,
+            "experiment_id": str(self.experiment_id),
+            "model_version": self.model_version,
+            "run_path": self.run_path,
+            "stage": self.stage.value,
+            "reason_code": self.reason_code,
+        }
+        if self.at is not None:
+            result["at"] = self.at
+        return result
+
+
+_VALUE_ERROR_REASONS: dict[str, str] = {
+    "experiment is not pending or running": "INVALID_EXPERIMENT_STATUS",
+    "unsupported experiment model": "UNSUPPORTED_MODEL_VERSION",
+    "strategy version does not exist": "STRATEGY_VERSION_MISSING",
+    "dataset snapshot does not exist": "DATASET_SNAPSHOT_MISSING",
+    "invalid simulation config": "SIMULATION_CONFIG_INVALID",
+    "invalid slippage model": "SLIPPAGE_MODEL_INVALID",
+    "invalid commission model": "COMMISSION_MODEL_INVALID",
+    "invalid commission": "COMMISSION_INVALID",
+    "invalid financing model": "FINANCING_MODEL_INVALID",
+    "invalid intrabar policy": "INTRABAR_POLICY_INVALID",
+    "invalid target fill policy": "TARGET_FILL_POLICY_INVALID",
+    "invalid end policy": "END_POLICY_INVALID",
+    "invalid equity sampling": "EQUITY_SAMPLING_INVALID",
+    "invalid risk config": "RISK_CONFIG_INVALID",
+    "experiment financial projections are missing": "FINANCIAL_PROJECTIONS_MISSING",
+    "no final eligible M1 quote": "FINAL_QUOTE_MISSING",
+    "open Position has no open Trade": "OPEN_TRADE_MISSING",
+    "open Trade has incomplete protection": "PROTECTION_INCOMPLETE",
+    "open Position has no Trade at experiment end": "END_TRADE_MISSING",
+    "terminal financial state is incomplete": "TERMINAL_STATE_INCOMPLETE",
+    "SimulationClock requires OANDA EUR/USD M1 bars": "CLOCK_M1_INPUT_INVALID",
+    "SimulationClock requires OANDA EUR/USD M15 MID bars": "CLOCK_M15_INPUT_INVALID",
+    "M1 bars must be UTC, minute-aligned, one-minute bars": "CLOCK_M1_ALIGNMENT_INVALID",
+    "M15 bars must be UTC, aligned, complete bars": "CLOCK_M15_ALIGNMENT_INVALID",
+    "duplicate M1 component at one frontier": "CLOCK_M1_DUPLICATE_COMPONENT",
+    "duplicate M15 decision frontier": "CLOCK_M15_DUPLICATE_FRONTIER",
+    "insufficient completed M15 bars for warmup": "CLOCK_WARMUP_INSUFFICIENT",
+    "trading_start must be UTC and M15-aligned": "CLOCK_START_ALIGNMENT_INVALID",
+    "trading_end must be UTC and M15-aligned": "CLOCK_END_ALIGNMENT_INVALID",
+}
+
+
+def _diagnostic_reason(message: str) -> str:
+    return _VALUE_ERROR_REASONS.get(message, "UNCLASSIFIED_VALUE_ERROR")
+
+
+_INCOMPLETE_M1_MESSAGE = re.compile(r"^incomplete M1 observation at (?P<at>.+)$")
+
+
+def _diagnostic_details(message: str) -> tuple[str, str | None]:
+    match = _INCOMPLETE_M1_MESSAGE.fullmatch(message)
+    if match is None:
+        return _diagnostic_reason(message), None
+    try:
+        observed_at = datetime.fromisoformat(match.group("at"))
+        if observed_at.tzinfo is None:
+            return "UNCLASSIFIED_VALUE_ERROR", None
+        observed_at = observed_at.astimezone(UTC)
+    except ValueError:
+        return "UNCLASSIFIED_VALUE_ERROR", None
+    return "INCOMPLETE_M1_OBSERVATION", observed_at.isoformat().replace("+00:00", "Z")
+
+
+ValueErrorDiagnosticSink = Callable[[Phase4ValueErrorDiagnostic], None]
+
+
+@dataclass(frozen=True, slots=True)
+class Phase4RunnerComparisonDiagnostic:
+    event: str
+    checkpoint: str
+    stage: Phase4DiagnosticStage
+    strategy_identity: str
+    strategy_contract_digest: str
+    snapshot_identity: str
+    snapshot_contract_digest: str
+    snapshot_member_count: int | None
+    snapshot_membership_digest: str
+    parameters_digest: str
+    risk_digest: str
+    simulation_digest: str
+    period_digest: str
+    capital_digest: str
+    financial_projection_digest: str
+    effective_execution_digest: str
+    seed_profile_digest: str
+    runner_inputs_digest: str
+    terminal_status: str | None
+    failure_category: str | None
+    failure_code: str | None
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "event": self.event, "checkpoint": self.checkpoint,
+            "stage": self.stage.value, "strategy_identity": self.strategy_identity,
+            "strategy_contract_digest": self.strategy_contract_digest,
+            "snapshot_identity": self.snapshot_identity,
+            "snapshot_contract_digest": self.snapshot_contract_digest,
+            "snapshot_member_count": self.snapshot_member_count,
+            "snapshot_membership_digest": self.snapshot_membership_digest,
+            "parameters_digest": self.parameters_digest, "risk_digest": self.risk_digest,
+            "simulation_digest": self.simulation_digest, "period_digest": self.period_digest,
+            "capital_digest": self.capital_digest,
+            "financial_projection_digest": self.financial_projection_digest,
+            "effective_execution_digest": self.effective_execution_digest,
+            "seed_profile_digest": self.seed_profile_digest,
+            "runner_inputs_digest": self.runner_inputs_digest,
+            "terminal_status": self.terminal_status,
+            "failure_category": self.failure_category, "failure_code": self.failure_code,
+        }
+
+
+RunnerComparisonDiagnosticSink = Callable[[Phase4RunnerComparisonDiagnostic], None]
+
+
+def _comparison_json(value: object) -> object:
+    if isinstance(value, Decimal):
+        return {"decimal": str(value)}
+    if isinstance(value, datetime):
+        return {"datetime": value.astimezone(UTC).isoformat().replace("+00:00", "Z")}
+    if isinstance(value, StrEnum):
+        return {"enum": value.value}
+    if isinstance(value, Mapping):
+        return {str(key): _comparison_json(value[key]) for key in sorted(value, key=str)}
+    if isinstance(value, (list, tuple)):
+        return [_comparison_json(item) for item in value]
+    return value
+
+
+def _comparison_digest(field: str, value: object) -> str:
+    payload = {"domain": "ATLAS_PHASE4_RUNNER_COMPARISON_V1", "field": field,
+               "value": _comparison_json(value)}
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
 MODEL_VERSION = "PHASE3_OPEN_CHECKPOINT_V1"
 PHASE4_MODEL_VERSION = "PHASE4_HISTORICAL_EXECUTION_V1"
-RESULT_SCHEMA_VERSION = "PHASE4_EXPERIMENT_RESULT_V1"
+RESULT_SCHEMA_VERSION = PHASE5_RESULT_SCHEMA_VERSION
 NOT_COMPLETED = "PHASE3_TRADE_NOT_COMPLETED"
 
 
@@ -165,6 +344,8 @@ class ExperimentRunner:
         trading_repository: TradingRepository | None = None,
         risk_service: RiskService | None = None,
         execution: SimulatedExecutionAdapter | None = None,
+        value_error_diagnostic_sink: ValueErrorDiagnosticSink | None = None,
+        comparison_diagnostic_sink: RunnerComparisonDiagnosticSink | None = None,
     ) -> None:
         self.registry = strategy_registry
         self.snapshots = snapshot_repository or DatasetSnapshotRepository()
@@ -174,6 +355,8 @@ class ExperimentRunner:
         self.risk = risk_service or RiskService()
         self.execution = execution or SimulatedExecutionAdapter()
         self._execution_supplied = execution is not None
+        self._value_error_diagnostic_sink = value_error_diagnostic_sink
+        self._comparison_diagnostic_sink = comparison_diagnostic_sink
 
     def run(self, session: Session, experiment_id: UUID) -> ExperimentRunResult:
         experiment = self.experiments.get(session, experiment_id)
@@ -248,11 +431,17 @@ class ExperimentRunner:
 
     def _run_phase4(self, session: Session, experiment: ExperimentModel) -> ExperimentRunResult:
         """Run the complete historical loop.  The caller owns the transaction."""
+        stage = Phase4DiagnosticStage.PRECONDITIONS
+        comparison: Phase4RunnerComparisonDiagnostic | None = None
+        def mark(value: Phase4DiagnosticStage) -> None:
+            nonlocal stage
+            stage = value
         try:
             if experiment.status == "PENDING":
                 self.experiments.mark_running(session, experiment.id)
             elif experiment.status != "RUNNING":
                 raise ValueError("experiment is not pending or running")
+            stage = Phase4DiagnosticStage.PRECONDITIONS
             if experiment.model_version != PHASE4_MODEL_VERSION:
                 raise ValueError("unsupported experiment model")
             version_row = self.strategies.get_version(session, experiment.strategy_version_id)
@@ -263,19 +452,24 @@ class ExperimentRunner:
             snapshot = session.get(DatasetSnapshotModel, experiment.dataset_snapshot_id)
             if snapshot is None:
                 raise ValueError("dataset snapshot does not exist")
+            stage = Phase4DiagnosticStage.CONFIG_VALIDATION
             self._validate_phase4_config(experiment)
             slippage = experiment.simulation_config["slippage_model"]
+            stage = Phase4DiagnosticStage.EXECUTION_ADAPTER_CONFIGURATION
             if not self._execution_supplied:
                 self.execution = SimulatedExecutionAdapter(
                     slippage_ticks=slippage["ticks"],
                     tick_size=_decimal(slippage["tick_size"], "slippage tick_size"),
                 )
+            stage = Phase4DiagnosticStage.SNAPSHOT_MEMBER_LOAD
             descriptor = self.snapshots.by_fingerprint(session, snapshot.fingerprint)
             members = self.snapshots.ordered_members_with_sources(
                 session, descriptor.id, descriptor.coverage_start, descriptor.coverage_end
             )
+            stage = Phase4DiagnosticStage.M15_AGGREGATION
             mid = tuple(item.bar for item in members if item.bar.price_component is PriceComponent.MID)
             m15 = aggregate_m1_to_m15(mid, PriceComponent.MID, descriptor.coverage_start, descriptor.coverage_end)
+            stage = Phase4DiagnosticStage.CLOCK_CONSTRUCTION
             clock = SimulationClock(
                 members, m15, trading_start=experiment.trading_start,
                 trading_end=experiment.trading_end, warmup_m15_bars=version.warm_up_bars,
@@ -284,18 +478,31 @@ class ExperimentRunner:
             position = session.scalar(select(PositionModel).where(PositionModel.experiment_id == experiment.id))
             if account is None or position is None:
                 raise ValueError("experiment financial projections are missing")
+            stage = Phase4DiagnosticStage.FINANCIAL_PROJECTION_LOAD
+            stage = Phase4DiagnosticStage.CLOCK_MATERIALIZATION
             observations = tuple(clock.observations())
             frames = tuple(clock.frames())
+            stage = Phase4DiagnosticStage.PRE_EXECUTION_INPUTS
+            comparison = self._comparison_record(
+                session, experiment, version_row, snapshot, members, account, position,
+                execution=self.execution,
+                execution_supplied=self._execution_supplied,
+            )
+            self._emit_comparison(comparison)
             decisions = {frame.frontier: frame for frame in frames if frame.phase is ClockPhase.DECISION}
             history: list = []
             state = StrategyState()
             # The first point is a balance snapshot at the requested period
             # boundary, not a proxy for the first executable candle close.
+            stage = Phase4DiagnosticStage.INITIAL_EQUITY
+            mark(Phase4DiagnosticStage.EQUITY_SAMPLING)
             self._sample_equity(session, experiment, account, position, None, 0)
             risk_config = RiskConfig(_decimal(experiment.risk_per_trade, "risk_per_trade"))
             params = _parameters(experiment.parameter_snapshot)
             commission = _decimal(experiment.simulation_config["commission_model"]["amount"], "commission")
+            stage = Phase4DiagnosticStage.STRATEGY_OBSERVATION_LOOP
             for warmup in (frame for frame in frames if frame.phase is ClockPhase.WARMUP):
+                mark(Phase4DiagnosticStage.WARMUP_EVALUATION)
                 history.append(warmup.decision_bar)
                 evaluation = evaluate_strategy(
                     implementation,
@@ -306,6 +513,7 @@ class ExperimentRunner:
             for observation_index, observation in enumerate(observations):
                 frame = decisions.get(observation.start_time)
                 if frame is not None:
+                    mark(Phase4DiagnosticStage.DECISION_EVALUATION)
                     history.append(frame.decision_bar)
                     try:
                         evaluation = evaluate_strategy(
@@ -317,7 +525,9 @@ class ExperimentRunner:
                         raise ExperimentFailureError(ExperimentFailure(FailureCategory.STRATEGY, "STRATEGY_EVALUATION_FAILED", "Strategy evaluation failed")) from error
                     state = evaluation.next_state
                     if evaluation.decision.action in (Action.OPEN_LONG, Action.OPEN_SHORT):
+                        mark(Phase4DiagnosticStage.ENTRY_ATTEMPT)
                         self._attempt_entry(session, experiment, version.id, frame, evaluation.decision, account, position, observation, risk_config, commission)
+                mark(Phase4DiagnosticStage.PROTECTION_APPLICATION)
                 self._apply_protection(session, experiment, position, observation, commission)
                 # If the last eligible quote must close an exposed Position, defer
                 # its equity point until after the END_OF_EXPERIMENT Fill.  The
@@ -326,24 +536,124 @@ class ExperimentRunner:
                     observation_index == len(observations) - 1
                     and position.state != "FLAT"
                 ):
+                    mark(Phase4DiagnosticStage.EQUITY_SAMPLING)
                     self._sample_equity(session, experiment, account, position, observation, None)
+            stage = Phase4DiagnosticStage.END_CLOSE
             if position.state != "FLAT":
                 if not observations:
                     raise ValueError("no final eligible M1 quote")
                 final = observations[-1]
                 self._close_at_end(session, experiment, position, final, commission)
+                mark(Phase4DiagnosticStage.EQUITY_SAMPLING)
                 self._sample_equity(session, experiment, account, position, final, None)
-            self._complete_phase4(session, experiment, account)
-            return ExperimentRunResult(experiment.id, "COMPLETED", bool(session.scalar(select(TradeModel.id).where(TradeModel.experiment_id == experiment.id))))
+            stage = Phase4DiagnosticStage.RESULT_FINALIZATION
+            self._complete_phase4(session, experiment, account, set_stage=mark)
+            result = ExperimentRunResult(experiment.id, "COMPLETED", bool(session.scalar(select(TradeModel.id).where(TradeModel.experiment_id == experiment.id))))
+            self._emit_terminal_comparison(comparison, stage, result)
+            return result
         except ExperimentFailureError as error:
-            return self._fail(session, experiment, error.failure.category, error.failure.code, error.failure.detail)
+            result = self._fail(session, experiment, error.failure.category, error.failure.code, error.failure.detail)
+            self._emit_terminal_comparison(comparison, stage, result)
+            return result
         except LookupError:
-            return self._fail(session, experiment, FailureCategory.STRATEGY, "STRATEGY_VERSION_UNAVAILABLE", "Verified StrategyVersion implementation unavailable")
+            result = self._fail(session, experiment, FailureCategory.STRATEGY, "STRATEGY_VERSION_UNAVAILABLE", "Verified StrategyVersion implementation unavailable")
+            self._emit_terminal_comparison(comparison, stage, result)
+            return result
         except ValueError as error:
+            self._emit_value_error_diagnostic(experiment, stage, error)
             category = FailureCategory.MARKET_DATA if any(word in str(error).lower() for word in ("snapshot", "m1", "bar", "market", "quote")) else FailureCategory.VALIDATION
-            return self._fail(session, experiment, category, "INVALID_INPUT", "Experiment could not be run")
+            result = self._fail(session, experiment, category, "INVALID_INPUT", "Experiment could not be run")
+            self._emit_terminal_comparison(comparison, stage, result)
+            return result
         except Exception:
-            return self._fail(session, experiment, FailureCategory.PERSISTENCE, "PERSISTENCE_FAILURE", "Experiment persistence failed")
+            result = self._fail(session, experiment, FailureCategory.PERSISTENCE, "PERSISTENCE_FAILURE", "Experiment persistence failed")
+            self._emit_terminal_comparison(comparison, stage, result)
+            return result
+
+    def _emit_comparison(self, record: Phase4RunnerComparisonDiagnostic) -> None:
+        if self._comparison_diagnostic_sink is None:
+            return
+        try:
+            self._comparison_diagnostic_sink(record)
+        except Exception:
+            return
+
+    def _emit_terminal_comparison(self, record, stage, result) -> None:
+        if record is None:
+            return
+        self._emit_comparison(
+            Phase4RunnerComparisonDiagnostic(
+                **{**record.as_dict(), "checkpoint": "TERMINAL_RETURN",
+                   "stage": stage, "terminal_status": result.status,
+                   "failure_category": result.failure.category.value if result.failure else None,
+                   "failure_code": result.failure.code if result.failure else None}
+            )
+        )
+
+    @staticmethod
+    def _comparison_record(session, experiment, version, snapshot, members, account, position, *, execution, execution_supplied):
+        def digest(field, value):
+            return _comparison_digest(field, value)
+        strategy = {"version": version.version_number, "fingerprint": version.source_fingerprint,
+                    "implementation": version.implementation_key,
+                    "schema": version.parameter_schema, "timeframes": version.context_timeframes,
+                    "capabilities": version.capabilities, "primary": version.primary_timeframe,
+                    "warmup": version.warm_up_bars, "state_schema": version.state_schema_version}
+        snapshot_contract = {"base_resolution": snapshot.base_resolution, "components": snapshot.components,
+                             "coverage_start": snapshot.coverage_start, "coverage_end": snapshot.coverage_end,
+                             "alignment": snapshot.alignment_convention, "session_policy": snapshot.session_policy,
+                             "fingerprint_schema": snapshot.fingerprint_schema, "fingerprint": snapshot.fingerprint}
+        member_values = [{"venue": item.bar.instrument.value, "provider": item.bar.provider.value,
+                          "resolution": item.bar.timeframe.value, "component": item.bar.price_component.value,
+                          "start": item.bar.start_time, "end": item.bar.end_time,
+                          "open": item.bar.open, "high": item.bar.high, "low": item.bar.low,
+                          "close": item.bar.close, "volume": item.bar.volume,
+                          "source": item.source.content_fingerprint} for item in members]
+        values = {
+            "strategy_contract_digest": digest("strategy_contract", strategy),
+            "snapshot_contract_digest": digest("snapshot_contract", snapshot_contract),
+            "snapshot_membership_digest": digest("snapshot_membership", member_values),
+            "parameters_digest": digest("parameters", experiment.parameter_snapshot),
+            "risk_digest": digest("risk", {"value": experiment.risk_per_trade, "config": experiment.risk_config}),
+            "simulation_digest": digest("simulation", experiment.simulation_config),
+            "period_digest": digest("period", [experiment.trading_start, experiment.trading_end]),
+            "capital_digest": digest("capital", experiment.starting_capital),
+            "financial_projection_digest": digest("financial_projection", {"currency": account.base_currency,
+                "starting": account.starting_capital, "realized": account.realized_pnl,
+                "unrealized": account.unrealized_pnl, "equity": account.equity, "position": position.state}),
+            "effective_execution_digest": digest("effective_execution", {"supplied": execution_supplied,
+                "slippage": getattr(execution, "slippage", None),
+                "tick_size": getattr(execution, "tick_size", None)}),
+        }
+        values["seed_profile_digest"] = digest("seed_profile", [values["strategy_contract_digest"], values["snapshot_contract_digest"], values["snapshot_membership_digest"]])
+        values["runner_inputs_digest"] = digest("runner_inputs", list(values.values()) + [experiment.model_version])
+        return Phase4RunnerComparisonDiagnostic("experiment_runner_comparison", "PRE_EXECUTION", Phase4DiagnosticStage.PRE_EXECUTION_INPUTS,
+            "RESOLVED_SAME_ROW", values["strategy_contract_digest"], "RESOLVED_SAME_ROW", values["snapshot_contract_digest"], len(members), values["snapshot_membership_digest"],
+            values["parameters_digest"], values["risk_digest"], values["simulation_digest"], values["period_digest"], values["capital_digest"], values["financial_projection_digest"], values["effective_execution_digest"], values["seed_profile_digest"], values["runner_inputs_digest"], None, None, None)
+
+    def _emit_value_error_diagnostic(
+        self,
+        experiment: ExperimentModel,
+        stage: Phase4DiagnosticStage,
+        error: ValueError,
+    ) -> None:
+        sink = self._value_error_diagnostic_sink
+        if sink is None:
+            return
+        reason_code, observed_at = _diagnostic_details(str(error))
+        diagnostic = Phase4ValueErrorDiagnostic(
+            event="experiment_runner_value_error",
+            experiment_id=experiment.id,
+            model_version=experiment.model_version,
+            run_path="PHASE4",
+            stage=stage,
+            reason_code=reason_code,
+            at=observed_at,
+        )
+        try:
+            sink(diagnostic)
+        except Exception:
+            return
 
     @staticmethod
     def _position_state(value: str) -> PositionState:
@@ -512,19 +822,30 @@ class ExperimentRunner:
             return
         self.experiments.append_equity_point(session, experiment_id=experiment.id, sequence_number=seq, observed_at=when, balance=account.starting_capital + account.realized_pnl, realized_pnl=account.realized_pnl, unrealized_pnl=unrealized, equity=account.equity, running_peak=peak, drawdown_amount=drawdown, drawdown_percent=percent, valuation_bid=bid, valuation_ask=ask, source_bid_market_bar_id=bid_id, source_ask_market_bar_id=ask_id)
 
-    def _complete_phase4(self, session, experiment, account):
+    def _complete_phase4(self, session, experiment, account, set_stage=None):
+        if set_stage is not None:
+            set_stage(Phase4DiagnosticStage.TERMINAL_FACT_READ)
         trades = tuple(session.scalars(select(TradeModel).where(TradeModel.experiment_id == experiment.id).order_by(TradeModel.sequence_number)).all())
         equity = tuple(session.scalars(select(ExperimentEquityPointModel).where(ExperimentEquityPointModel.experiment_id == experiment.id).order_by(ExperimentEquityPointModel.sequence_number)).all())
         if not equity or any(trade.status != "COMPLETED" for trade in trades):
             raise ValueError("terminal financial state is incomplete")
+        if set_stage is not None:
+            set_stage(Phase4DiagnosticStage.METRICS_CALCULATION)
+        metrics = calculate_metrics(trades, equity, starting_equity=experiment.starting_capital)
         gross = sum((trade.gross_pnl or Decimal("0") for trade in trades), Decimal("0"))
         commission = sum((trade.commission_cost or Decimal("0") for trade in trades), Decimal("0"))
-        max_dd = max((point.drawdown_amount for point in equity), default=Decimal("0"))
-        max_dd_pct = max((point.drawdown_percent for point in equity), default=Decimal("0"))
+        max_dd = metrics.max_drawdown_amount.value or Decimal("0")
+        max_dd_pct = metrics.max_drawdown_percent.value or Decimal("0")
+        if set_stage is not None:
+            set_stage(Phase4DiagnosticStage.SEMANTIC_PAYLOAD)
         payload = self._semantic_payload(session, experiment, trades, equity)
         fingerprint = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-        self.experiments.create_result(session, experiment_id=experiment.id, result_schema_version=RESULT_SCHEMA_VERSION, trade_count=len(trades), ambiguous_trade_count=sum(bool(t.intrabar_ambiguous) for t in trades), gross_pnl=gross, commission_cost=commission, financing_cost=None, modeled_net_pnl=gross - commission, ending_balance=account.starting_capital + account.realized_pnl, ending_equity=account.equity, net_return=(account.equity - account.starting_capital) / account.starting_capital, max_drawdown_amount=max_dd, max_drawdown_percent=max_dd_pct, financing_disclosure="FINANCING EXCLUDED", completed_market_time=experiment.trading_end, output_fingerprint=fingerprint)
-        self.experiments.mark_completed(session, experiment.id, experiment.trading_end)
+        if set_stage is not None:
+            set_stage(Phase4DiagnosticStage.RESULT_CREATE)
+        self.experiments.create_result(session, experiment_id=experiment.id, result_schema_version=RESULT_SCHEMA_VERSION, trade_count=metrics.trade_count, ambiguous_trade_count=sum(bool(t.intrabar_ambiguous) for t in trades), gross_pnl=gross, commission_cost=commission, financing_cost=None, modeled_net_pnl=gross - commission, ending_balance=account.starting_capital + account.realized_pnl, ending_equity=account.equity, net_return=metrics.net_return.value or Decimal("0"), max_drawdown_amount=max_dd, max_drawdown_percent=max_dd_pct, financing_disclosure="FINANCING EXCLUDED", completed_market_time=experiment.trading_end, output_fingerprint=fingerprint, sharpe_ratio=metrics.sharpe_ratio.value, profit_factor=metrics.profit_factor.value, win_rate=metrics.win_rate.value, expectancy_net_pnl=metrics.expectancy_net_pnl.value, metric_states={name: getattr(metrics, name).state for name in ("sharpe_ratio", "profit_factor", "win_rate", "expectancy_net_pnl")}, metric_schema_version=PHASE5_METRIC_SCHEMA_VERSION)
+        if set_stage is not None:
+            set_stage(Phase4DiagnosticStage.MARK_COMPLETED)
+        self.experiments.mark_completed(session, experiment.id, datetime.now(UTC))
 
     @staticmethod
     def _semantic_payload(session, experiment, trades, equity):
@@ -599,4 +920,4 @@ class ExperimentFailureError(Exception):
         self.failure = failure
 
 
-__all__ = ["ExperimentFailure", "ExperimentRunResult", "ExperimentRunner", "FailureCategory", "MODEL_VERSION", "PHASE4_MODEL_VERSION", "RESULT_SCHEMA_VERSION", "NOT_COMPLETED"]
+__all__ = ["ExperimentFailure", "ExperimentRunResult", "ExperimentRunner", "FailureCategory", "Phase4DiagnosticStage", "Phase4ValueErrorDiagnostic", "ValueErrorDiagnosticSink", "MODEL_VERSION", "PHASE4_MODEL_VERSION", "RESULT_SCHEMA_VERSION", "NOT_COMPLETED"]

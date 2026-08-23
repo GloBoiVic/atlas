@@ -29,6 +29,7 @@ from backend.market_data.ingestion import (
     HistoricalFetchResult,
     MarketDataService,
 )
+from backend.persistence.database import configure_utc_session_timezone
 from backend.persistence.market_data_repository import DatasetSnapshotRepository
 
 pytestmark = pytest.mark.integration
@@ -55,7 +56,9 @@ def database_url() -> str:
 
 @pytest.fixture()
 def session_factory(database_url: str) -> Generator[sessionmaker[Session]]:
-    engine = create_engine(database_url, pool_pre_ping=True)
+    engine = configure_utc_session_timezone(
+        create_engine(database_url, pool_pre_ping=True)
+    )
     with engine.begin() as connection:
         connection.execute(
             text(

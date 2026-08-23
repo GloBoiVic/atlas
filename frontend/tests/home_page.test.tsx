@@ -1,16 +1,13 @@
-import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { redirect } from 'next/navigation';
 import Home from '../app/page';
 
+vi.mock('next/navigation', () => ({ redirect: vi.fn() }));
+
 describe('home page', () => {
-  it('renders the foundation page', () => {
-    render(<Home />);
-    expect(
-      screen.getByRole('heading', { name: 'Atlas', level: 1 }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText('The project foundation is running.'),
-    ).toBeVisible();
-    expect(screen.getAllByRole('main')).toHaveLength(1);
+  it('redirects to the Experiments workspace', () => {
+    vi.mocked(redirect).mockClear();
+    Home();
+    expect(redirect).toHaveBeenCalledWith('/experiments');
   });
 });
