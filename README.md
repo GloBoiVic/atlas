@@ -1,8 +1,10 @@
-# Atlas Phase 2 — Historical Data
+# Atlas
 
-Atlas currently provides the historical EUR/USD data slice: OANDA Practice M1
-candles, immutable dataset snapshots, and deterministic M15 derivation. There
-are no trading, live, or API routes in this slice.
+Atlas currently supports the historical EUR/USD workflow: load OANDA Practice
+M1 candles, create immutable DatasetSnapshots, derive M15 data, configure and
+run deterministic historical Experiments, inspect results and Trades, compare
+completed Experiments, and inspect immutable StrategyVersion history. This is
+historical simulation only: PAPER/LIVE broker execution is not implemented.
 
 ## Prerequisites
 
@@ -14,7 +16,7 @@ are no trading, live, or API routes in this slice.
 
 Copy `.env.example` to `.env` and edit values for your machine. `.env` is
 gitignored. The OANDA token is optional for coverage, snapshot, and derivation;
-load and refresh fail clearly when it is absent.
+it is required only when loading or refreshing provider data.
 
 ```bash
 cp .env.example .env
@@ -23,6 +25,15 @@ cp .env.example .env
 `.env.example` contains only a placeholder token. Put a real OANDA Practice
 token only in your untracked `.env`; it is sent only as an Authorization header
 to the fixed HTTPS Practice endpoint and is never a CLI argument or output.
+
+The frontend requires its own local API URL because Next.js runs from
+`frontend/`. Create an untracked `frontend/.env.local`:
+
+```bash
+cat > frontend/.env.local <<'EOF'
+ATLAS_API_BASE_URL=http://127.0.0.1:8000
+EOF
+```
 
 ## 2. Install dependencies
 
@@ -52,7 +63,7 @@ uv run alembic check
 
 Migrations live in `backend/persistence/migrations` and read `ATLAS_DATABASE_URL` from `.env`.
 
-## 4. Historical data commands
+## 4. Prepare historical data
 
 All ranges must be explicit UTC, minute-aligned, positive, half-open ranges.
 Commands print stable summaries; `--json` produces compact sorted-key JSON.
@@ -72,6 +83,12 @@ unexpected observations fail closed. M15 is derived only from immutable
 snapshot membership; no forward fill, interpolation, or synthetic bars are
 created. OANDA Practice historical candles are the only external capability.
 
+To run an Experiment, Atlas needs a completed DatasetSnapshot with derived M15
+data that covers the selected period. The UI lists eligible data. If it has no
+eligible DatasetSnapshot, load a sufficiently long range, create a snapshot,
+and derive M15 data using the commands above. Keep all Experiment periods
+inside the snapshot's validated coverage.
+
 ## 5. Run the stack
 
 Run each command in its own terminal. Python application source and backend tests live directly under the `backend/` Python package.
@@ -88,7 +105,7 @@ npm run dev:web
 uv run uvicorn backend.api.app:create_app --factory --host 127.0.0.1 --port 8000 --reload
 ```
 
-**Runtime** — use `uv run atlas-runtime --check` for a one-shot readiness check, or `uv run atlas-runtime` to run until stopped:
+**Runtime (optional for historical Experiments)** — use `uv run atlas-runtime --check` for a one-shot readiness check, or `uv run atlas-runtime` to run until stopped:
 
 ```bash
 uv run atlas-runtime
@@ -98,7 +115,32 @@ Liveness is process-only; readiness checks PostgreSQL and returns sanitized 503 
 
 **Stopping:** press Ctrl+C in each terminal. The runtime also exits cleanly on SIGTERM.
 
-## 6. Validation
+## 6. Manually validate Phase 6
+
+1. Start PostgreSQL, apply migrations, then start the API and frontend as above.
+2. Confirm the API is ready at <http://127.0.0.1:8000/health/ready> and open
+   <http://localhost:3000/experiments/new>.
+3. Select the parameter-enabled **EMA Sweep Engulfing v2** StrategyVersion and
+   an eligible DatasetSnapshot. Choose a period within the snapshot coverage.
+4. Run a baseline Experiment, then run 5–10 more while changing one supported
+   parameter at a time (for example EMA period, ATR period, stop buffer, or
+   target R). Record the exact parameter set, date range, snapshot, starting
+   capital, and risk per Trade for each run.
+5. Open the completed Experiment result. Inspect its metrics, equity curve,
+   drawdown, and Trade list. Select an individual Trade to open its detail page.
+
+The Trade detail page includes a charted execution context: canonical M15 MID
+candles, EMA 100, setup markers, and entry, exit, initial-stop, and target
+levels. Experiment results also expose equity and drawdown charts. These views
+are historical Experiment evidence, not broker/PAPER/LIVE execution.
+
+Parameter changes may alter signals, Trade count, exits, and metrics, but Atlas
+does not promise that every valid parameter combination will produce a different
+outcome for the same DatasetSnapshot and period. Use the Experiment comparison
+view to compare completed runs; it is read-only and does not rank or recommend
+parameters.
+
+## 7. Engineering validation
 
 ```bash
 uv run ruff format --check backend
