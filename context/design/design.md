@@ -22,7 +22,7 @@ Each page: title + short supporting context + primary action. No redundant bread
 
 ## Visual Character
 
-Clean, modern, restrained, technical, calm, precise. Avoid: dark institutional terminal, excessive green/red, dense walls, oversized KPI dashboards, gradients, shadows, decorative animations, generic fintech visuals. Light/restrained neutral theme preferred.
+Clean, modern, restrained, technical, calm, precise. Approved V2 appearance is dark-first: deep blue-black canvas, dark navy surfaces, cool-neutral text and borders, and sparse semantic color. This is not a dense institutional terminal. Avoid excessive green/red, dense walls, oversized KPI dashboards, gradients, ornamental shadows, decorative animations, and generic fintech visuals. See [`ui-tokens.md`](ui-tokens.md) and [`visual-guide.md`](visual-guide.md) for the recurring visual roles and evidence-backed guidance.
 
 ## Initial Scope / Information Density
 
@@ -78,7 +78,7 @@ Full detail pages for major workspaces (Experiment Results, Strategy Detail, Tra
 
 ## Responsive / Mockups / Screenshot
 
-Narrower screens: keep horizontal nav as long as practical, collapse secondary controls, scroll tables, stack secondary detail, preserve safety info. Mockups are visual reference only; written context governs behavior and scope. Existing composite screenshot: `context/design/screenshot/atlas-screens.PNG` (1536×1024 composite). Do not split, rename, or move it as part of this documentation pass.
+Narrower screens: keep horizontal nav as long as practical, collapse secondary controls, scroll tables, stack secondary detail, preserve safety info. Mockups are visual reference only; written context governs behavior and scope. The approved V2 screenshot set is documented in [`visual-guide.md`](visual-guide.md): `context/design/atlas-overview-page.png`, `context/design/atlas-strategies-page.png`, `context/design/atlas-strategies-details-page.png`, `context/design/atlas-experiments-page.png`, `context/design/atlas-experiments-detail-page.png`, `context/design/atlas-experiment-run-page.png`, `context/design/atlas-compare-experiments-page.png`, `context/design/atlas-deployments-page.png`, `context/design/atlas-journal-page.png`, and `context/design/atlas-journal-detail-page.png`. No screenshot-only difference authorizes navigation or behavior changes.
 
 ## USD Base Currency / Design Review
 
