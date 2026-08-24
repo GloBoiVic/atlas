@@ -47,8 +47,40 @@ class ExperimentCreateRequest(PeriodRequest):
         return str(value)
 
 
+class ExperimentStrategyVersionOptionResponse(StrictModel):
+    id: UUID
+    strategy_key: str
+    name: str
+    version: int
+    display_name: str
+    created_at: str
+    implementation_key: str
+    source_fingerprint: str
+    parameter_schema: list[dict[str, Any]]
+    warm_up_bars: int
+    execution_available: bool
+    unavailable_reason: str | None
+
+
+class ExperimentDatasetSnapshotOptionResponse(StrictModel):
+    id: UUID
+    fingerprint: str
+    coverage_start: str
+    coverage_end: str
+    integrity: dict[str, Any]
+
+
+class ExperimentConfigurationOptionsResponse(StrictModel):
+    strategy_versions: list[ExperimentStrategyVersionOptionResponse]
+    dataset_snapshots: list[ExperimentDatasetSnapshotOptionResponse]
+    defaults: dict[str, Any]
+    simulation_assumptions: dict[str, Any]
+
+
 class ErrorBody(BaseModel):
-    model_config = ConfigDict(alias_generator=_camel, populate_by_name=True, extra="forbid")
+    model_config = ConfigDict(
+        alias_generator=_camel, populate_by_name=True, extra="forbid"
+    )
 
     code: str
     message: str
@@ -65,3 +97,96 @@ class ApiResponse(BaseModel):
     # The concrete payload is represented by route-specific OpenAPI schemas
     # where useful; this base makes the envelope stable for injected services.
     pass
+
+
+class StrategyLatestVersionResponse(StrictModel):
+    id: UUID
+    version_number: int
+    display_name: str
+
+
+class StrategyCatalogItemResponse(StrictModel):
+    strategy_key: str
+    name: str
+    description: str
+    latest_version: StrategyLatestVersionResponse | None
+    version_count: int
+    experiment_count: int
+    last_experiment_at: datetime | None
+
+
+class StrategyCatalogResponse(StrictModel):
+    items: list[StrategyCatalogItemResponse]
+
+
+class StrategySourceManifestItem(StrictModel):
+    relative_path: str
+    byte_length: int
+
+
+class StrategyVersionHistoryResponse(StrictModel):
+    id: UUID
+    display_name: str
+    version_number: int
+    implementation_key: str
+    source_fingerprint: str
+    created_at: datetime
+    git_sha: str | None
+    source_manifest: list[StrategySourceManifestItem]
+    parameter_schema: list[dict[str, Any]]
+    context_timeframes: list[str]
+    timeframe: str
+    warm_up_bars: int
+    state_schema_version: int
+    capabilities: list[str]
+    experiment_count: int
+    last_used_at: datetime | None
+    execution_available: bool
+    unavailable_reason: str | None
+
+
+class StrategyDetailResponse(StrictModel):
+    strategy_key: str
+    name: str
+    description: str
+    version_count: int
+    experiment_count: int
+    last_experiment_at: datetime | None
+    versions: list[StrategyVersionHistoryResponse]
+
+
+class ComparisonWarningResponse(StrictModel):
+    code: str
+    severity: str
+    explanation: str
+    paths: list[str]
+
+
+class ComparisonDifferenceResponse(StrictModel):
+    path: str
+    values: dict[str, Any]
+
+
+class ComparisonExperimentResponse(StrictModel):
+    slot: str
+    id: UUID
+    label: str
+    strategy: dict[str, Any]
+    instrument: dict[str, Any]
+    dataset_snapshot: dict[str, Any]
+    trading_period: dict[str, Any]
+    parameters: dict[str, Any]
+    starting_capital: dict[str, Any]
+    risk: dict[str, Any]
+    simulation: dict[str, Any]
+    model_version: str
+    metric_contract: dict[str, Any]
+    metrics: dict[str, Any]
+
+
+class ExperimentComparisonResponse(StrictModel):
+    experiments: list[ComparisonExperimentResponse]
+    differences: list[ComparisonDifferenceResponse]
+    warnings: list[ComparisonWarningResponse]
+    changed_parameter_keys: list[str]
+    strong_parameter_isolation: bool

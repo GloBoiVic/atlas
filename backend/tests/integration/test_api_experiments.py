@@ -6,14 +6,17 @@ from threading import Thread
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
 from backend.api.app import create_app
+from backend.experiments.runner import ExperimentRunner
 from backend.persistence.database import configure_utc_session_timezone
+from backend.persistence.experiment_repository import ExperimentRepository
 from backend.persistence.models import (
     ExperimentEquityPointModel,
     ExperimentModel,
+    ExperimentResultModel,
     StrategyVersionModel,
 )
 from backend.persistence.strategy_repository import version_to_domain
@@ -188,3 +191,105 @@ def test_completed_experiment_list_reuses_detail_metrics_and_pagination(database
         assert page.status_code == 200
         assert all(row["id"] != str(experiment_id) for row in page.json()["items"])
     engine.dispose()
+
+
+def test_http_comparison_uses_public_repeated_ids_and_is_read_only(database_url):
+    engine = configure_utc_session_timezone(create_engine(database_url))
+    try:
+        with Session(engine) as session, session.begin():
+            first_id, snapshot_id, version_id = _seed(session, "LONG", phase4=True)
+            first = session.get(ExperimentModel, first_id)
+            assert first is not None
+            repository = ExperimentRepository()
+            second = repository.create(
+                session,
+                strategy_version_id=version_id,
+                dataset_snapshot_id=snapshot_id,
+                venue_instrument_id=first.venue_instrument_id,
+                trading_start=first.trading_start,
+                trading_end=first.trading_end,
+                starting_capital=first.starting_capital,
+                risk_per_trade=first.risk_per_trade,
+                parameter_snapshot=first.parameter_snapshot,
+                risk_config=first.risk_config,
+                simulation_config=first.simulation_config,
+                model_version=first.model_version,
+            )
+            repository.create_account_and_position(session, second)
+            second_id = second.id
+
+        for experiment_id in (first_id, second_id):
+            with Session(engine) as session, session.begin():
+                result = ExperimentRunner(strategy_registry=_registry()).run(
+                    session, experiment_id
+                )
+                assert result.status == "COMPLETED", result.failure
+
+        with Session(engine) as session:
+            before_counts = {
+                model.__tablename__: session.scalar(
+                    select(func.count()).select_from(model)
+                )
+                for model in (
+                    ExperimentModel,
+                    ExperimentResultModel,
+                    ExperimentEquityPointModel,
+                )
+            }
+
+        app = create_app(engine=engine, registry=_registry())
+        with TestClient(app) as client:
+            response = client.get(
+                "/api/v1/experiments/comparison",
+                params=[
+                    ("experimentId", str(second_id)),
+                    ("experimentId", str(first_id)),
+                ],
+            )
+            assert response.status_code == 200, response.text
+            payload = response.json()
+            assert [item["id"] for item in payload["experiments"]] == [
+                str(second_id),
+                str(first_id),
+            ]
+            metric_names = {
+                "netReturn",
+                "maxDrawdownAmount",
+                "maxDrawdownPercent",
+                "sharpe",
+                "profitFactor",
+                "winRate",
+                "expectancy",
+                "tradeCount",
+            }
+            for experiment in payload["experiments"]:
+                assert set(experiment["metrics"]) == metric_names
+                assert all(
+                    set(metric) == {"state", "value", "unit", "reason"}
+                    for metric in experiment["metrics"].values()
+                )
+            assert (
+                client.get(
+                    "/api/v1/experiments/comparison",
+                    params=[
+                        ("experiment_id", str(first_id)),
+                        ("experiment_id", str(second_id)),
+                    ],
+                ).status_code
+                == 422
+            )
+
+        with Session(engine) as session:
+            after_counts = {
+                model.__tablename__: session.scalar(
+                    select(func.count()).select_from(model)
+                )
+                for model in (
+                    ExperimentModel,
+                    ExperimentResultModel,
+                    ExperimentEquityPointModel,
+                )
+            }
+            assert after_counts == before_counts
+    finally:
+        engine.dispose()

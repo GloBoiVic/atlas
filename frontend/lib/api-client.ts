@@ -60,6 +60,21 @@ export const atlasApi = {
     const suffix = params.size ? `?${params.toString()}` : '';
     return request<unknown>(`/api/v1/experiments${suffix}`);
   },
+  listStrategies: () =>
+    request<components['schemas']['StrategyCatalogResponse']>(
+      '/api/v1/strategies',
+    ),
+  getStrategy: (strategyKey: string) =>
+    request<components['schemas']['StrategyDetailResponse']>(
+      `/api/v1/strategies/${encodeURIComponent(strategyKey)}`,
+    ),
+  compareExperiments: (experimentIds: string[]) => {
+    const params = new URLSearchParams();
+    experimentIds.forEach((id) => params.append('experimentId', id));
+    return request<components['schemas']['ExperimentComparisonResponse']>(
+      `/api/v1/experiments/comparison?${params.toString()}`,
+    );
+  },
   configurationOptions: () =>
     request<unknown>('/api/v1/experiments/configuration-options'),
   validateCoverage: (body: components['schemas']['PeriodRequest']) =>

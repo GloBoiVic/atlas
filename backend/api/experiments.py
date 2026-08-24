@@ -7,6 +7,7 @@
 import base64
 import binascii
 import json
+from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -15,6 +16,10 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
+from backend.experiments.comparison import (
+    ComparisonReadError,
+    ExperimentComparisonReadService,
+)
 from backend.experiments.configuration import (
     ConfigurationError,
     ExperimentConfigurationService,
@@ -28,15 +33,23 @@ from backend.persistence.database import session_scope
 from backend.persistence.models import ExperimentModel
 from backend.persistence.result_repository import ExperimentResultRepository
 from backend.persistence.strategy_repository import StrategyRepository
+from backend.strategies.registry import StrategyVersionUnavailableError
 
-from .schemas import ExperimentCreateRequest, PeriodRequest
+from .schemas import (
+    ExperimentComparisonResponse,
+    ExperimentConfigurationOptionsResponse,
+    ExperimentCreateRequest,
+    PeriodRequest,
+)
 
 
 def _utc(value: datetime) -> str:
     # Database timestamps are persisted UTC instants.  A naive value is only
     # accepted as that explicit storage representation; local wall time is
     # never guessed or converted.
-    instant = value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+    instant = (
+        value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+    )
     return instant.isoformat().replace("+00:00", "Z")
 
 
@@ -56,7 +69,9 @@ def _decode_cursor(value: str) -> tuple[datetime, UUID]:
         if set(payload) != {"createdAt", "id"}:
             raise ValueError
         created_at = datetime.fromisoformat(payload["createdAt"].replace("Z", "+00:00"))
-        if created_at.tzinfo is None or created_at.utcoffset() != UTC.utcoffset(created_at):
+        if created_at.tzinfo is None or created_at.utcoffset() != UTC.utcoffset(
+            created_at
+        ):
             raise ValueError
         return created_at.astimezone(UTC), UUID(payload["id"])
     except (
@@ -86,21 +101,35 @@ def _json(value: Any) -> Any:
         return {str(key): _json(item) for key, item in value.items()}
     if isinstance(value, (tuple, list)):
         return [_json(item) for item in value]
+    if is_dataclass(value):
+        return _json(asdict(value))
     mapper = getattr(value, "__mapper__", None)
     if mapper is not None:
-        return {column.key: _json(getattr(value, column.key)) for column in mapper.columns}
+        return {
+            column.key: _json(getattr(value, column.key)) for column in mapper.columns
+        }
     if hasattr(value, "__dict__"):
-        return {key: _json(item) for key, item in vars(value).items() if not key.startswith("_")}
+        return {
+            key: _json(item)
+            for key, item in vars(value).items()
+            if not key.startswith("_")
+        }
     return str(value)
 
 
 def _failure(row: ExperimentModel) -> dict[str, Any] | None:
     if row.status != "FAILED":
         return None
-    return {"category": row.failure_category, "code": row.failure_code, "detail": row.failure_detail}
+    return {
+        "category": row.failure_category,
+        "code": row.failure_code,
+        "detail": row.failure_detail,
+    }
 
 
-def _detail(row: ExperimentModel, metrics: Any = None, result: Any = None) -> dict[str, Any]:
+def _detail(
+    row: ExperimentModel, metrics: Any = None, result: Any = None
+) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "id": str(row.id),
         "label": f"Experiment {str(row.id)[:8]}",
@@ -123,7 +152,10 @@ def _detail(row: ExperimentModel, metrics: Any = None, result: Any = None) -> di
         "provenance": {
             "strategyVersionId": str(row.strategy_version_id),
             "datasetSnapshotId": str(row.dataset_snapshot_id),
-            "requestedPeriod": {"start": _utc(row.trading_start), "end": _utc(row.trading_end)},
+            "requestedPeriod": {
+                "start": _utc(row.trading_start),
+                "end": _utc(row.trading_end),
+            },
             "startingCapital": str(row.starting_capital),
             "baseCurrency": "USD",
             "risk": row.risk_config,
@@ -160,8 +192,16 @@ def _metrics_payload(metrics: Any) -> dict[str, Any] | None:
     }
 
 
-def _error(code: str, message: str, details: dict[str, Any] | None = None, http_status: int = 400) -> HTTPException:
-    return HTTPException(http_status, {"error": {"code": code, "message": message, "details": details or {}}})
+def _error(
+    code: str,
+    message: str,
+    details: dict[str, Any] | None = None,
+    http_status: int = 400,
+) -> HTTPException:
+    return HTTPException(
+        http_status,
+        {"error": {"code": code, "message": message, "details": details or {}}},
+    )
 
 
 def create_experiment_router(
@@ -175,47 +215,125 @@ def create_experiment_router(
     router = APIRouter(prefix="/api/v1/experiments", tags=["experiments"])
     result_repo = ExperimentResultRepository()
     strategy_repo = strategies or StrategyRepository()
+    comparison = ExperimentComparisonReadService(
+        results=result_repo, result_service=results
+    )
 
     def session() -> Any:
         with session_scope(session_factory) as db:
             yield db
 
-    @router.get("/configuration-options")
+    @router.get(
+        "/configuration-options", response_model=ExperimentConfigurationOptionsResponse
+    )
     def options(db: Session = Depends(session)) -> dict[str, Any]:
         versions = []
         for row in strategy_repo.list_all_versions(db):
-            versions.append({
-                "id": str(row.id), "strategyKey": row.strategy.strategy_key,
-                "name": row.strategy.name, "version": row.version_number,
-                "implementationKey": row.implementation_key, "sourceFingerprint": row.source_fingerprint,
-                "parameterSchema": row.parameter_schema, "warmUpBars": row.warm_up_bars,
-            })
+            try:
+                configuration.registry.get(
+                    row.strategy.strategy_key,
+                    implementation_key=row.implementation_key,
+                    source_fingerprint=row.source_fingerprint,
+                )
+                execution_available = True
+                unavailable_reason = None
+            except StrategyVersionUnavailableError:
+                execution_available = False
+                unavailable_reason = "No exact local implementation is registered for this StrategyVersion."
+            versions.append(
+                {
+                    "id": str(row.id),
+                    "strategyKey": row.strategy.strategy_key,
+                    "name": row.strategy.name,
+                    "version": row.version_number,
+                    "displayName": f"{row.strategy.name} v{row.version_number}",
+                    "createdAt": _utc(row.created_at),
+                    "implementationKey": row.implementation_key,
+                    "sourceFingerprint": row.source_fingerprint,
+                    "parameterSchema": row.parameter_schema,
+                    "warmUpBars": row.warm_up_bars,
+                    "executionAvailable": execution_available,
+                    "unavailableReason": unavailable_reason,
+                }
+            )
         snapshots = []
         for snapshot in configuration.snapshots.list_options(db):
-            snapshots.append({"id": str(snapshot.id), "fingerprint": snapshot.fingerprint,
-                              "coverageStart": _utc(snapshot.coverage_start), "coverageEnd": _utc(snapshot.coverage_end),
-                              "integrity": snapshot.integrity_summary})
-        return {"strategyVersions": versions, "datasetSnapshots": snapshots,
-                "defaults": {"startingCapital": "10000", "riskPerTrade": "0.01", "slippageTicks": 0, "commissionPerUnit": "0"},
-                "simulationAssumptions": {"executionResolution": "M1", "analysisComponent": "MID", "executionComponents": ["BID", "ASK"], "financing": "FINANCING EXCLUDED"}}
+            snapshots.append(
+                {
+                    "id": str(snapshot.id),
+                    "fingerprint": snapshot.fingerprint,
+                    "coverageStart": _utc(snapshot.coverage_start),
+                    "coverageEnd": _utc(snapshot.coverage_end),
+                    "integrity": snapshot.integrity_summary,
+                }
+            )
+        return {
+            "strategyVersions": versions,
+            "datasetSnapshots": snapshots,
+            "defaults": {
+                "startingCapital": "10000",
+                "riskPerTrade": "0.01",
+                "slippageTicks": 0,
+                "commissionPerUnit": "0",
+            },
+            "simulationAssumptions": {
+                "executionResolution": "M1",
+                "analysisComponent": "MID",
+                "executionComponents": ["BID", "ASK"],
+                "financing": "FINANCING EXCLUDED",
+            },
+        }
 
     @router.post("/coverage-validations")
-    def coverage(request: PeriodRequest, db: Session = Depends(session)) -> dict[str, Any]:
+    def coverage(
+        request: PeriodRequest, db: Session = Depends(session)
+    ) -> dict[str, Any]:
         try:
             value = configuration.validate_coverage(db, **request.model_dump())
         except ConfigurationError as exc:
             raise _error(exc.code, str(exc), http_status=422) from exc
         report = value.report
-        return {"valid": value.valid, "requested": {"start": _utc(value.requested_start), "end": _utc(value.requested_end)},
-                "required": {"start": _utc(value.required_start) if value.required_start else None, "end": _utc(value.requested_end)},
-                "warmUp": {"required": value.warm_up_required, "available": value.warm_up_available},
-                "snapshot": {"id": str(value.snapshot_id), "fingerprint": value.snapshot_fingerprint},
-                "counts": {"expectedOpenMinutes": report.expected_open_minutes if report else 0, "memberMinutes": report.member_minutes if report else 0},
-                "gaps": [{"start": _utc(g.start), "end": _utc(g.end), "components": [c.value for c in g.components]} for g in value.gaps],
-                "anomalies": [_utc(item) for item in (report.closure_anomalies if report else ())], "blockingReasons": list(value.reasons), "truncated": len(value.gaps) >= 100}
+        return {
+            "valid": value.valid,
+            "requested": {
+                "start": _utc(value.requested_start),
+                "end": _utc(value.requested_end),
+            },
+            "required": {
+                "start": _utc(value.required_start) if value.required_start else None,
+                "end": _utc(value.requested_end),
+            },
+            "warmUp": {
+                "required": value.warm_up_required,
+                "available": value.warm_up_available,
+            },
+            "snapshot": {
+                "id": str(value.snapshot_id),
+                "fingerprint": value.snapshot_fingerprint,
+            },
+            "counts": {
+                "expectedOpenMinutes": report.expected_open_minutes if report else 0,
+                "memberMinutes": report.member_minutes if report else 0,
+            },
+            "gaps": [
+                {
+                    "start": _utc(g.start),
+                    "end": _utc(g.end),
+                    "components": [c.value for c in g.components],
+                }
+                for g in value.gaps
+            ],
+            "anomalies": [
+                _utc(item) for item in (report.closure_anomalies if report else ())
+            ],
+            "blockingReasons": list(value.reasons),
+            "truncated": len(value.gaps) >= 100,
+        }
 
     @router.post("", status_code=status.HTTP_201_CREATED)
-    def create(request: ExperimentCreateRequest, db: Session = Depends(session)) -> dict[str, Any]:
+    def create(
+        request: ExperimentCreateRequest, db: Session = Depends(session)
+    ) -> dict[str, Any]:
         try:
             with db.begin():
                 row = configuration.create(
@@ -270,18 +388,43 @@ def create_experiment_router(
             raise _error("NOT_FOUND", "Experiment does not exist", http_status=404)
         return row
 
+    @router.get("/comparison", response_model=ExperimentComparisonResponse)
+    def compare(
+        experiment_id: list[UUID] = Query(..., alias="experimentId"),
+        db: Session = Depends(session),
+    ) -> dict[str, Any]:
+        try:
+            value = comparison.compare(db, tuple(experiment_id))
+        except ComparisonReadError as exc:
+            code_status = {
+                "EXPERIMENT_NOT_FOUND": 404,
+                "EXPERIMENT_NOT_COMPLETED": 409,
+                "COMPARISON_RESULT_UNAVAILABLE": 409,
+            }
+            raise _error(
+                exc.code, str(exc), exc.details, code_status.get(exc.code, 422)
+            ) from exc
+        payload = _json(value)
+        for difference in payload["differences"]:
+            difference["values"] = dict(difference["values"])
+        return payload
+
     @router.get("/{experiment_id}")
     def detail(experiment_id: UUID, db: Session = Depends(session)) -> dict[str, Any]:
         row = get_row(experiment_id, db)
         try:
             composed = results.detail(db, experiment_id)
         except ResultReadError as exc:
-            raise _error(exc.code, str(exc), http_status=404 if exc.code == "NOT_FOUND" else 409) from exc
+            raise _error(
+                exc.code, str(exc), http_status=404 if exc.code == "NOT_FOUND" else 409
+            ) from exc
         return _detail(row, _metrics_payload(composed["metrics"]), composed["result"])
 
     @router.post("/{experiment_id}/run")
     def run(experiment_id: UUID, db: Session = Depends(session)) -> dict[str, Any]:
-        get_row(experiment_id, db)  # distinguish 404 from lifecycle infrastructure errors
+        get_row(
+            experiment_id, db
+        )  # distinguish 404 from lifecycle infrastructure errors
         try:
             lifecycle.run(experiment_id)
         except ExperimentRunInfrastructureError as exc:
@@ -304,22 +447,45 @@ def create_experiment_router(
             value = results.equity(db, experiment_id)
         except ResultReadError as exc:
             raise _error(exc.code, str(exc), http_status=409) from exc
-        return {"points": _json(value.points), "sourceCount": value.source_count, "returnedCount": len(value.points), "samplingPolicy": value.sampling_policy}
+        return {
+            "points": _json(value.points),
+            "sourceCount": value.source_count,
+            "returnedCount": len(value.points),
+            "samplingPolicy": value.sampling_policy,
+        }
 
     @router.get("/{experiment_id}/trades")
-    def trades(experiment_id: UUID, limit: int = Query(100, ge=1, le=250), after_sequence: int = Query(0, ge=0, alias="afterSequence"), db: Session = Depends(session)) -> Any:
+    def trades(
+        experiment_id: UUID,
+        limit: int = Query(100, ge=1, le=250),
+        after_sequence: int = Query(0, ge=0, alias="afterSequence"),
+        db: Session = Depends(session),
+    ) -> Any:
         subresource(experiment_id, db)
         try:
             items = results.trades(db, experiment_id, limit, after_sequence)
         except ResultReadError as exc:
-            raise _error(exc.code, str(exc), http_status=409 if exc.code != "INVALID_LIMIT" else 422) from exc
-        return {"items": _json(items), "nextSequence": items[-1]["sequence_number"] if len(items) == limit else None}
+            raise _error(
+                exc.code,
+                str(exc),
+                http_status=409 if exc.code != "INVALID_LIMIT" else 422,
+            ) from exc
+        return {
+            "items": _json(items),
+            "nextSequence": items[-1]["sequence_number"]
+            if len(items) == limit
+            else None,
+        }
 
     @router.get("/{experiment_id}/trades/{sequence_number}")
-    def trade(experiment_id: UUID, sequence_number: int, db: Session = Depends(session)) -> Any:
+    def trade(
+        experiment_id: UUID, sequence_number: int, db: Session = Depends(session)
+    ) -> Any:
         try:
             return _json(results.trade(db, experiment_id, sequence_number))
         except ResultReadError as exc:
-            raise _error(exc.code, str(exc), http_status=404 if exc.code == "NOT_FOUND" else 409) from exc
+            raise _error(
+                exc.code, str(exc), http_status=404 if exc.code == "NOT_FOUND" else 409
+            ) from exc
 
     return router

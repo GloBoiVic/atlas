@@ -38,6 +38,40 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/v1/strategies': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Listing */
+    get: operations['listing_api_v1_strategies_get'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/strategies/{strategy_key}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Detail */
+    get: operations['detail_api_v1_strategies__strategy_key__get'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/v1/experiments/configuration-options': {
     parameters: {
       query?: never;
@@ -84,6 +118,23 @@ export interface paths {
     put?: never;
     /** Create */
     post: operations['create_api_v1_experiments_post'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/experiments/comparison': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Compare */
+    get: operations['compare_api_v1_experiments_comparison_get'];
+    put?: never;
+    post?: never;
     delete?: never;
     options?: never;
     head?: never;
@@ -179,6 +230,108 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
   schemas: {
+    /** ComparisonDifferenceResponse */
+    ComparisonDifferenceResponse: {
+      /** Path */
+      path: string;
+      /** Values */
+      values: {
+        [key: string]: unknown;
+      };
+    };
+    /** ComparisonExperimentResponse */
+    ComparisonExperimentResponse: {
+      /** Slot */
+      slot: string;
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** Label */
+      label: string;
+      /** Strategy */
+      strategy: {
+        [key: string]: unknown;
+      };
+      /** Instrument */
+      instrument: {
+        [key: string]: unknown;
+      };
+      /** Datasetsnapshot */
+      datasetSnapshot: {
+        [key: string]: unknown;
+      };
+      /** Tradingperiod */
+      tradingPeriod: {
+        [key: string]: unknown;
+      };
+      /** Parameters */
+      parameters: {
+        [key: string]: unknown;
+      };
+      /** Startingcapital */
+      startingCapital: {
+        [key: string]: unknown;
+      };
+      /** Risk */
+      risk: {
+        [key: string]: unknown;
+      };
+      /** Simulation */
+      simulation: {
+        [key: string]: unknown;
+      };
+      /** Modelversion */
+      modelVersion: string;
+      /** Metriccontract */
+      metricContract: {
+        [key: string]: unknown;
+      };
+      /** Metrics */
+      metrics: {
+        [key: string]: unknown;
+      };
+    };
+    /** ComparisonWarningResponse */
+    ComparisonWarningResponse: {
+      /** Code */
+      code: string;
+      /** Severity */
+      severity: string;
+      /** Explanation */
+      explanation: string;
+      /** Paths */
+      paths: string[];
+    };
+    /** ExperimentComparisonResponse */
+    ExperimentComparisonResponse: {
+      /** Experiments */
+      experiments: components['schemas']['ComparisonExperimentResponse'][];
+      /** Differences */
+      differences: components['schemas']['ComparisonDifferenceResponse'][];
+      /** Warnings */
+      warnings: components['schemas']['ComparisonWarningResponse'][];
+      /** Changedparameterkeys */
+      changedParameterKeys: string[];
+      /** Strongparameterisolation */
+      strongParameterIsolation: boolean;
+    };
+    /** ExperimentConfigurationOptionsResponse */
+    ExperimentConfigurationOptionsResponse: {
+      /** Strategyversions */
+      strategyVersions: components['schemas']['ExperimentStrategyVersionOptionResponse'][];
+      /** Datasetsnapshots */
+      datasetSnapshots: components['schemas']['ExperimentDatasetSnapshotOptionResponse'][];
+      /** Defaults */
+      defaults: {
+        [key: string]: unknown;
+      };
+      /** Simulationassumptions */
+      simulationAssumptions: {
+        [key: string]: unknown;
+      };
+    };
     /** ExperimentCreateRequest */
     ExperimentCreateRequest: {
       /**
@@ -213,6 +366,56 @@ export interface components {
       slippageTicks: number;
       /** Commissionperunit */
       commissionPerUnit: number | string;
+    };
+    /** ExperimentDatasetSnapshotOptionResponse */
+    ExperimentDatasetSnapshotOptionResponse: {
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** Fingerprint */
+      fingerprint: string;
+      /** Coveragestart */
+      coverageStart: string;
+      /** Coverageend */
+      coverageEnd: string;
+      /** Integrity */
+      integrity: {
+        [key: string]: unknown;
+      };
+    };
+    /** ExperimentStrategyVersionOptionResponse */
+    ExperimentStrategyVersionOptionResponse: {
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** Strategykey */
+      strategyKey: string;
+      /** Name */
+      name: string;
+      /** Version */
+      version: number;
+      /** Displayname */
+      displayName: string;
+      /** Createdat */
+      createdAt: string;
+      /** Implementationkey */
+      implementationKey: string;
+      /** Sourcefingerprint */
+      sourceFingerprint: string;
+      /** Parameterschema */
+      parameterSchema: {
+        [key: string]: unknown;
+      }[];
+      /** Warmupbars */
+      warmUpBars: number;
+      /** Executionavailable */
+      executionAvailable: boolean;
+      /** Unavailablereason */
+      unavailableReason: string | null;
     };
     /** HTTPValidationError */
     HTTPValidationError: {
@@ -252,6 +455,111 @@ export interface components {
        * Format: date-time
        */
       tradingEnd: string;
+    };
+    /** StrategyCatalogItemResponse */
+    StrategyCatalogItemResponse: {
+      /** Strategykey */
+      strategyKey: string;
+      /** Name */
+      name: string;
+      /** Description */
+      description: string;
+      latestVersion:
+        components['schemas']['StrategyLatestVersionResponse'] | null;
+      /** Versioncount */
+      versionCount: number;
+      /** Experimentcount */
+      experimentCount: number;
+      /** Lastexperimentat */
+      lastExperimentAt: string | null;
+    };
+    /** StrategyCatalogResponse */
+    StrategyCatalogResponse: {
+      /** Items */
+      items: components['schemas']['StrategyCatalogItemResponse'][];
+    };
+    /** StrategyDetailResponse */
+    StrategyDetailResponse: {
+      /** Strategykey */
+      strategyKey: string;
+      /** Name */
+      name: string;
+      /** Description */
+      description: string;
+      /** Versioncount */
+      versionCount: number;
+      /** Experimentcount */
+      experimentCount: number;
+      /** Lastexperimentat */
+      lastExperimentAt: string | null;
+      /** Versions */
+      versions: components['schemas']['StrategyVersionHistoryResponse'][];
+    };
+    /** StrategyLatestVersionResponse */
+    StrategyLatestVersionResponse: {
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** Versionnumber */
+      versionNumber: number;
+      /** Displayname */
+      displayName: string;
+    };
+    /** StrategySourceManifestItem */
+    StrategySourceManifestItem: {
+      /** Relativepath */
+      relativePath: string;
+      /** Bytelength */
+      byteLength: number;
+    };
+    /** StrategyVersionHistoryResponse */
+    StrategyVersionHistoryResponse: {
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** Displayname */
+      displayName: string;
+      /** Versionnumber */
+      versionNumber: number;
+      /** Implementationkey */
+      implementationKey: string;
+      /** Sourcefingerprint */
+      sourceFingerprint: string;
+      /**
+       * Createdat
+       * Format: date-time
+       */
+      createdAt: string;
+      /** Gitsha */
+      gitSha: string | null;
+      /** Sourcemanifest */
+      sourceManifest: components['schemas']['StrategySourceManifestItem'][];
+      /** Parameterschema */
+      parameterSchema: {
+        [key: string]: unknown;
+      }[];
+      /** Contexttimeframes */
+      contextTimeframes: string[];
+      /** Timeframe */
+      timeframe: string;
+      /** Warmupbars */
+      warmUpBars: number;
+      /** Stateschemaversion */
+      stateSchemaVersion: number;
+      /** Capabilities */
+      capabilities: string[];
+      /** Experimentcount */
+      experimentCount: number;
+      /** Lastusedat */
+      lastUsedAt: string | null;
+      /** Executionavailable */
+      executionAvailable: boolean;
+      /** Unavailablereason */
+      unavailableReason: string | null;
     };
     /** ValidationError */
     ValidationError: {
@@ -317,6 +625,57 @@ export interface operations {
       };
     };
   };
+  listing_api_v1_strategies_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['StrategyCatalogResponse'];
+        };
+      };
+    };
+  };
+  detail_api_v1_strategies__strategy_key__get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        strategy_key: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['StrategyDetailResponse'];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
   options_api_v1_experiments_configuration_options_get: {
     parameters: {
       query?: never;
@@ -332,9 +691,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': {
-            [key: string]: unknown;
-          };
+          'application/json': components['schemas']['ExperimentConfigurationOptionsResponse'];
         };
       };
     };
@@ -430,6 +787,37 @@ export interface operations {
           'application/json': {
             [key: string]: unknown;
           };
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  compare_api_v1_experiments_comparison_get: {
+    parameters: {
+      query: {
+        experimentId: string[];
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ExperimentComparisonResponse'];
         };
       };
       /** @description Validation Error */
