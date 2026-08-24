@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 
 from backend.api.experiments import create_experiment_router
 from backend.api.health import create_health_router
+from backend.api.strategies import create_strategy_router
 from backend.config import get_settings
 from backend.experiments.configuration import ExperimentConfigurationService
 from backend.experiments.lifecycle import (
@@ -20,6 +21,7 @@ from backend.experiments.results import ExperimentResultReadService
 from backend.experiments.runner import ExperimentRunner, RunnerComparisonDiagnosticSink
 from backend.logging import configure_logging
 from backend.persistence.database import create_database_engine, create_session_factory
+from backend.persistence.strategy_catalog import synchronize_strategy_catalog
 from backend.strategies.production import create_production_strategy_registry
 
 
@@ -46,8 +48,11 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
-        yield
-        engine.dispose()
+        try:
+            synchronize_strategy_catalog(session_factory, registry)
+            yield
+        finally:
+            engine.dispose()
 
     app = FastAPI(title="Atlas API", lifespan=lifespan)
     app.state.database_engine = engine
@@ -60,6 +65,9 @@ def create_app(
     )
     app.state.experiment_results = ExperimentResultReadService()
     app.include_router(create_health_router(engine))
+    app.include_router(
+        create_strategy_router(session_factory=session_factory, registry=registry)
+    )
     app.include_router(
         create_experiment_router(
             session_factory=session_factory,

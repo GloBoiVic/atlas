@@ -49,7 +49,9 @@ def test_configuration_rejects_negative_simulation_values_at_boundary() -> None:
 def test_production_registration_archives_once_and_evaluation_has_no_path_input(
 ) -> None:
     registry = create_production_strategy_registry(Path(__file__).parents[3])
-    entry = registry.get("ema_sweep_engulfing")
+    entry = registry.get(
+        "ema_sweep_engulfing", implementation_key="ema_sweep_engulfing.v1"
+    )
     assert entry.source_archive.fingerprint
     assert (
         entry.implementation.definition.implementation_key == "ema_sweep_engulfing.v1"

@@ -1,6 +1,6 @@
 """Small, explicit local Strategy registration and provenance matching."""
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -44,15 +44,31 @@ class StrategyRegistry:
     """An in-process registry populated only by explicit caller registration."""
 
     def __init__(self, entries: Iterable[LocalStrategy] = ()) -> None:
-        self._entries: dict[str, LocalStrategy] = {}
+        self._entries: dict[tuple[str, str, str], LocalStrategy] = {}
         for entry in entries:
             self._add(entry)
 
     def _add(self, entry: LocalStrategy) -> None:
-        key = entry.definition.strategy_key
+        definition = entry.definition
+        key = (
+            definition.strategy_key,
+            definition.implementation_key,
+            entry.source_archive.fingerprint,
+        )
+        if any(
+            existing.definition.strategy_key == definition.strategy_key
+            and existing.definition.implementation_key == definition.implementation_key
+            for existing in self._entries.values()
+        ):
+            raise RegistrationValidationError(
+                (
+                    f"strategy_key {definition.strategy_key!r}: duplicate "
+                    f"implementation_key {definition.implementation_key!r}",
+                )
+            )
         if key in self._entries:
             raise RegistrationValidationError(
-                (f"strategy_key {key!r}: duplicate registration",)
+                (f"registration {key!r}: duplicate provenance",)
             )
         self._entries[key] = entry
 
@@ -74,38 +90,68 @@ class StrategyRegistry:
             errors.extend(error.errors)
         if errors or archive is None:
             raise RegistrationValidationError(tuple(sorted(errors)))
-        if registration.definition.strategy_key in self._entries:
-            raise RegistrationValidationError(
-                (
-                    f"strategy_key {registration.definition.strategy_key!r}: "
-                    "duplicate registration",
-                )
-            )
         entry = LocalStrategy(registration, archive)
         self._add(entry)
         return entry
 
-    def get(self, strategy_key: str) -> LocalStrategy:
-        try:
-            return self._entries[strategy_key]
-        except KeyError as error:
-            raise StrategyVersionUnavailableError(
-                f"no locally registered implementation for strategy {strategy_key!r}"
-            ) from error
+    def get(
+        self,
+        strategy_key: str,
+        *,
+        implementation_key: str | None = None,
+        source_fingerprint: str | None = None,
+    ) -> LocalStrategy:
+        matches = tuple(
+            entry
+            for entry in self._entries.values()
+            if entry.definition.strategy_key == strategy_key
+            and (
+                implementation_key is None
+                or entry.definition.implementation_key == implementation_key
+            )
+            and (
+                source_fingerprint is None
+                or entry.source_archive.fingerprint == source_fingerprint
+            )
+        )
+        if len(matches) == 1:
+            return matches[0]
+        detail = (
+            "ambiguous local implementations"
+            if matches
+            else "no locally registered implementation"
+        )
+        raise StrategyVersionUnavailableError(
+            f"{detail} for strategy {strategy_key!r}"
+        )
+
+    def catalog(self) -> Iterator[LocalStrategy]:
+        """Return explicit registrations in stable catalog order."""
+        return iter(
+            sorted(
+                self._entries.values(),
+                key=lambda entry: (
+                    entry.definition.strategy_key,
+                    entry.definition.implementation_key,
+                    entry.source_archive.fingerprint,
+                ),
+            )
+        )
 
     def implementation_for_version(self, version: StrategyVersion) -> Strategy:
         """Match registration-time provenance; never read the filesystem."""
 
-        entry = self.get(version.strategy_key)
-        definition = entry.definition
-        if (
-            version.source_fingerprint != entry.source_archive.fingerprint
-            or version.implementation_key != definition.implementation_key
-        ):
-            raise StrategyVersionUnavailableError(
-                f"StrategyVersion {version.strategy_key!r} fingerprint does not "
-                "match local implementation"
+        try:
+            entry = self.get(
+                version.strategy_key,
+                implementation_key=version.implementation_key,
+                source_fingerprint=version.source_fingerprint,
             )
+        except StrategyVersionUnavailableError as error:
+            raise StrategyVersionUnavailableError(
+                f"StrategyVersion {version.strategy_key!r} fingerprint or "
+                "implementation key does not match local implementation"
+            ) from error
         return entry.implementation
 
     def __len__(self) -> int:
@@ -117,6 +163,6 @@ def register_local_strategy(
     registration: StrategyRegistration,
     root: Path,
 ) -> LocalStrategy:
-    """Narrow explicit hook for the single local reference registration."""
+    """Narrow explicit hook for an explicit local registration."""
 
     return registry.register(registration, root)

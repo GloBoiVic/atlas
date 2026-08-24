@@ -1,4 +1,7 @@
+'use client';
+
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import {
   Activity,
   BarChart3,
@@ -11,7 +14,7 @@ import { ApiStatus } from './api-status';
 
 const navigation = [
   { label: 'Dashboard', href: '#', icon: Activity, disabled: true },
-  { label: 'Strategies', href: '#', icon: Layers3, disabled: true },
+  { label: 'Strategies', href: '/strategies', icon: Layers3 },
   { label: 'Experiments', href: '/experiments', icon: BarChart3, active: true },
   { label: 'Deployments', href: '#', icon: Activity, disabled: true },
   { label: 'Journal', href: '#', icon: BookOpen, disabled: true },
@@ -19,6 +22,7 @@ const navigation = [
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
   return (
     <div className="min-h-screen bg-[var(--atlas-background)] text-[var(--atlas-ink)]">
       <header className="border-b border-slate-200 bg-white">
@@ -41,7 +45,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     href={href}
                     aria-disabled={disabled}
                     tabIndex={disabled ? -1 : undefined}
-                    className={`nav-link ${active ? 'nav-link-active' : ''} ${disabled ? 'nav-link-disabled' : ''}`}
+                    className={`nav-link ${active || (href !== '#' && pathname.startsWith(href)) ? 'nav-link-active' : ''} ${disabled ? 'nav-link-disabled' : ''}`}
                   >
                     <Icon aria-hidden className="size-4" />
                     {label}

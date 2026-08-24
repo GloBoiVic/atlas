@@ -1,0 +1,280 @@
+'use client';
+
+import Link from 'next/link';
+import { useParams } from 'next/navigation';
+import { useEffect, useState } from 'react';
+import { AlertCircle, ArrowLeft, LoaderCircle } from 'lucide-react';
+import { AppShell } from './app-shell';
+import { atlasApi } from '../lib/api-client';
+
+type Version = {
+  id: string;
+  displayName: string;
+  versionNumber: number;
+  implementationKey: string;
+  sourceFingerprint: string;
+  createdAt: string;
+  gitSha: string | null;
+  parameterSchema: Record<string, unknown>[];
+  timeframe: string;
+  warmUpBars: number;
+  capabilities: string[];
+  experimentCount: number;
+  lastUsedAt: string | null;
+  executionAvailable: boolean;
+  unavailableReason: string | null;
+};
+const date = (v: string | null) =>
+  v
+    ? new Date(v).toLocaleString(undefined, {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+      })
+    : '—';
+
+export function StrategiesPage() {
+  const [items, setItems] = useState<
+    Awaited<ReturnType<typeof atlasApi.listStrategies>>['items']
+  >([]);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    atlasApi
+      .listStrategies()
+      .then((v) => setItems(v.items))
+      .catch((e) =>
+        setError(
+          e instanceof Error ? e.message : 'Atlas could not load Strategies.',
+        ),
+      );
+  }, []);
+  return (
+    <AppShell>
+      <section className="space-y-8" aria-labelledby="strategies-heading">
+        <header>
+          <p className="mb-2 text-sm font-medium text-blue-700">
+            Methodology catalog
+          </p>
+          <h1
+            id="strategies-heading"
+            className="text-3xl font-semibold tracking-tight"
+          >
+            Strategies
+          </h1>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+            Inspect immutable StrategyVersions and their local execution
+            availability.
+          </p>
+        </header>
+        {error && (
+          <p
+            role="alert"
+            className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-900"
+          >
+            <AlertCircle className="mr-2 inline size-4" />
+            {error}
+          </p>
+        )}
+        {!error && !items.length && (
+          <p className="rounded-lg border border-slate-200 bg-white p-8 text-sm text-slate-600">
+            <LoaderCircle className="mr-2 inline size-4 animate-spin" />
+            Loading Strategies…
+          </p>
+        )}
+        <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+          <table className="w-full min-w-[720px] text-left text-sm">
+            <thead className="border-b border-slate-200 bg-slate-50 text-xs text-slate-600">
+              <tr>
+                {[
+                  'Strategy',
+                  'Latest version',
+                  'Versions',
+                  'Experiments',
+                  'Last Experiment',
+                ].map((h) => (
+                  <th key={h} className="px-4 py-3">
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {items.map((item) => (
+                <tr key={item.strategyKey} className="hover:bg-slate-50">
+                  <td className="px-4 py-4">
+                    <Link
+                      className="font-medium text-slate-900 hover:underline"
+                      href={`/strategies/${item.strategyKey}`}
+                    >
+                      {item.name}
+                    </Link>
+                    <span className="block text-xs text-slate-500">
+                      {item.description}
+                    </span>
+                  </td>
+                  <td className="px-4 py-4">
+                    {item.latestVersion?.displayName ?? '—'}
+                  </td>
+                  <td className="px-4 py-4 tabular-nums">
+                    {item.versionCount}
+                  </td>
+                  <td className="px-4 py-4 tabular-nums">
+                    {item.experimentCount}
+                  </td>
+                  <td className="px-4 py-4 text-slate-600">
+                    {date(item.lastExperimentAt)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </AppShell>
+  );
+}
+
+export function StrategyDetailPage() {
+  const { strategyKey } = useParams<{ strategyKey: string }>();
+  const [data, setData] = useState<{
+    name: string;
+    description: string;
+    versions: Version[];
+  } | null>(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    atlasApi
+      .getStrategy(strategyKey)
+      .then(setData)
+      .catch((e) =>
+        setError(
+          e instanceof Error
+            ? e.message
+            : 'Atlas could not load this Strategy.',
+        ),
+      );
+  }, [strategyKey]);
+  return (
+    <AppShell>
+      <section className="max-w-5xl space-y-8">
+        <Link
+          href="/strategies"
+          className="inline-flex items-center gap-2 text-sm text-slate-600 hover:text-slate-950"
+        >
+          <ArrowLeft className="size-4" />
+          Strategies
+        </Link>
+        {error && (
+          <p
+            role="alert"
+            className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-900"
+          >
+            {error}
+          </p>
+        )}
+        {!data && !error && (
+          <p className="text-sm text-slate-600">Loading Strategy history…</p>
+        )}
+        {data && (
+          <>
+            <header>
+              <p className="mb-2 text-sm font-medium text-blue-700">
+                Strategy identity
+              </p>
+              <h1 className="text-3xl font-semibold tracking-tight">
+                {data.name}
+              </h1>
+              <p className="mt-2 text-sm leading-6 text-slate-600">
+                {data.description}
+              </p>
+            </header>
+            <div className="space-y-5">
+              <h2 className="text-lg font-semibold">Version history</h2>
+              {data.versions.map((v) => (
+                <article
+                  key={v.id}
+                  className="rounded-lg border border-slate-200 bg-white p-5"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div>
+                      <h3 className="text-lg font-semibold">{v.displayName}</h3>
+                      <p className="mt-1 text-sm text-slate-600">
+                        {v.implementationKey} · created {date(v.createdAt)}
+                      </p>
+                    </div>
+                    <span
+                      className={`status rounded-full border px-2.5 py-1 ${v.executionAvailable ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-amber-200 bg-amber-50 text-amber-900'}`}
+                    >
+                      {v.executionAvailable
+                        ? 'Available locally'
+                        : 'Unavailable locally'}
+                    </span>
+                  </div>
+                  <dl className="mt-5 grid gap-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
+                    <div>
+                      <dt className="text-slate-500">Experiments</dt>
+                      <dd className="font-medium">{v.experimentCount}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-slate-500">Timeframe / warm-up</dt>
+                      <dd className="font-medium">
+                        {v.timeframe} · {v.warmUpBars} bars
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-slate-500">Fixed methodology</dt>
+                      <dd className="font-medium">Expiry window · 5 bars</dd>
+                    </div>
+                    <div>
+                      <dt className="text-slate-500">Last used</dt>
+                      <dd className="font-medium">{date(v.lastUsedAt)}</dd>
+                    </div>
+                  </dl>
+                  <div className="mt-5 border-t border-slate-100 pt-4">
+                    <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                      Provenance
+                    </p>
+                    <p className="mt-1 break-all font-mono text-xs text-slate-600">
+                      {v.sourceFingerprint}
+                    </p>
+                    {v.gitSha && (
+                      <p className="mt-1 text-xs text-slate-500">
+                        Git SHA: {v.gitSha}
+                      </p>
+                    )}
+                  </div>
+                  <div className="mt-5">
+                    <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                      Parameter schema
+                    </p>
+                    <ul className="mt-2 grid gap-2 text-sm sm:grid-cols-2">
+                      {v.parameterSchema.map((p) => (
+                        <li
+                          key={String(p.key)}
+                          className="rounded-md bg-slate-50 px-3 py-2"
+                        >
+                          <span className="font-medium">
+                            {String(p.label ?? p.key)}
+                          </span>
+                          <span className="ml-2 text-slate-500">
+                            {String(p.type)} · {String(p.min)}–{String(p.max)}
+                            {Number(p.min) === Number(p.max) ? ' · fixed' : ''}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                  {!v.executionAvailable && (
+                    <p className="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                      Retained for provenance; new Experiments are blocked.{' '}
+                      {v.unavailableReason}
+                    </p>
+                  )}
+                </article>
+              ))}
+            </div>
+          </>
+        )}
+      </section>
+    </AppShell>
+  );
+}

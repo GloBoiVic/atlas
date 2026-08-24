@@ -19,6 +19,7 @@ import { ApiTransportTimeoutError, atlasApi } from '../lib/api-client';
 
 type Json = Record<string, unknown>;
 type Status = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED';
+type ParameterValues = Record<string, string>;
 
 const object = (value: unknown): Json =>
   value && typeof value === 'object' ? (value as Json) : {};
@@ -52,6 +53,17 @@ const errorMessage = (error: unknown) =>
   error instanceof Error
     ? error.message
     : 'Atlas could not complete that request.';
+const parameterDefaults = (version: unknown): ParameterValues => {
+  const schema = Array.isArray(object(version).parameterSchema)
+    ? (object(version).parameterSchema as unknown[])
+    : [];
+  return Object.fromEntries(
+    schema.map((value) => {
+      const descriptor = object(value);
+      return [text(descriptor.key, ''), text(descriptor.default, '')];
+    }),
+  );
+};
 
 function StatusBadge({ status }: { status: Status }) {
   const labels = {
@@ -455,6 +467,7 @@ export function ExperimentsList() {
   const [items, setItems] = useState<unknown[]>([]);
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [error, setError] = useState('');
+  const [selected, setSelected] = useState<string[]>([]);
   const load = useCallback(() => {
     setState('loading');
     atlasApi
@@ -492,12 +505,29 @@ export function ExperimentsList() {
               data, and observe the durable run state.
             </p>
           </div>
-          <Link
-            href="/experiments/new"
-            className="inline-flex min-h-10 items-center rounded-md bg-slate-900 px-4 text-sm font-medium text-white hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2"
-          >
-            Run Experiment
-          </Link>
+          <div className="flex flex-wrap gap-3">
+            <Link
+              href="/experiments/new"
+              className="inline-flex min-h-10 items-center rounded-md bg-slate-900 px-4 text-sm font-medium text-white hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2"
+            >
+              Run Experiment
+            </Link>
+            <Link
+              aria-disabled={selected.length < 2 || selected.length > 4}
+              tabIndex={
+                selected.length < 2 || selected.length > 4 ? -1 : undefined
+              }
+              href={
+                selected.length >= 2 && selected.length <= 4
+                  ? `/experiments/compare?${selected.map((id) => `experimentId=${encodeURIComponent(id)}`).join('&')}`
+                  : '/experiments'
+              }
+              className={`inline-flex min-h-10 items-center rounded-md border px-4 text-sm font-medium ${selected.length >= 2 && selected.length <= 4 ? 'border-slate-300 bg-white text-slate-900 hover:bg-slate-50' : 'cursor-not-allowed border-slate-200 text-slate-400'}`}
+            >
+              Compare selected{' '}
+              <span className="ml-1 text-xs">({selected.length}/4)</span>
+            </Link>
+          </div>
         </header>
         {state === 'error' && <ErrorPanel message={error} retry={load} />}
         {state === 'loading' && (
@@ -531,6 +561,7 @@ export function ExperimentsList() {
               <thead className="border-b border-slate-200 bg-slate-50 text-xs font-medium text-slate-600">
                 <tr>
                   {[
+                    'Select',
                     'Experiment',
                     'StrategyVersion',
                     'Period',
@@ -556,6 +587,32 @@ export function ExperimentsList() {
                       key={text(item.id, String(index))}
                       className="hover:bg-slate-50"
                     >
+                      <td className="px-4 py-4">
+                        {status === 'COMPLETED' ? (
+                          <input
+                            aria-label={`Select Experiment ${index + 1}`}
+                            type="checkbox"
+                            checked={selected.includes(text(item.id))}
+                            onChange={() =>
+                              setSelected((current) =>
+                                current.includes(text(item.id))
+                                  ? current.filter((id) => id !== text(item.id))
+                                  : current.length < 4
+                                    ? [...current, text(item.id)]
+                                    : current,
+                              )
+                            }
+                            className="size-4 accent-blue-700"
+                          />
+                        ) : (
+                          <span
+                            className="text-xs text-slate-400"
+                            title="Only COMPLETED Experiments can be compared"
+                          >
+                            Not eligible
+                          </span>
+                        )}
+                      </td>
                       <td className="px-4 py-4">
                         <Link
                           className="font-medium text-slate-900 underline-offset-4 hover:underline"
@@ -626,6 +683,7 @@ export function ExperimentForm() {
   const [risk, setRisk] = useState('0.01');
   const [slippage, setSlippage] = useState('0');
   const [commission, setCommission] = useState('0');
+  const [parameters, setParameters] = useState<ParameterValues>({});
   useEffect(() => {
     atlasApi
       .configurationOptions()
@@ -638,7 +696,14 @@ export function ExperimentForm() {
         const snapshots = Array.isArray(data.datasetSnapshots)
           ? data.datasetSnapshots
           : [];
-        setStrategy(text(object(versions[0]).id, ''));
+        const available = versions.filter(
+          (value) => object(value).executionAvailable !== false,
+        );
+        const preferred = [...available].sort(
+          (a, b) => Number(object(b).version) - Number(object(a).version),
+        )[0];
+        setStrategy(text(object(preferred).id, ''));
+        setParameters(parameterDefaults(preferred));
         setSnapshot(text(object(snapshots[0]).id, ''));
       })
       .catch((error) => setFormError(errorMessage(error)));
@@ -652,6 +717,39 @@ export function ExperimentForm() {
     : [];
   const selectedVersion = object(
     versions.find((value) => text(object(value).id) === strategy),
+  );
+  const schema = Array.isArray(selectedVersion.parameterSchema)
+    ? selectedVersion.parameterSchema
+    : [];
+  const parameterErrors = Object.fromEntries(
+    schema.flatMap((value) => {
+      const descriptor = object(value);
+      const key = text(descriptor.key, '');
+      const raw = parameters[key] ?? '';
+      if (!key || raw.trim() === '') return [[key, 'Enter a value.']];
+      const kind = text(descriptor.type, '');
+      const parsed = kind === 'integer' ? Number(raw) : Number(raw);
+      if (
+        !Number.isFinite(parsed) ||
+        (kind === 'integer' && !Number.isInteger(parsed))
+      ) {
+        return [
+          [
+            key,
+            kind === 'integer'
+              ? 'Enter a whole number.'
+              : 'Enter a finite decimal.',
+          ],
+        ];
+      }
+      const minimum = Number(descriptor.min);
+      const maximum = Number(descriptor.max);
+      if (Number.isFinite(minimum) && parsed < minimum)
+        return [[key, `Must be at least ${text(descriptor.min)}.`]];
+      if (Number.isFinite(maximum) && parsed > maximum)
+        return [[key, `Must be at most ${text(descriptor.max)}.`]];
+      return [];
+    }),
   );
   const validate = async () => {
     setFormError('');
@@ -678,6 +776,10 @@ export function ExperimentForm() {
     setFormError('');
     setSubmitting(true);
     try {
+      if (Object.keys(parameterErrors).length > 0)
+        throw new Error(
+          'Resolve the parameter errors before starting the Experiment.',
+        );
       if (!coverage?.valid)
         throw new Error(
           'Validate coverage successfully before starting the Experiment.',
@@ -691,12 +793,15 @@ export function ExperimentForm() {
           startingCapital: capital,
           riskPerTrade: risk,
           parameters: Object.fromEntries(
-            (Array.isArray(selectedVersion.parameterSchema)
-              ? selectedVersion.parameterSchema
-              : []
-            ).map((descriptor) => {
+            schema.map((descriptor) => {
               const item = object(descriptor);
-              return [text(item.key), item.default];
+              const key = text(item.key, '');
+              return [
+                key,
+                text(item.type) === 'integer'
+                  ? Number(parameters[key])
+                  : parameters[key],
+              ];
             }),
           ),
           slippageTicks: Number(slippage),
@@ -750,7 +855,11 @@ export function ExperimentForm() {
                   required
                   value={strategy}
                   onChange={(e) => {
+                    const version = versions.find(
+                      (value) => text(object(value).id) === e.target.value,
+                    );
                     setStrategy(e.target.value);
+                    setParameters(parameterDefaults(version));
                     invalidate();
                   }}
                   className="form-control"
@@ -759,9 +868,18 @@ export function ExperimentForm() {
                   {versions.map((value) => {
                     const item = object(value);
                     return (
-                      <option key={text(item.id)} value={text(item.id)}>
-                        {text(item.name, 'EMA Sweep Engulfing')} · v
-                        {text(item.version)}
+                      <option
+                        key={text(item.id)}
+                        value={text(item.id)}
+                        disabled={item.executionAvailable === false}
+                      >
+                        {text(
+                          item.displayName,
+                          `${text(item.name, 'EMA Sweep Engulfing')} · v${text(item.version)}`,
+                        )}
+                        {item.executionAvailable === false
+                          ? ' · unavailable'
+                          : ''}
                       </option>
                     );
                   })}
@@ -791,7 +909,80 @@ export function ExperimentForm() {
                 </select>
               </label>
             </div>
+            {selectedVersion.executionAvailable === false && (
+              <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                This StrategyVersion is retained for provenance but cannot
+                create a new Experiment.{' '}
+                {text(selectedVersion.unavailableReason, '')}
+              </p>
+            )}
           </fieldset>
+          {schema.length > 0 && (
+            <fieldset className="space-y-4 rounded-lg border border-slate-200 bg-white p-5">
+              <legend className="px-1 text-base font-medium">
+                Strategy parameters
+              </legend>
+              <p className="max-w-2xl text-sm leading-6 text-slate-600">
+                Values are captured in this Experiment only. Enter a value
+                within the bounds defined by the selected StrategyVersion.
+              </p>
+              <div className="grid gap-4 md:grid-cols-2">
+                {schema.map((value) => {
+                  const descriptor = object(value);
+                  const key = text(descriptor.key, '');
+                  const fixed =
+                    Number(descriptor.min) === Number(descriptor.max);
+                  const error = text(parameterErrors[key], '');
+                  return (
+                    <label key={key} className="space-y-2 text-sm font-medium">
+                      <span className="block">
+                        {text(descriptor.label, key)}
+                      </span>
+                      <input
+                        aria-describedby={`${key}-hint ${key}-error`}
+                        aria-invalid={Boolean(error)}
+                        className={`form-control ${fixed ? 'bg-slate-50 text-slate-600' : ''}`}
+                        inputMode={
+                          text(descriptor.type) === 'integer'
+                            ? 'numeric'
+                            : 'decimal'
+                        }
+                        readOnly={fixed}
+                        type="text"
+                        value={parameters[key] ?? ''}
+                        onChange={(event) => {
+                          setParameters((current) => ({
+                            ...current,
+                            [key]: event.target.value,
+                          }));
+                          invalidate();
+                        }}
+                      />
+                      <span
+                        id={`${key}-hint`}
+                        className="block text-xs font-normal text-slate-500"
+                      >
+                        {fixed
+                          ? 'Fixed by methodology.'
+                          : `${text(descriptor.type)} · ${text(descriptor.min)} to ${text(descriptor.max)}`}
+                        {text(descriptor.description, '')
+                          ? ` · ${text(descriptor.description, '')}`
+                          : ''}
+                      </span>
+                      {error && (
+                        <span
+                          id={`${key}-error`}
+                          className="block text-xs font-normal text-red-700"
+                        >
+                          {error}
+                        </span>
+                      )}
+                    </label>
+                  );
+                })}
+              </div>
+            </fieldset>
+          )}
           <fieldset className="space-y-4 rounded-lg border border-slate-200 bg-white p-5">
             <legend className="px-1 text-base font-medium">
               Requested period
@@ -976,7 +1167,15 @@ export function ExperimentForm() {
               )}
               Validate coverage
             </Button>
-            <Button type="submit" disabled={submitting || !coverage?.valid}>
+            <Button
+              type="submit"
+              disabled={
+                submitting ||
+                !coverage?.valid ||
+                selectedVersion.executionAvailable === false ||
+                Object.keys(parameterErrors).length > 0
+              }
+            >
               {submitting && (
                 <LoaderCircle
                   className="mr-2 size-4 animate-spin"
@@ -1454,7 +1653,7 @@ export function TradeDetailPage() {
             <dd className="mt-1">
               {ambiguous
                 ? 'Ambiguous intrabar resolution — Stop-first policy applied.'
-              : 'None recorded'}
+                : 'None recorded'}
             </dd>
           </div>
           <div>

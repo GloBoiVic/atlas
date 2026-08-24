@@ -12,7 +12,15 @@ from backend.domain.market_data import Timeframe
 from backend.domain.strategy import ParameterSchema, StrategyVersion
 from backend.strategies.fingerprint import SourceArchive
 
-from .models import StrategyModel, StrategyVersionModel
+from .models import ExperimentModel, StrategyModel, StrategyVersionModel
+
+
+class StrategyVersionUsage:
+    """Immutable usage facts composed from durable Experiment rows."""
+
+    def __init__(self, count: int, last_used_at):
+        self.count = count
+        self.last_used_at = last_used_at
 
 
 class StrategyRepository:
@@ -55,6 +63,35 @@ class StrategyRepository:
             .join(StrategyModel)
             .order_by(StrategyModel.strategy_key, StrategyVersionModel.version_number)
         ).all()
+
+    def list_strategy_summaries(self, session: Session) -> Sequence[StrategyModel]:
+        """Return the Atlas Strategy catalog in stable trader-facing order."""
+        return session.scalars(
+            select(StrategyModel).order_by(
+                StrategyModel.name, StrategyModel.strategy_key
+            )
+        ).all()
+
+    def strategy_usage(
+        self, session: Session, strategy_id: UUID
+    ) -> StrategyVersionUsage:
+        count, last_used_at = session.execute(
+            select(func.count(ExperimentModel.id), func.max(ExperimentModel.created_at))
+            .join(
+                StrategyVersionModel,
+                ExperimentModel.strategy_version_id == StrategyVersionModel.id,
+            )
+            .where(StrategyVersionModel.strategy_id == strategy_id)
+        ).one()
+        return StrategyVersionUsage(int(count or 0), last_used_at)
+
+    def version_usage(self, session: Session, version_id: UUID) -> StrategyVersionUsage:
+        count, last_used_at = session.execute(
+            select(
+                func.count(ExperimentModel.id), func.max(ExperimentModel.created_at)
+            ).where(ExperimentModel.strategy_version_id == version_id)
+        ).one()
+        return StrategyVersionUsage(int(count or 0), last_used_at)
 
     def create_version(
         self,
