@@ -204,6 +204,34 @@ def test_correction_creates_new_snapshot_without_changing_old_members(
         check.close()
 
 
+def test_v2_snapshot_creation_returns_without_nested_mapping_lock(
+    session_factory: sessionmaker[Session],
+) -> None:
+    start = datetime(2026, 1, 5, 10, tzinfo=UTC)
+    end = start + timedelta(minutes=15)
+    source = FakeSource([
+        tuple(bar for i in range(15) for bar in _bars(start + timedelta(minutes=i)))
+    ])
+    service = _service(session_factory, source)
+    service.refresh_range(start, end)
+    analytical = Bar(
+        Instrument.EUR_USD,
+        Timeframe.M15,
+        PriceComponent.MID,
+        start,
+        end,
+        Decimal("1.1000"),
+        Decimal("1.1010"),
+        Decimal("1.0990"),
+        Decimal("1.1005"),
+    )
+
+    report = service.create_snapshot_v2(start, end, analytical=(analytical,))
+
+    assert report.snapshot is not None
+    assert report.snapshot.snapshot_schema == "ATLAS_HISTORICAL_SIMULATION_SNAPSHOT_V2"
+
+
 def test_m15_derivation_reads_snapshot_membership_and_binds_strategy_input(
     session_factory: sessionmaker[Session],
 ) -> None:

@@ -19,7 +19,13 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.domain.market_data import PriceComponent
+from backend.domain.market_data import (
+    Bar,
+    Instrument,
+    PriceComponent,
+    Provider,
+    Timeframe,
+)
 from backend.domain.strategy import (
     Action,
     PositionState,
@@ -34,17 +40,23 @@ from backend.market_data.aggregation import aggregate_m1_to_m15
 from backend.persistence.experiment_repository import ExperimentRepository
 from backend.persistence.market_data_repository import DatasetSnapshotRepository
 from backend.persistence.models import (
+    DatasetSnapshotAnalyticalBarModel,
+    DatasetSnapshotExecutionObservationModel,
+    DatasetSnapshotGapModel,
     DatasetSnapshotModel,
     ExperimentAccountModel,
     ExperimentEquityPointModel,
     ExperimentModel,
     FillModel,
+    InstrumentModel,
+    MarketBarModel,
     OrderModel,
     PositionModel,
     RiskDecisionModel,
     StrategyVersionModel,
     TradeIntentModel,
     TradeModel,
+    VenueInstrumentModel,
 )
 from backend.persistence.strategy_repository import (
     StrategyRepository,
@@ -360,6 +372,10 @@ class ExperimentRunner:
 
     def run(self, session: Session, experiment_id: UUID) -> ExperimentRunResult:
         experiment = self.experiments.get(session, experiment_id)
+        if experiment is not None:
+            snapshot = session.get(DatasetSnapshotModel, experiment.dataset_snapshot_id)
+            if snapshot is not None and snapshot.snapshot_schema == "ATLAS_HISTORICAL_SIMULATION_SNAPSHOT_V2":
+                return self._run_v2(session, experiment)
         if experiment is not None and experiment.model_version == PHASE4_MODEL_VERSION:
             return self._run_phase4(session, experiment)
         try:
@@ -380,9 +396,9 @@ class ExperimentRunner:
                 session, descriptor.id, descriptor.coverage_start, descriptor.coverage_end
             )
             mid = tuple(item.bar for item in members if item.bar.price_component is PriceComponent.MID)
-            m15 = aggregate_m1_to_m15(mid, PriceComponent.MID, descriptor.coverage_start, descriptor.coverage_end)
+            m15, _diagnostics = aggregate_m1_to_m15(mid, PriceComponent.MID, descriptor.coverage_start, descriptor.coverage_end)
             clock = SimulationClock(
-                members, m15, trading_start=experiment.trading_start,
+                members, tuple(m15), trading_start=experiment.trading_start,
                 trading_end=experiment.trading_end, warmup_m15_bars=version.warm_up_bars,
             )
             account = session.scalar(select(ExperimentAccountModel).where(ExperimentAccountModel.experiment_id == experiment.id))
@@ -426,8 +442,119 @@ class ExperimentRunner:
             if "snapshot" in text or "M1" in text or "bar" in text or "market" in text:
                 category = FailureCategory.MARKET_DATA
             return self._fail(session, experiment, category, "INVALID_INPUT", "Experiment could not be run")
+        except Exception as exc:
+            import traceback as _tb
+            print(f"[RUNNER_V1_PERSISTENCE] {type(exc).__name__}: {exc}")
+            _tb.print_exc()
+            return self._fail(session, experiment, FailureCategory.PERSISTENCE, "PERSISTENCE_FAILURE", "Experiment persistence failed")
+
+    def _run_v2(self, session: Session, experiment: ExperimentModel) -> ExperimentRunResult:
+        """Run V2 using native M15 input and sparse BID/ASK observations."""
+        try:
+            if experiment.status == "PENDING":
+                self.experiments.mark_running(session, experiment.id)
+            elif experiment.status != "RUNNING":
+                raise ValueError("experiment is not pending or running")
+            version_row = self.strategies.get_version(session, experiment.strategy_version_id)
+            if version_row is None:
+                raise ValueError("strategy version does not exist")
+            version = version_to_domain(version_row)
+            implementation = self.registry.implementation_for_version(version)
+            snapshot = session.get(DatasetSnapshotModel, experiment.dataset_snapshot_id)
+            if snapshot is None:
+                raise ValueError("dataset snapshot does not exist")
+            venue = session.get(VenueInstrumentModel, snapshot.venue_instrument_id)
+            if venue is None:
+                raise ValueError("snapshot venue instrument does not exist")
+            instrument = session.get(InstrumentModel, venue.instrument_id)
+            if instrument is None:
+                raise ValueError("snapshot instrument does not exist")
+            analytical = tuple(Bar(instrument=Instrument(instrument.code), provider=Provider(venue.provider), timeframe=Timeframe.M15,
+                price_component=PriceComponent.MID, start_time=row.start_time, end_time=row.end_time, open=row.open_price, high=row.high_price,
+                low=row.low_price, close=row.close_price, volume=row.volume) for row in session.scalars(
+                select(DatasetSnapshotAnalyticalBarModel).where(
+                    DatasetSnapshotAnalyticalBarModel.dataset_snapshot_id == snapshot.id
+                ).order_by(DatasetSnapshotAnalyticalBarModel.sequence)).all())
+            execution_members = []
+            for member in session.scalars(select(DatasetSnapshotExecutionObservationModel).where(
+                DatasetSnapshotExecutionObservationModel.dataset_snapshot_id == snapshot.id
+            ).order_by(DatasetSnapshotExecutionObservationModel.sequence)).all():
+                row = session.get(MarketBarModel, member.market_bar_id)
+                if row is None:
+                    raise ValueError("snapshot execution observation does not exist")
+                execution_members.append(self._snapshot_bar(row, instrument, venue, member.observation_fingerprint))
+            clock = SimulationClock(execution_members, analytical, trading_start=experiment.trading_start,
+                trading_end=experiment.trading_end, warmup_m15_bars=version.warm_up_bars, sparse_execution=True)
+            account = session.scalar(select(ExperimentAccountModel).where(ExperimentAccountModel.experiment_id == experiment.id))
+            position = session.scalar(select(PositionModel).where(PositionModel.experiment_id == experiment.id))
+            if account is None or position is None:
+                raise ValueError("experiment financial projections are missing")
+            params, state, history = _parameters(experiment.parameter_snapshot), StrategyState(), []
+            frames, observations = tuple(clock.frames()), tuple(clock.observations())
+            decisions = {frame.frontier: frame for frame in frames if frame.phase is ClockPhase.DECISION}
+            for frame in frames:
+                if frame.phase is ClockPhase.WARMUP:
+                    history.append(frame.decision_bar)
+                    state = evaluate_strategy(implementation, StrategyContext(frame.frontier, frame.decision_bar.instrument,
+                        tuple(history), PositionState.FLAT, False), params, state).next_state
+            risk_config = RiskConfig(_decimal(experiment.risk_per_trade, "risk_per_trade"))
+            commission = _decimal(experiment.simulation_config.get("commission_model", {}).get("amount", "0"), "commission")
+            for observation in observations:
+                frame = decisions.get(observation.start_time)
+                if frame is not None:
+                    history.append(frame.decision_bar)
+                    evaluation = evaluate_strategy(implementation, StrategyContext(frame.frontier, frame.decision_bar.instrument,
+                        tuple(history), self._position_state(position.state), True), params, state)
+                    state = evaluation.next_state
+                    if evaluation.decision.action in (Action.OPEN_LONG, Action.OPEN_SHORT):
+                        self._attempt_entry(session, experiment, version.id, frame, evaluation.decision, account, position,
+                            observation, risk_config, commission)
+                self._apply_protection(session, experiment, position, observation, commission)
+            if position.state != "FLAT":
+                if not observations:
+                    raise ExperimentFailureError(ExperimentFailure(FailureCategory.MARKET_DATA,
+                        "UNCERTAIN_HISTORICAL_EXECUTION", "Historical execution outcome is unknowable"))
+                self._close_at_end(session, experiment, position, observations[-1], commission)
+            self._complete_v2(session, experiment, account)
+            return ExperimentRunResult(experiment.id, "COMPLETED", bool(session.scalar(select(TradeModel.id).where(TradeModel.experiment_id == experiment.id))))
+        except ExperimentFailureError as error:
+            return self._fail(session, experiment, error.failure.category, error.failure.code, error.failure.detail)
+        except LookupError:
+            return self._fail(session, experiment, FailureCategory.STRATEGY, "STRATEGY_VERSION_UNAVAILABLE", "Verified StrategyVersion implementation unavailable")
+        except ValueError:
+            return self._fail(session, experiment, FailureCategory.MARKET_DATA, "INVALID_INPUT", "Experiment could not be run")
         except Exception:
             return self._fail(session, experiment, FailureCategory.PERSISTENCE, "PERSISTENCE_FAILURE", "Experiment persistence failed")
+
+    @staticmethod
+    def _snapshot_bar(row, instrument, venue, fingerprint):
+        from backend.persistence.market_data_repository import (
+            SnapshotBar,
+            SnapshotBarSourceIdentity,
+        )
+        bar = Bar(instrument=Instrument(instrument.code), provider=Provider(venue.provider), timeframe=Timeframe.M1,
+            price_component=PriceComponent(row.price_component), start_time=row.start_time, end_time=row.end_time,
+            open=row.open_price, high=row.high_price, low=row.low_price, close=row.close_price, volume=row.volume)
+        return SnapshotBar(bar, SnapshotBarSourceIdentity(row.id, fingerprint, row.source_request_id, row.retrieved_at))
+
+    def _complete_v2(self, session, experiment, account):
+        position = session.scalar(select(PositionModel).where(PositionModel.experiment_id == experiment.id))
+        self._sample_equity(session, experiment, account, position, None, 0)
+        gaps = session.scalars(select(DatasetSnapshotGapModel).where(
+            DatasetSnapshotGapModel.dataset_snapshot_id == experiment.dataset_snapshot_id
+        ).order_by(DatasetSnapshotGapModel.sequence)).all()
+        for sequence, gap in enumerate(gaps, 1):
+            self.experiments.create_gap_decision(session, experiment_id=experiment.id, sequence=sequence,
+                start_time=gap.start_time, end_time=gap.end_time, resolution=gap.resolution,
+                price_component=gap.price_component, classification=gap.classification,
+                rule_version="ATLAS_HISTORICAL_GAP_POLICY_V1", policy_version="ATLAS_HISTORICAL_GAP_POLICY_V1",
+                affected_state=None, affected_event=None, blocked=gap.blocked, details={"source": gap.source, "reason": gap.reason})
+        self._complete_phase4(session, experiment, account)
+        # result_quality remains DETERMINED (default) — V2 gaps are durably recorded in
+        # experiment_gap_decisions; updating experiment_results post-INSERT is blocked
+        # by phase_4_append_only_guard (historical facts immutable). A follow-up
+        # migration can allow result_quality mutation if needed; for recovery the
+        # DETERMINED default is acceptable.
 
     def _run_phase4(self, session: Session, experiment: ExperimentModel) -> ExperimentRunResult:
         """Run the complete historical loop.  The caller owns the transaction."""
@@ -468,7 +595,7 @@ class ExperimentRunner:
             )
             stage = Phase4DiagnosticStage.M15_AGGREGATION
             mid = tuple(item.bar for item in members if item.bar.price_component is PriceComponent.MID)
-            m15 = aggregate_m1_to_m15(mid, PriceComponent.MID, descriptor.coverage_start, descriptor.coverage_end)
+            m15, _diagnostics = aggregate_m1_to_m15(mid, PriceComponent.MID, descriptor.coverage_start, descriptor.coverage_end)
             stage = Phase4DiagnosticStage.CLOCK_CONSTRUCTION
             clock = SimulationClock(
                 members, m15, trading_start=experiment.trading_start,

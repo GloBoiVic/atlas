@@ -7,7 +7,8 @@ from datetime import datetime, timedelta
 
 from backend.domain.market_data import Bar, PriceComponent
 
-from .session_calendar import is_session_open_minute
+from .aggregation import IntervalDiagnostic, aggregate_m1_to_m15
+from .session_policy import EXPECTED_DATA, OANDA_EUR_USD_POLICY
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +34,7 @@ class CoverageReport:
     gaps: tuple[CoverageGap, ...]
     closure_anomalies: tuple[datetime, ...]
     unexpected_observations: tuple[datetime, ...]
+    interval_diagnostics: tuple[IntervalDiagnostic, ...] = ()
 
     @property
     def valid(self) -> bool:
@@ -40,7 +42,67 @@ class CoverageReport:
             not self.missing
             and not self.closure_anomalies
             and not self.unexpected_observations
+            and not self.interval_diagnostics
         )
+
+
+def diagnostic_payloads(
+    report: CoverageReport, *, limit: int = 100
+) -> tuple[list[dict[str, object]], bool]:
+    """Return the bounded, durable diagnostic view of a coverage report.
+
+    The report itself is deliberately untouched: callers decide validity from
+    the complete report before using this presentation boundary.
+    """
+    if limit < 1:
+        raise ValueError("diagnostic limit must be positive")
+    values: list[tuple[datetime, dict[str, object]]] = []
+    for gap in report.gaps:
+        policy_version = OANDA_EUR_USD_POLICY.classify_minute(gap.start)[2]
+        values.append(
+            (
+                gap.start,
+                {
+                    "start": gap.start.isoformat().replace("+00:00", "Z"),
+                    "end": gap.end.isoformat().replace("+00:00", "Z"),
+                    "reason": "UNEXPECTED_MISSING_DATA",
+                    "policy_version": policy_version,
+                    "missing_components": [item.value for item in gap.components],
+                },
+            )
+        )
+    for item in getattr(report, "interval_diagnostics", ()):
+        values.append(
+            (
+                item.interval_start,
+                {
+                    "start": item.interval_start.isoformat().replace("+00:00", "Z"),
+                    "end": item.interval_end.isoformat().replace("+00:00", "Z"),
+                    "reason": item.reason,
+                    "policy_version": item.policy_version,
+                    "missing_components": [
+                        component.value for component in item.missing_components
+                    ],
+                },
+            )
+        )
+    for moment in getattr(report, "closure_anomalies", ()):
+        values.append(
+            (
+                moment,
+                {
+                    "start": moment.isoformat().replace("+00:00", "Z"),
+                    "end": (moment + timedelta(minutes=1))
+                    .isoformat()
+                    .replace("+00:00", "Z"),
+                    "reason": "UNEXPECTED_OBSERVATION_DURING_UNAVAILABLE_SESSION",
+                    "policy_version": OANDA_EUR_USD_POLICY.classify_minute(moment)[2],
+                    "missing_components": [],
+                },
+            )
+        )
+    values.sort(key=lambda value: (value[0], str(value[1]["reason"])))
+    return [item for _, item in values[:limit]], len(values) > limit
 
 
 def _validate_range(start: datetime, end: datetime) -> None:
@@ -92,6 +154,7 @@ def validate_coverage(
     ),
 ) -> CoverageReport:
     _validate_range(start, end)
+    bars = tuple(bars)
     if not required_components or len(set(required_components)) != len(
         required_components
     ):
@@ -103,7 +166,7 @@ def validate_coverage(
     expected_open = 0
     expected_closed = 0
     while cursor < end:
-        if is_session_open_minute(cursor):
+        if OANDA_EUR_USD_POLICY.classify_minute(cursor)[0] == EXPECTED_DATA:
             expected_open += 1
         else:
             expected_closed += 1
@@ -115,14 +178,14 @@ def validate_coverage(
             or bar.end_time != bar.start_time + timedelta(minutes=1)
         ):
             unexpected.add(bar.start_time)
-        elif not is_session_open_minute(bar.start_time):
+        elif OANDA_EUR_USD_POLICY.classify_minute(bar.start_time)[0] != EXPECTED_DATA:
             closure_anomalies.add(bar.start_time)
         else:
             by_minute[bar.start_time].add(bar.price_component)
     missing: list[MissingMinute] = []
     cursor = start
     while cursor < end:
-        if is_session_open_minute(cursor):
+        if OANDA_EUR_USD_POLICY.classify_minute(cursor)[0] == EXPECTED_DATA:
             absent = tuple(
                 component
                 for component in required_components
@@ -131,6 +194,15 @@ def validate_coverage(
             if absent:
                 missing.append(MissingMinute(cursor, absent))
         cursor += timedelta(minutes=1)
+    interval_diagnostics: list[IntervalDiagnostic] = []
+    for component in required_components:
+        _eligible, diagnostics = aggregate_m1_to_m15(
+            tuple(bar for bar in bars if bar.price_component is component),
+            component,
+            start,
+            end,
+        )
+        interval_diagnostics.extend(diagnostics)
     return CoverageReport(
         expected_open,
         expected_closed,
@@ -143,6 +215,7 @@ def validate_coverage(
         coalesce_gaps(missing),
         tuple(sorted(closure_anomalies)),
         tuple(sorted(unexpected)),
+        tuple(sorted(interval_diagnostics, key=lambda item: item.interval_start)),
     )
 
 
@@ -151,5 +224,6 @@ __all__ = [
     "CoverageReport",
     "MissingMinute",
     "coalesce_gaps",
+    "diagnostic_payloads",
     "validate_coverage",
 ]

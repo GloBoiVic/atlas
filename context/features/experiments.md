@@ -12,6 +12,19 @@ Canonical pipeline: [Domain Model](../architecture/domain-model.md). Experiments
 
 Preserve: StrategyVersion, Instrument, parameter snapshot, DatasetSnapshot, date range, starting capital + base currency, Risk configuration snapshot, simulation configuration, engine/version provenance. Completed config is immutable. Rerun → new Experiment.
 
+## Experiment Setup / Historical Load Integration
+
+Experiment setup offers a "Load missing historical data" action enabled from a StrategyVersion plus valid UTC 15-minute-aligned trading bounds. It does not require a pre-existing snapshot and never exposes a provider or credential selector. The server executes a strictly ordered lifecycle before Experiment creation is enabled: load -> snapshot -> M15 -> validation.
+
+1. Bounded `load_missing` for current M1 MID/BID/ASK over `[requiredWarmUpStart, tradingEnd)`.
+2. Persist the sanitized final ingestion report and recomputed current coverage.
+3. Fail on source failure, incomplete provider data, or invalid coverage.
+4. Create or reuse an immutable DatasetSnapshot for the loaded range.
+5. Derive M15 MID exclusively from that snapshot's immutable membership; fail if deterministic aggregation cannot cover eligible windows.
+6. Validate Experiment coverage for the original trading period; mark the load `COMPLETED` only if that validation is valid.
+
+On `COMPLETED` the setup refetches configuration options, auto-selects the returned snapshot, calls the existing coverage-validation endpoint, and enables Experiment creation only from a successful response. A partial, failed, or interrupted load never enables creation. The durable request (not a toast) is the status authority.
+
 ## Reference Configuration
 
 EMA Sweep Engulfing, EUR/USD, 15m Strategy, 1m simulation, MID analysis, BID/ASK execution, USD base.

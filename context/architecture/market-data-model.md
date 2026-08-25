@@ -16,6 +16,10 @@ Market data identified using canonical Atlas Instrument (e.g., EUR/USD). Provide
 
 Distinguish explicitly between bar start time and bar end time. For a 15-minute bar: interval [10:00:00, 10:15:00). Use one canonical convention consistently.
 
+## UTC Input / Display-Time Separation
+
+Canonical instants, ranges, aggregation, persistence, and Experiment inputs are always UTC. A frontend display timezone (browser-local preference defaulting to `America/Chicago`) changes only labels and chart formatters — never instants, ranges, aggregation, sorting, or submitted payloads. Experiment date entry is explicit UTC wall-clock text (`datetime-local` labelled UTC), 15-minute aligned, serialized as `...:00Z`, and independent of the display timezone; Chicago DST gaps and folds therefore do not change the submitted instant. Chart data remains epoch-second instants; only formatting varies. Full timestamp labels include the zone abbreviation (for example CDT versus CST) so repeated fall-back wall times remain distinguishable.
+
 ## Completed Bar Rule
 
 A bar becomes completed only when its full interval has elapsed and Atlas has sufficient data to finalize it. A Strategy may only receive completed bars. Strategy evaluates only at or after bar completion according to the Atlas-controlled frontier.

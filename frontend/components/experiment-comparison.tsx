@@ -57,13 +57,13 @@ export function ExperimentComparisonPage() {
       <section className="space-y-8" aria-labelledby="comparison-heading">
         <Link
           href="/experiments"
-          className="inline-flex items-center gap-2 text-sm text-slate-600 hover:text-slate-950"
+          className="inline-flex items-center gap-2 text-sm text-atlas-foreground-muted hover:text-atlas-foreground"
         >
           <ArrowLeft className="size-4" />
           Experiments
         </Link>
         <header>
-          <p className="mb-2 text-sm font-medium text-blue-700">
+          <p className="mb-2 text-sm font-medium text-atlas-primary">
             Transient research view
           </p>
           <h1
@@ -72,7 +72,7 @@ export function ExperimentComparisonPage() {
           >
             Experiment comparison
           </h1>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-atlas-foreground-muted">
             Review immutable configuration facts side by side. This view does
             not rank Experiments or recommend a choice.
           </p>
@@ -80,7 +80,7 @@ export function ExperimentComparisonPage() {
         {(ids.length < 2 || ids.length > 4) && (
           <p
             role="alert"
-            className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"
+            className="rounded-lg border border-atlas-warning bg-atlas-warning-muted p-4 text-sm text-atlas-warning"
           >
             <AlertCircle className="mr-2 inline size-4" />
             Choose two to four distinct completed Experiments from the
@@ -90,14 +90,14 @@ export function ExperimentComparisonPage() {
         {error && (
           <p
             role="alert"
-            className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-900"
+            className="rounded-lg border border-atlas-negative bg-atlas-negative-muted p-4 text-sm text-atlas-negative"
           >
             <AlertCircle className="mr-2 inline size-4" />
             {error}
           </p>
         )}
         {!data && !error && ids.length >= 2 && ids.length <= 4 && (
-          <p className="text-sm text-slate-600">
+          <p className="text-sm text-atlas-foreground-muted">
             <LoaderCircle className="mr-2 inline size-4 animate-spin" />
             Loading comparison…
           </p>
@@ -113,13 +113,13 @@ export function ExperimentComparisonPage() {
                   <Link
                     key={x.id}
                     href={`/experiments/${x.id}`}
-                    className="rounded-lg border border-slate-200 bg-white p-4 hover:border-slate-400"
+                    className="rounded-lg border border-atlas-border bg-atlas-surface p-4 hover:border-atlas-primary hover:bg-atlas-surface-hover"
                   >
-                    <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                    <p className="text-xs font-medium uppercase tracking-wide text-atlas-foreground-muted">
                       Experiment {x.slot}
                     </p>
                     <p className="mt-2 font-medium">{x.label}</p>
-                    <p className="mt-2 text-xs text-slate-500">
+                    <p className="mt-2 text-xs text-atlas-foreground-muted">
                       {show(x.strategy.name)} · v{show(x.strategy.version)}
                     </p>
                   </Link>
@@ -129,12 +129,12 @@ export function ExperimentComparisonPage() {
             {data.warnings.length > 0 && (
               <section
                 aria-labelledby="warnings-heading"
-                className="rounded-lg border border-amber-200 bg-amber-50 p-5"
+                className="rounded-lg border border-atlas-warning bg-atlas-warning-muted p-5"
               >
                 <h2 id="warnings-heading" className="font-semibold">
                   Comparability warnings
                 </h2>
-                <p className="mt-1 text-sm text-amber-900">
+                <p className="mt-1 text-sm text-atlas-warning">
                   These are factual differences in the selected inputs and
                   execution context.
                 </p>
@@ -142,7 +142,7 @@ export function ExperimentComparisonPage() {
                   {data.warnings.map((w) => (
                     <li key={w.code}>
                       <strong>{w.explanation}</strong>
-                      <span className="block text-amber-800">
+                      <span className="block text-atlas-warning">
                         Affected: {w.paths.join(', ')}
                       </span>
                     </li>
@@ -159,14 +159,14 @@ export function ExperimentComparisonPage() {
                   Configuration facts
                 </h2>
                 {data.strongParameterIsolation && (
-                  <span className="text-sm text-slate-600">
+                  <span className="text-sm text-atlas-foreground-muted">
                     One parameter differs; other comparison dimensions match.
                   </span>
                 )}
               </div>
-              <div className="mt-4 overflow-x-auto rounded-lg border border-slate-200 bg-white">
+              <div className="mt-4 overflow-x-auto rounded-lg border border-atlas-border bg-atlas-surface">
                 <table className="w-full min-w-[760px] text-left text-sm">
-                  <thead className="border-b border-slate-200 bg-slate-50 text-xs text-slate-600">
+                  <thead className="border-b border-atlas-border bg-atlas-surface-hover text-xs text-atlas-foreground-muted">
                     <tr>
                       <th className="px-4 py-3">Fact</th>
                       {data.experiments.map((x) => (
@@ -176,7 +176,7 @@ export function ExperimentComparisonPage() {
                       ))}
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100">
+                  <tbody className="divide-y divide-atlas-border">
                     {data.differences.map((d) => (
                       <tr key={d.path}>
                         <th className="px-4 py-3 font-medium">
@@ -196,7 +196,7 @@ export function ExperimentComparisonPage() {
                       <tr>
                         <td
                           colSpan={data.experiments.length + 1}
-                          className="px-4 py-5 text-slate-600"
+                          className="px-4 py-5 text-atlas-foreground-muted"
                         >
                           No configuration differences.
                         </td>
@@ -210,9 +210,9 @@ export function ExperimentComparisonPage() {
               <h2 id="metrics-heading" className="text-lg font-semibold">
                 Canonical metrics
               </h2>
-              <div className="mt-4 overflow-x-auto rounded-lg border border-slate-200 bg-white">
+              <div className="mt-4 overflow-x-auto rounded-lg border border-atlas-border bg-atlas-surface">
                 <table className="w-full min-w-[680px] text-left text-sm">
-                  <thead className="border-b border-slate-200 bg-slate-50 text-xs text-slate-600">
+                  <thead className="border-b border-atlas-border bg-atlas-surface-hover text-xs text-atlas-foreground-muted">
                     <tr>
                       <th className="px-4 py-3">Metric</th>
                       {data.experiments.map((x) => (
@@ -222,7 +222,7 @@ export function ExperimentComparisonPage() {
                       ))}
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100">
+                  <tbody className="divide-y divide-atlas-border">
                     {[
                       'netReturn',
                       'maxDrawdownPercent',
@@ -244,7 +244,7 @@ export function ExperimentComparisonPage() {
                   </tbody>
                 </table>
               </div>
-              <p className="mt-3 text-xs text-slate-500">
+              <p className="mt-3 text-xs text-atlas-foreground-muted">
                 Metric states and unavailable reasons are retained from the
                 canonical completed-Experiment result.
               </p>
@@ -253,7 +253,7 @@ export function ExperimentComparisonPage() {
               {data.experiments.map((x) => (
                 <Link
                   key={x.id}
-                  className="text-blue-700 underline underline-offset-4"
+                  className="text-atlas-primary underline underline-offset-4"
                   href={`/experiments/${x.id}`}
                 >
                   Open {x.slot} result and Trades

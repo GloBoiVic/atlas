@@ -5,7 +5,9 @@ export default function Page() {
   return (
     <Suspense
       fallback={
-        <p className="p-8 text-sm text-slate-600">Loading comparison…</p>
+        <p className="bg-atlas-background p-8 text-sm text-atlas-foreground-muted">
+          Loading comparison…
+        </p>
       }
     >
       <ExperimentComparisonPage />

@@ -10,6 +10,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
+from typing import cast
 from uuid import UUID
 
 from sqlalchemy import select
@@ -31,7 +32,10 @@ from backend.domain.market_data import (
 from backend.market_data.fingerprint import dataset_fingerprint
 
 from .models import (
+    DatasetSnapshotAnalyticalBarModel,
     DatasetSnapshotBarModel,
+    DatasetSnapshotExecutionObservationModel,
+    DatasetSnapshotGapModel,
     DatasetSnapshotModel,
     InstrumentModel,
     MarketBarModel,
@@ -50,6 +54,8 @@ def _encode_m1_resolution(timeframe: Timeframe) -> str:
 
 def _decode_resolution(value: str) -> Timeframe:
     """Decode the approved stored resolution without changing domain values."""
+    if value == "M15":
+        return Timeframe.M15
     if value != PERSISTED_M1_RESOLUTION:
         raise ValueError(f"unsupported persisted market-bar resolution: {value}")
     return Timeframe.M1
@@ -285,6 +291,7 @@ class MarketDataRepository:
             raise ValueError("venue instrument does not exist")
         inserted = reactivated = unchanged = 0
         session.flush()
+        prepared: list[tuple[BarBatchItem, dict[str, UUID | str | datetime], str]] = []
         for item in items:
             bar = item.bar
             if bar.provider is not Provider.OANDA or bar.timeframe is not Timeframe.M1:
@@ -301,55 +308,82 @@ class MarketDataRepository:
                 price_component=bar.price_component.value,
                 start_time=bar.start_time,
             )
-            variant = session.scalar(
-                select(MarketBarModel).where(
-                    *[
-                        getattr(MarketBarModel, key) == value
-                        for key, value in logical.items()
-                    ],
-                    MarketBarModel.content_fingerprint == fingerprint,
-                )
+            prepared.append((item, logical, fingerprint))
+        if not prepared:
+            return BarBatchResult()
+
+        # The venue lock above serializes competing corrections. Load the
+        # relevant month/window once, rather than issuing two SELECTs for every
+        # observation in a provider response.
+        starts = [cast(datetime, logical["start_time"]) for _, logical, _ in prepared]
+        rows = session.scalars(
+            select(MarketBarModel).where(
+                MarketBarModel.venue_instrument_id == venue_instrument_id,
+                MarketBarModel.resolution == PERSISTED_M1_RESOLUTION,
+                MarketBarModel.price_component.in_(
+                    {
+                        cast(str, logical["price_component"])
+                        for _, logical, _ in prepared
+                    }
+                ),
+                MarketBarModel.start_time >= min(starts),
+                MarketBarModel.start_time <= max(starts),
             )
-            current = session.scalar(
-                select(MarketBarModel).where(
-                    *[
-                        getattr(MarketBarModel, key) == value
-                        for key, value in logical.items()
-                    ],
-                    MarketBarModel.is_current.is_(True),
-                )
+        ).all()
+        variants = {
+            (
+                row.start_time,
+                row.price_component,
+                row.content_fingerprint,
+            ): row
+            for row in rows
+        }
+        current_by_key = {
+            (row.start_time, row.price_component): row for row in rows if row.is_current
+        }
+        new_rows: list[MarketBarModel] = []
+        current_changed = False
+        for item, logical, fingerprint in prepared:
+            key = (
+                cast(datetime, logical["start_time"]),
+                cast(str, logical["price_component"]),
             )
+            variant = variants.get((*key, fingerprint))
+            current = current_by_key.get(key)
             if current is not None and current.content_fingerprint == fingerprint:
                 unchanged += 1
                 continue
             if current is not None:
                 current.is_current = False
-                # PostgreSQL's partial unique index requires the old
-                # projection to be durable before another variant is made
-                # current.  The surrounding transaction remains atomic.
-                session.flush()
+                current_changed = True
             if variant is None:
-                session.add(
-                    MarketBarModel(
-                        **logical,
-                        end_time=bar.end_time,
-                        open_price=bar.open,
-                        high_price=bar.high,
-                        low_price=bar.low,
-                        close_price=bar.close,
-                        volume=bar.volume,
-                        complete=True,
-                        content_fingerprint=fingerprint,
-                        source_request_id=item.source_request_id,
-                        retrieved_at=item.retrieved_at,
-                        is_current=True,
-                    )
+                variant = MarketBarModel(
+                    **logical,
+                    end_time=item.bar.end_time,
+                    open_price=item.bar.open,
+                    high_price=item.bar.high,
+                    low_price=item.bar.low,
+                    close_price=item.bar.close,
+                    volume=item.bar.volume,
+                    complete=True,
+                    content_fingerprint=fingerprint,
+                    source_request_id=item.source_request_id,
+                    retrieved_at=item.retrieved_at,
+                    is_current=True,
                 )
+                new_rows.append(variant)
+                variants[(*key, fingerprint)] = variant
                 inserted += 1
             else:
                 variant.is_current = True
                 reactivated += 1
+            current_by_key[key] = variant
+        if current_changed:
+            # PostgreSQL's partial unique index requires old projections to be
+            # durable before a replacement is made current.
             session.flush()
+        session.add_all(new_rows)
+        session.flush()
         return BarBatchResult(inserted, reactivated, unchanged)
 
     def _venue_rows(
@@ -496,6 +530,105 @@ class DatasetSnapshotRepository:
         session.flush()
         return snapshot
 
+    def create_v2_validated(
+        self,
+        session: Session,
+        snapshot: DatasetSnapshot,
+        analytical: Sequence[Bar],
+        execution: Sequence[tuple[MarketBarModel, Bar]],
+        gaps: Sequence[dict[str, object]],
+    ) -> DatasetSnapshot:
+        """Persist one immutable V2 snapshot and its provider memberships."""
+        if snapshot.snapshot_schema != "ATLAS_HISTORICAL_SIMULATION_SNAPSHOT_V2":
+            raise ValueError("V2 snapshot required")
+        mapping = session.scalar(
+            select(VenueInstrumentModel)
+            .join(InstrumentModel)
+            .where(
+                VenueInstrumentModel.provider
+                == snapshot.venue_instrument.provider.value,
+                VenueInstrumentModel.provider_symbol
+                == snapshot.venue_instrument.provider_symbol,
+                InstrumentModel.code == snapshot.venue_instrument.instrument.value,
+            )
+            .with_for_update()
+        )
+        if mapping is None:
+            raise ValueError("snapshot venue instrument does not exist")
+        existing = session.scalar(
+            select(DatasetSnapshotModel).where(
+                DatasetSnapshotModel.fingerprint == snapshot.fingerprint
+            )
+        )
+        if existing is not None:
+            return self._to_domain(session, existing)
+        row = DatasetSnapshotModel(
+            id=snapshot.id,
+            venue_instrument_id=mapping.id,
+            base_resolution="M15",
+            components=["MID"],
+            coverage_start=snapshot.coverage_start,
+            coverage_end=snapshot.coverage_end,
+            alignment_convention=snapshot.alignment_convention,
+            session_policy=snapshot.session_policy,
+            fingerprint_schema=snapshot.fingerprint_schema,
+            fingerprint=snapshot.fingerprint,
+            snapshot_schema=snapshot.snapshot_schema,
+            integrity_summary=dict(snapshot.integrity_summary),
+            created_at=snapshot.created_at,
+        )
+        session.add(row)
+        session.flush()
+        from backend.market_data.fingerprint import bar_content_fingerprint
+
+        # Build each membership set in memory, then hand it to SQLAlchemy in
+        # one unit of work. This retains ORM validation and database triggers,
+        # while avoiding one flush/identity operation per member on month-long
+        # snapshots.
+        session.add_all(
+            [
+                DatasetSnapshotAnalyticalBarModel(
+                    dataset_snapshot_id=row.id,
+                    sequence=sequence,
+                    start_time=bar.start_time,
+                    end_time=bar.end_time,
+                    open_price=bar.open,
+                    high_price=bar.high,
+                    low_price=bar.low,
+                    close_price=bar.close,
+                    volume=bar.volume,
+                    complete=True,
+                    content_fingerprint=bar_content_fingerprint(bar),
+                    retrieved_at=snapshot.created_at,
+                )
+                for sequence, bar in enumerate(analytical, 1)
+            ]
+        )
+        session.add_all(
+            [
+                DatasetSnapshotExecutionObservationModel(
+                    dataset_snapshot_id=row.id,
+                    sequence=sequence,
+                    market_bar_id=market_bar.id,
+                    price_component=bar.price_component.value,
+                    start_time=bar.start_time,
+                    end_time=bar.end_time,
+                    observation_fingerprint=bar_content_fingerprint(bar),
+                )
+                for sequence, (market_bar, bar) in enumerate(execution, 1)
+            ]
+        )
+        session.add_all(
+            [
+                DatasetSnapshotGapModel(
+                    dataset_snapshot_id=row.id, sequence=sequence, **gap
+                )
+                for sequence, gap in enumerate(gaps, 1)
+            ]
+        )
+        session.flush()
+        return snapshot
+
     def members(self, session: Session, snapshot_id: UUID) -> tuple[Bar, ...]:
         return tuple(
             item.bar
@@ -621,6 +754,7 @@ class DatasetSnapshotRepository:
             fingerprint=row.fingerprint,
             integrity_summary=dict(row.integrity_summary),
             created_at=_database_utc(row.created_at),
+            snapshot_schema=row.snapshot_schema,
         )
 
 

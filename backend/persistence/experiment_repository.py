@@ -21,6 +21,7 @@ from backend.experiments.metric_contract import (
 from .models import (
     ExperimentAccountModel,
     ExperimentEquityPointModel,
+    ExperimentGapDecisionModel,
     ExperimentModel,
     ExperimentResultModel,
     PositionModel,
@@ -222,6 +223,14 @@ class ExperimentRepository:
         values.setdefault("metric_states", dict(LEGACY_METRIC_STATES))
         values.setdefault("metric_schema_version", LEGACY_METRIC_SCHEMA_VERSION)
         row = ExperimentResultModel(**values)  # type: ignore[arg-type]
+        session.add(row)
+        session.flush()
+        return row
+
+    def create_gap_decision(
+        self, session: Session, **values: object
+    ) -> ExperimentGapDecisionModel:
+        row = ExperimentGapDecisionModel(**values)  # type: ignore[arg-type]
         session.add(row)
         session.flush()
         return row

@@ -62,6 +62,14 @@ OrderEvents append-only. Fill → atomically update Order status + Position + Tr
 
 Never hold DB transaction open during network calls. Pattern: persist intent/submission state → commit → external call → persist resulting facts.
 
+## Historical Load Requests / Interruption Recovery
+
+A durable command table `historical_data_load_requests` records the single in-process historical load: id, `operation` (exactly `LOAD_MISSING`), `status` (`PENDING`/`RUNNING`/`COMPLETED`/`FAILED`), strategy_version FK (`RESTRICT`), UTC trading/load ranges, bounded JSONB progress arrays and counts, nullable coverage/validation/snapshot facts, and allowlisted failure fields. Database checks enforce UTC epoch alignment, positive ordering, `load_end = trading_end`, a 90-day load maximum, expected JSON top-level types, non-negative counters, and per-status state consistency. A partial unique index on a constant expression enforces at most one active (`PENDING`/`RUNNING`) request. Terminal rows change only through explicit repository transitions; there is no update endpoint. No token, Authorization header, provider body, raw exception text, or database diagnostic is persisted.
+
+**Short transactions:** each progress and terminal write uses a fresh, short transaction; provider network calls occur with no open DB transaction. The existing market-bar/snapshot writers remain the sole canonical data path; progress is a projection that may lag a committed bar transaction by one commit boundary, so coverage — not progress JSON — decides success.
+
+**Interruption recovery:** on startup, before routes accept traffic, any pre-existing `PENDING`/`RUNNING` row is failed (`LOAD_INTERRUPTED_BEFORE_START`/`LOAD_INTERRUPTED`); startup blocks rather than serving load commands if that recovery cannot commit. Atlas never infers completion from partially persisted bars or resumes provider I/O. Completed bars and immutable snapshots are never deleted on downgrade; the Alembic downgrade drops only the load-request table/index and must not run with an active request.
+
 ## Market Bars / Identity
 
 Market bars preserve: Instrument, provider, resolution, timestamps, OHLC, required price components, completion/provenance. Logical uniqueness prevents duplicates (Instrument+Provider+Resolution+PriceComponent+Timestamp). Index for actual query patterns.

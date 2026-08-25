@@ -67,6 +67,7 @@ class ExperimentDatasetSnapshotOptionResponse(StrictModel):
     fingerprint: str
     coverage_start: str
     coverage_end: str
+    snapshot_schema: str
     integrity: dict[str, Any]
 
 
@@ -89,6 +90,109 @@ class ErrorBody(BaseModel):
 
 class ErrorResponse(BaseModel):
     error: ErrorBody
+
+
+class PriceAnalysisBarResponse(StrictModel):
+    t: str
+    o: str
+    h: str
+    l: str  # noqa: E741 - public OHLC contract uses the canonical short key
+    c: str
+
+
+class PriceAnalysisEmaResponse(StrictModel):
+    t: str
+    v: str
+
+
+class PriceAnalysisWindowResponse(StrictModel):
+    start: str
+    end: str
+
+
+class PriceAnalysisPointResponse(StrictModel):
+    t: str
+    price: str
+
+
+class PriceAnalysisRangeResponse(StrictModel):
+    price: str
+    from_: str = Field(alias="from")
+    to: str
+
+
+class PriceAnalysisTradeResponse(StrictModel):
+    sequence: int
+    direction: str
+    entry: PriceAnalysisPointResponse
+    exit: PriceAnalysisPointResponse | None
+    stop: PriceAnalysisRangeResponse | None
+    target: PriceAnalysisRangeResponse | None
+
+
+class PriceAnalysisFactResponse(StrictModel):
+    trade_sequence: int
+    reference: dict[str, str]
+    sweep: dict[str, str]
+    confirmation: dict[str, str]
+
+
+class PriceAnalysisDiagnosticsResponse(StrictModel):
+    truncated: bool
+    ema_period: int
+    warm_up_bars: int
+    snapshot_fingerprint: str
+    m15_eligible_count: int
+    m15_returned_count: int
+    trade_eligible_count: int
+    trade_returned_count: int
+    omitted_range: dict[str, str] | None
+    omitted_m15_count: int
+    omitted_trade_count: int
+
+
+class PriceAnalysisResponse(StrictModel):
+    m15: list[PriceAnalysisBarResponse]
+    ema: list[PriceAnalysisEmaResponse]
+    trading_window: PriceAnalysisWindowResponse
+    trades: list[PriceAnalysisTradeResponse]
+    reference: list[PriceAnalysisFactResponse]
+    diagnostics: PriceAnalysisDiagnosticsResponse
+    provenance: dict[str, Any] = Field(default_factory=dict)
+    gaps: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class HistoricalDataLoadRequest(StrictModel):
+    strategy_version_id: UUID
+    trading_start: datetime
+    trading_end: datetime
+
+
+class HistoricalDataLoadStatusResponse(StrictModel):
+    id: UUID
+    display_label: str
+    status: str
+    status_url: str
+    source: dict[str, Any]
+    requested_period: dict[str, str]
+    load_range: dict[str, str]
+    progress: dict[str, Any]
+    coverage: dict[str, Any] | None
+    snapshot: dict[str, Any] | None
+    experiment_validation: dict[str, Any] | None
+    failure: dict[str, Any] | None
+    created_at: str
+    started_at: str | None
+    finished_at: str | None
+
+
+class HistoricalDataCapabilityResponse(StrictModel):
+    provider: str
+    instrument: str
+    resolution: str
+    components: list[str]
+    available: bool
+    reason_code: str | None
 
 
 class ApiResponse(BaseModel):

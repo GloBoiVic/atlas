@@ -43,13 +43,18 @@ def test_migration_cycle(migration_url: str) -> None:
         inspector = inspect(engine)
         assert sorted(inspector.get_table_names()) == [
             "alembic_version",
+            "dataset_snapshot_analytical_bars",
             "dataset_snapshot_bars",
+            "dataset_snapshot_execution_observations",
+            "dataset_snapshot_gaps",
             "dataset_snapshots",
             "experiment_accounts",
             "experiment_equity_points",
+            "experiment_gap_decisions",
             "experiment_results",
             "experiments",
             "fills",
+            "historical_data_load_requests",
             "instruments",
             "market_bars",
             "order_events",
@@ -64,6 +69,35 @@ def test_migration_cycle(migration_url: str) -> None:
         ]
         assert {column["name"] for column in inspector.get_columns("experiments")} >= {
             "failure_category", "failure_code", "failure_detail"
+        }
+        assert {column["name"] for column in inspector.get_columns("dataset_snapshots")} >= {
+            "snapshot_schema",
+        }
+        assert {column["name"] for column in inspector.get_columns("dataset_snapshot_analytical_bars")} >= {
+            "dataset_snapshot_id", "sequence", "start_time", "end_time",
+            "resolution", "price_component", "open_price", "high_price",
+            "low_price", "close_price", "volume", "complete",
+            "source_request_id", "content_fingerprint", "retrieved_at",
+        }
+        assert {column["name"] for column in inspector.get_columns("dataset_snapshot_execution_observations")} >= {
+            "dataset_snapshot_id", "sequence", "market_bar_id",
+            "price_component", "start_time", "end_time",
+            "observation_fingerprint",
+        }
+        assert {column["name"] for column in inspector.get_columns("dataset_snapshot_gaps")} >= {
+            "dataset_snapshot_id", "sequence", "start_time", "end_time",
+            "price_component", "resolution", "source", "reason",
+            "classification", "affected_state", "affected_event",
+            "policy_version", "blocked",
+        }
+        assert {constraint["name"] for constraint in inspector.get_check_constraints("dataset_snapshot_analytical_bars")} >= {
+            "ck_dataset_snapshot_analytical_bars_valid_analytical_member",
+        }
+        assert {constraint["name"] for constraint in inspector.get_check_constraints("dataset_snapshot_execution_observations")} >= {
+            "ck_dataset_snapshot_execution_observations_valid_execut_5670",
+        }
+        assert {constraint["name"] for constraint in inspector.get_check_constraints("dataset_snapshot_gaps")} >= {
+            "ck_dataset_snapshot_gaps_valid_snapshot_gap",
         }
         assert {
             constraint["name"]
@@ -83,7 +117,12 @@ def test_migration_cycle(migration_url: str) -> None:
         } >= {"uq_positions_experiment_instrument"}
         assert {column["name"] for column in inspector.get_columns("experiment_results")} >= {
             "sharpe_ratio", "profit_factor", "win_rate", "expectancy_net_pnl",
-            "metric_states", "metric_schema_version",
+            "metric_states", "metric_schema_version", "result_quality",
+        }
+        assert {column["name"] for column in inspector.get_columns("experiment_gap_decisions")} >= {
+            "experiment_id", "sequence", "start_time", "end_time", "resolution",
+            "price_component", "classification", "rule_version", "policy_version",
+            "affected_state", "affected_event", "blocked", "details",
         }
         assert "ix_experiments_created_at_id_desc" in {
             index["name"] for index in inspector.get_indexes("experiments")
@@ -97,7 +136,7 @@ def test_migration_cycle(migration_url: str) -> None:
         command.upgrade(config, "head")
         assert {column["name"] for column in inspect(engine).get_columns("experiment_results")} >= {
             "sharpe_ratio", "profit_factor", "win_rate", "expectancy_net_pnl",
-            "metric_states", "metric_schema_version",
+            "metric_states", "metric_schema_version", "result_quality",
         }
         command.downgrade(config, "base")
         assert inspect(engine).get_table_names() == ["alembic_version"]
@@ -250,6 +289,31 @@ def test_market_data_constraints_and_immutability(migration_url: str) -> None:
             ).scalar_one()
             rejected(snapshot_insert.text, snapshot_values())
             connection.execute(text("INSERT INTO dataset_snapshot_bars VALUES (:snapshot, :bar)"), {"snapshot": snapshot, "bar": bar})
+            v2_snapshot = connection.execute(text("""
+                INSERT INTO dataset_snapshots
+                  (venue_instrument_id, base_resolution, components,
+                   coverage_start, coverage_end, alignment_convention,
+                   session_policy, fingerprint_schema, fingerprint,
+                   integrity_summary, snapshot_schema)
+                VALUES (:venue, 'M15', '["MID"]'::jsonb,
+                  '2026-01-01T00:00:00Z', '2026-01-01T01:00:00Z',
+                  'UTC_HALF_OPEN_V1', 'OANDA_FX_NY_V1',
+                  'ATLAS_DATASET_SHA256_V2', repeat('e', 64),
+                  '{"status":"VALID","policy_version":"ATLAS_HISTORICAL_GAP_POLICY_V1"}'::jsonb,
+                  'ATLAS_HISTORICAL_SIMULATION_SNAPSHOT_V2')
+                RETURNING id
+            """), {"venue": venue}).scalar_one()
+            connection.execute(text("""
+                INSERT INTO dataset_snapshot_analytical_bars
+                  (dataset_snapshot_id, sequence, start_time, end_time,
+                   resolution, price_component, open_price, high_price,
+                   low_price, close_price, complete, content_fingerprint,
+                   retrieved_at)
+                VALUES (:snapshot, 1, '2026-01-01T00:00:00Z',
+                  '2026-01-01T00:15:00Z', 'M15', 'MID', 1.1, 1.2, 1.0,
+                  1.15, true, repeat('f', 64), '2026-01-01T00:16:00Z')
+            """), {"snapshot": v2_snapshot})
+            rejected("UPDATE dataset_snapshot_analytical_bars SET open_price = 2 WHERE dataset_snapshot_id = :snapshot AND sequence = 1", {"snapshot": v2_snapshot})
             rejected("INSERT INTO dataset_snapshot_bars VALUES (:snapshot, :bar)", {"snapshot": snapshot, "bar": bar})
             rejected("DELETE FROM dataset_snapshot_bars WHERE dataset_snapshot_id = :snapshot AND market_bar_id = :bar", {"snapshot": snapshot, "bar": bar})
             rejected("UPDATE dataset_snapshots SET fingerprint = repeat('d', 64) WHERE id = :snapshot", {"snapshot": snapshot})

@@ -33,10 +33,14 @@ class M1Observation:
     start_time: datetime
     end_time: datetime
     bars: tuple[SnapshotBar, ...]
+    sparse: bool = False
 
     def __post_init__(self) -> None:
         components = tuple(item.bar.price_component for item in self.bars)
-        if components != (
+        if self.sparse:
+            if components != (PriceComponent.ASK, PriceComponent.BID):
+                raise ValueError("sparse M1 observations require exactly ASK and BID")
+        elif components != (
             PriceComponent.ASK,
             PriceComponent.BID,
             PriceComponent.MID,
@@ -97,6 +101,7 @@ class SimulationClock:
         trading_start: datetime,
         trading_end: datetime,
         warmup_m15_bars: int = 0,
+        sparse_execution: bool = False,
     ) -> None:
         self.trading_start = _utc_aligned(trading_start, "trading_start")
         self.trading_end = _utc_aligned(trading_end, "trading_end")
@@ -105,6 +110,7 @@ class SimulationClock:
         if type(warmup_m15_bars) is not int or warmup_m15_bars < 0:
             raise ValueError("warmup_m15_bars must be a non-negative integer")
         self.warmup_m15_bars = warmup_m15_bars
+        self.sparse_execution = sparse_execution
         self._m1 = self._index_m1(m1_bars)
         self._m15 = self._index_m15(m15_bars)
         warmup = tuple(
@@ -201,18 +207,18 @@ class SimulationClock:
                 continue
             items = self._m1[minute]
             by_component = {item.bar.price_component: item for item in items}
-            if set(by_component) != {
-                PriceComponent.ASK,
-                PriceComponent.BID,
-                PriceComponent.MID,
-            }:
+            required = {PriceComponent.ASK, PriceComponent.BID}
+            if not self.sparse_execution:
+                required.add(PriceComponent.MID)
+            if set(by_component) != required:
                 raise ValueError(f"incomplete M1 observation at {minute.isoformat()}")
             yield M1Observation(
                 minute,
                 minute + timedelta(minutes=1),
                 tuple(by_component[component] for component in (
-                    PriceComponent.ASK, PriceComponent.BID, PriceComponent.MID
-                )),
+                    PriceComponent.ASK, PriceComponent.BID,
+                    *(() if self.sparse_execution else (PriceComponent.MID,)),
+                )), self.sparse_execution,
             )
 
     def frames(self) -> Iterator[ClockFrame]:
@@ -231,7 +237,7 @@ class SimulationClock:
             else:
                 continue
             completed = self._m1.get(frontier - timedelta(minutes=1), ())
-            if not completed:
+            if not completed and not self.sparse_execution:
                 # The NY daily break has no executable minute ending at the
                 # frontier.  The derived M15 bar may still contain the
                 # eligible minutes in that window; it is not a decision
@@ -247,7 +253,9 @@ class SimulationClock:
                 if item.bar.price_component in (PriceComponent.BID, PriceComponent.ASK)
             )
             execution = ()
-            if phase is ClockPhase.DECISION and is_session_open_minute(frontier):
+            if phase is ClockPhase.DECISION and (
+                self.sparse_execution or is_session_open_minute(frontier)
+            ):
                 items = self._m1.get(frontier, ())
                 if {item.bar.price_component for item in items} == {
                     PriceComponent.ASK,

@@ -1,45 +1,247 @@
 @import 'tailwindcss';
 
 :root {
-  --atlas-background: oklch(0.985 0.004 250);
-  --atlas-ink: oklch(0.22 0.025 255);
+  --atlas-color-background: #07111f;
+  --atlas-color-surface: #0d1b2b;
+  --atlas-color-surface-hover: #14263a;
+  --atlas-color-surface-selected: #102c48;
+  --atlas-color-border: #34465a;
+  --atlas-color-control-border: #526880;
+  --atlas-color-foreground: #f1f5f9;
+  --atlas-color-foreground-muted: #9eacc0;
+  --atlas-color-foreground-disabled: #75859a;
+  --atlas-color-primary: #38a7ff;
+  --atlas-color-primary-hover: #63b8ff;
+  --atlas-color-primary-foreground: #03111f;
+  --atlas-color-positive: #34d399;
+  --atlas-color-positive-foreground: #03150f;
+  --atlas-color-negative: #ff6673;
+  --atlas-color-negative-foreground: #1b0508;
+  --atlas-color-warning: #fbbf24;
+  --atlas-color-warning-foreground: #1a1000;
+  --atlas-color-focus-ring: #7dd3fc;
+  --atlas-color-primary-muted: #132f49;
+  --atlas-color-positive-muted: #12353a;
+  --atlas-color-negative-muted: #2f2635;
+  --atlas-color-warning-muted: #2e322a;
 }
 
-@theme {
-  --color-atlas-blue: oklch(0.52 0.18 255);
+@theme inline {
+  --color-atlas-background: var(--atlas-color-background);
+  --color-atlas-surface: var(--atlas-color-surface);
+  --color-atlas-surface-hover: var(--atlas-color-surface-hover);
+  --color-atlas-surface-selected: var(--atlas-color-surface-selected);
+  --color-atlas-border: var(--atlas-color-border);
+  --color-atlas-control-border: var(--atlas-color-control-border);
+  --color-atlas-foreground: var(--atlas-color-foreground);
+  --color-atlas-foreground-muted: var(--atlas-color-foreground-muted);
+  --color-atlas-foreground-disabled: var(--atlas-color-foreground-disabled);
+  --color-atlas-primary: var(--atlas-color-primary);
+  --color-atlas-primary-hover: var(--atlas-color-primary-hover);
+  --color-atlas-primary-foreground: var(--atlas-color-primary-foreground);
+  --color-atlas-positive: var(--atlas-color-positive);
+  --color-atlas-positive-foreground: var(--atlas-color-positive-foreground);
+  --color-atlas-negative: var(--atlas-color-negative);
+  --color-atlas-negative-foreground: var(--atlas-color-negative-foreground);
+  --color-atlas-warning: var(--atlas-color-warning);
+  --color-atlas-warning-foreground: var(--atlas-color-warning-foreground);
+  --color-atlas-focus-ring: var(--atlas-color-focus-ring);
+  --color-atlas-primary-muted: var(--atlas-color-primary-muted);
+  --color-atlas-positive-muted: var(--atlas-color-positive-muted);
+  --color-atlas-negative-muted: var(--atlas-color-negative-muted);
+  --color-atlas-warning-muted: var(--atlas-color-warning-muted);
+}
+
+html {
+  color-scheme: dark;
 }
 
 body {
   margin: 0;
-  background: var(--atlas-background);
-  color: var(--atlas-ink);
+  background: var(--atlas-color-background);
+  color: var(--atlas-color-foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
 
-.nav-link {
-  @apply inline-flex min-h-10 items-center gap-2 rounded-md px-3 text-sm text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600;
-}
-.nav-link-active {
-  @apply bg-slate-100 font-medium text-slate-950;
-}
-.nav-link-disabled {
-  @apply cursor-not-allowed opacity-45;
-}
-.status {
-  @apply inline-flex items-center gap-1.5 whitespace-nowrap text-xs font-medium;
-}
-.status-muted {
-  @apply text-slate-500;
-}
-.status-success {
-  @apply text-emerald-700;
-}
-.status-danger {
-  @apply rounded-md bg-red-50 px-2.5 py-1.5 text-red-800;
-}
+@layer components {
+  .nav-link {
+    display: inline-flex;
+    min-height: 40px;
+    align-items: center;
+    border-radius: 6px;
+    padding: 0 12px;
+    color: var(--atlas-color-foreground-muted);
+    font-size: 14px;
+    line-height: 20px;
+    transition:
+      background-color 150ms ease-out,
+      color 150ms ease-out;
+  }
 
-.form-control {
-  @apply mt-1 block min-h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm font-normal text-slate-900 shadow-sm outline-none transition-colors placeholder:text-slate-500 focus:border-blue-600 focus:ring-2 focus:ring-blue-600/20;
+  .nav-link:hover {
+    background: var(--atlas-color-surface-hover);
+    color: var(--atlas-color-foreground);
+  }
+
+  .nav-link-active {
+    background: var(--atlas-color-primary-muted);
+    color: var(--atlas-color-primary);
+    font-weight: 600;
+  }
+
+  .nav-link-disabled {
+    cursor: not-allowed;
+    color: var(--atlas-color-foreground-disabled);
+  }
+
+  .status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 16px;
+  }
+
+  .status-muted {
+    color: var(--atlas-color-foreground-muted);
+  }
+
+  .status-primary {
+    color: var(--atlas-color-primary);
+  }
+
+  .status-success {
+    color: var(--atlas-color-positive);
+  }
+
+  .status-danger {
+    border: 1px solid var(--atlas-color-negative);
+    border-radius: 6px;
+    background: var(--atlas-color-negative-muted);
+    padding: 6px 10px;
+    color: var(--atlas-color-negative);
+  }
+
+  .action-primary,
+  .action-secondary {
+    display: inline-flex;
+    min-height: 40px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    padding: 0 16px;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 20px;
+    outline: none;
+    transition:
+      background-color 150ms ease-out,
+      border-color 150ms ease-out,
+      color 150ms ease-out;
+  }
+
+  .action-primary {
+    background: var(--atlas-color-primary);
+    color: var(--atlas-color-primary-foreground);
+  }
+
+  .action-primary:hover {
+    background: var(--atlas-color-primary-hover);
+  }
+
+  .action-secondary {
+    border: 1px solid var(--atlas-color-control-border);
+    background: var(--atlas-color-surface);
+    color: var(--atlas-color-foreground);
+  }
+
+  .action-secondary:hover {
+    background: var(--atlas-color-surface-hover);
+  }
+
+  .action-primary:disabled,
+  .action-primary[aria-disabled='true'],
+  .action-secondary:disabled,
+  .action-secondary[aria-disabled='true'] {
+    cursor: not-allowed;
+    border-color: var(--atlas-color-border);
+    background: var(--atlas-color-surface-hover);
+    color: var(--atlas-color-foreground-disabled);
+  }
+
+  .form-control {
+    margin-top: 4px;
+    box-sizing: border-box;
+    display: block;
+    min-height: 40px;
+    width: 100%;
+    border: 1px solid var(--atlas-color-control-border);
+    border-radius: 6px;
+    background: var(--atlas-color-surface);
+    color: var(--atlas-color-foreground);
+    color-scheme: dark;
+    caret-color: currentColor;
+    font-family: inherit;
+    font-size: 14px;
+    line-height: 20px;
+    outline: none;
+    padding-inline: 12px;
+    -webkit-text-fill-color: currentColor;
+    transition:
+      border-color 150ms ease-out,
+      box-shadow 150ms ease-out;
+  }
+
+  select.form-control,
+  input.form-control[type='date'],
+  input.form-control[type='datetime-local'],
+  input.form-control[type='number'] {
+    appearance: auto;
+    -webkit-appearance: auto;
+  }
+
+  .form-control::placeholder {
+    color: var(--atlas-color-foreground-muted);
+  }
+
+  .form-control:focus {
+    border-color: var(--atlas-color-primary);
+  }
+
+  .form-control[aria-invalid='true'],
+  .form-control[aria-invalid='true']:focus {
+    border-color: var(--atlas-color-negative);
+  }
+
+  @supports selector(:user-invalid) {
+    .form-control:user-invalid {
+      border-color: var(--atlas-color-negative);
+    }
+  }
+
+  input.form-control:read-only,
+  textarea.form-control:read-only {
+    border-color: var(--atlas-color-border);
+    background: var(--atlas-color-surface-hover);
+    color: var(--atlas-color-foreground-muted);
+    -webkit-text-fill-color: var(--atlas-color-foreground-muted);
+  }
+
+  .form-control:disabled {
+    cursor: not-allowed;
+    border-color: var(--atlas-color-border);
+    background: var(--atlas-color-surface-hover);
+    color: var(--atlas-color-foreground-disabled);
+    opacity: 1;
+    -webkit-text-fill-color: var(--atlas-color-foreground-disabled);
+  }
+
+  :where(a, button, input, select, textarea):focus-visible {
+    outline: 2px solid var(--atlas-color-focus-ring);
+    outline-offset: 2px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -50,3 +252,33 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Compatibility layer for the earlier light utility classes.  The Atlas
+   workstation is dark-first; keeping these aliases here prevents older
+   workflow screens from reintroducing white cards and navigation chrome. */
+.bg-white { background-color: var(--atlas-color-surface) !important; }
+.bg-slate-50 { background-color: var(--atlas-color-surface-hover) !important; }
+.bg-slate-100 { background-color: var(--atlas-color-surface-selected) !important; }
+.bg-slate-900 { background-color: var(--atlas-color-primary) !important; }
+.text-white { color: var(--atlas-color-primary-foreground) !important; }
+.text-slate-950, .text-slate-900 { color: var(--atlas-color-foreground) !important; }
+.text-slate-700, .text-slate-600, .text-slate-500, .text-slate-400 {
+  color: var(--atlas-color-foreground-muted) !important;
+}
+.border-slate-100, .border-slate-200, .border-slate-300 {
+  border-color: var(--atlas-color-border) !important;
+}
+.hover\:bg-slate-50:hover, .hover\:bg-slate-100:hover {
+  background-color: var(--atlas-color-surface-hover) !important;
+}
+.hover\:bg-slate-700:hover { background-color: var(--atlas-color-primary-hover) !important; }
+.hover\:text-slate-950:hover { color: var(--atlas-color-foreground) !important; }
+.border-red-200 { border-color: var(--atlas-color-negative) !important; }
+.bg-red-50 { background-color: var(--atlas-color-negative-muted) !important; }
+.text-red-800, .text-red-900 { color: var(--atlas-color-negative) !important; }
+.border-emerald-200 { border-color: var(--atlas-color-positive) !important; }
+.bg-emerald-50, .bg-emerald-100 { background-color: var(--atlas-color-positive-muted) !important; }
+.text-emerald-800 { color: var(--atlas-color-positive) !important; }
+.border-amber-200 { border-color: var(--atlas-color-warning) !important; }
+.bg-amber-50, .bg-amber-100 { background-color: var(--atlas-color-warning-muted) !important; }
+.text-amber-800, .text-amber-900 { color: var(--atlas-color-warning) !important; }

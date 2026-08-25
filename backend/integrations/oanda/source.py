@@ -152,13 +152,14 @@ def _timestamp(value: Any) -> datetime:
     return parsed.astimezone(UTC)
 
 
-def _group(candle: dict[str, Any], start: datetime) -> tuple[Bar, ...]:
+def _group(
+    candle: dict[str, Any],
+    start: datetime,
+    timeframe: Timeframe,
+    components: tuple[tuple[PriceComponent, str], ...],
+) -> tuple[Bar, ...]:
     result: list[Bar] = []
-    for component, key in (
-        (PriceComponent.MID, "mid"),
-        (PriceComponent.BID, "bid"),
-        (PriceComponent.ASK, "ask"),
-    ):
+    for component, key in components:
         prices = candle.get(key)
         if not isinstance(prices, dict):
             raise OandaNormalizationError(
@@ -170,10 +171,10 @@ def _group(candle: dict[str, Any], start: datetime) -> tuple[Bar, ...]:
             )
             bar = Bar(
                 Instrument.EUR_USD,
-                Timeframe.M1,
+                timeframe,
                 component,
                 start,
-                start + timedelta(minutes=1),
+                start + timedelta(minutes=1 if timeframe is Timeframe.M1 else 15),
                 values[0],
                 values[1],
                 values[2],
@@ -215,6 +216,56 @@ class OandaHistoricalBarSource:
         )
 
     def fetch(self, start: datetime, end: datetime) -> FetchResult:
+        return self._fetch(
+            start,
+            end,
+            granularity="M1",
+            price="MBA",
+            timeframe=Timeframe.M1,
+            components=(
+                (PriceComponent.MID, "mid"),
+                (PriceComponent.BID, "bid"),
+                (PriceComponent.ASK, "ask"),
+            ),
+        )
+
+    def fetch_native_m15(self, start: datetime, end: datetime) -> FetchResult:
+        """Fetch the immutable provider-native analytical M15 MID series."""
+        return self._fetch(
+            start,
+            end,
+            granularity="M15",
+            price="M",
+            timeframe=Timeframe.M15,
+            components=((PriceComponent.MID, "mid"),),
+            validate_m15_alignment=True,
+        )
+
+    # Explicit spelling for callers that want the contract name in code.
+    fetch_m15_native = fetch_native_m15
+
+    def fetch_execution_m1(self, start: datetime, end: datetime) -> FetchResult:
+        """Fetch sparse completed M1 BID/ASK observations for execution."""
+        return self._fetch(
+            start,
+            end,
+            granularity="M1",
+            price="BA",
+            timeframe=Timeframe.M1,
+            components=((PriceComponent.BID, "bid"), (PriceComponent.ASK, "ask")),
+        )
+
+    def _fetch(
+        self,
+        start: datetime,
+        end: datetime,
+        *,
+        granularity: str,
+        price: str,
+        timeframe: Timeframe,
+        components: tuple[tuple[PriceComponent, str], ...],
+        validate_m15_alignment: bool = False,
+    ) -> FetchResult:
         _rfc3339(start)
         _rfc3339(end)
         if end <= start:
@@ -232,12 +283,22 @@ class OandaHistoricalBarSource:
         )
         try:
             for window_start, window_end in _windows(start, end):
-                candles, diagnostic = self._request(client, window_start, window_end)
+                candles, diagnostic = self._request(
+                    client,
+                    window_start,
+                    window_end,
+                    granularity=granularity,
+                    price=price,
+                )
                 diagnostics.append(diagnostic)
                 for candle in candles:
                     candle_time = _timestamp(candle.get("time"))
                     if not (window_start <= candle_time < window_end):
                         continue
+                    if validate_m15_alignment and candle_time.minute % 15:
+                        raise OandaNormalizationError(
+                            "native M15 candle is not UTC quarter-hour aligned"
+                        )
                     prior = provider_candles.get(candle_time)
                     if prior is not None and prior != candle:
                         raise OandaNormalizationError("conflicting duplicate candle")
@@ -250,7 +311,7 @@ class OandaHistoricalBarSource:
                 bar
                 for time in sorted(provider_candles)
                 if provider_candles[time].get("complete") is True
-                for bar in _group(provider_candles[time], time)
+                for bar in _group(provider_candles[time], time, timeframe, components)
             ),
             incomplete=tuple(
                 IncompleteCandle(time)
@@ -261,7 +322,13 @@ class OandaHistoricalBarSource:
         )
 
     def _request(
-        self, client: httpx.Client, start: datetime, end: datetime
+        self,
+        client: httpx.Client,
+        start: datetime,
+        end: datetime,
+        *,
+        granularity: str = "M1",
+        price: str = "MBA",
     ) -> tuple[list[dict[str, Any]], RequestDiagnostic]:
         token = self._token
         if token is None:
@@ -273,8 +340,8 @@ class OandaHistoricalBarSource:
         params = {
             "from": _rfc3339(start),
             "to": _rfc3339(end),
-            "price": "MBA",
-            "granularity": "M1",
+            "price": price,
+            "granularity": granularity,
             "smooth": "false",
         }
         attempts = 0

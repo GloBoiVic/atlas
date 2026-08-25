@@ -10,6 +10,8 @@ from backend.api.experiments import _metrics_payload
 from backend.domain.market_data import Bar, Instrument, PriceComponent, Timeframe
 from backend.experiments.metrics import calculate_metrics
 from backend.experiments.results import ExperimentResultReadService, ResultReadError
+from backend.persistence.models import DatasetSnapshotModel
+from backend.strategies.indicators_v2 import ema
 
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
@@ -277,3 +279,84 @@ def test_trade_detail_missing_intent_fails_closed() -> None:
     with pytest.raises(ResultReadError) as error:
         service.trade(None, experiment.id, 1)
     assert error.value.code == "INCOMPLETE_RESULT"
+
+
+def test_price_analysis_uses_persisted_period_and_keeps_zero_trade_context() -> None:
+    experiment = _experiment()
+    experiment.parameter_snapshot = {"ema_period": 3}
+    experiment.strategy_version_id = uuid4()
+    snapshot = SimpleNamespace(fingerprint="f" * 64)
+    version = SimpleNamespace(warm_up_bars=2)
+    bars = tuple(
+        Bar(
+            Instrument.EUR_USD,
+            Timeframe.M15,
+            PriceComponent.MID,
+            NOW + timedelta(minutes=15 * index),
+            NOW + timedelta(minutes=15 * (index + 1)),
+            Decimal("1.0") + index,
+            Decimal("1.1") + index,
+            Decimal("0.9") + index,
+            Decimal("1.0") + index,
+        )
+        for index in range(4)
+    )
+
+    class Session:
+        def get(self, model, _id):
+            return snapshot if model is DatasetSnapshotModel else version
+
+    class MarketData:
+        def derive_m15(self, fingerprint, component):
+            assert fingerprint == snapshot.fingerprint
+            assert component is PriceComponent.MID
+            return bars
+
+    experiment.trading_start = NOW + timedelta(minutes=30)
+    experiment.trading_end = NOW + timedelta(minutes=60)
+    service = ExperimentResultReadService(
+        results=FakeRepo(experiment), market_data=MarketData()
+    )
+    value = service.price_analysis(Session(), experiment.id)
+    assert len(value.m15) == 4
+    assert len(value.ema) == 2
+    expected = ema(bars[:3], 3)
+    assert value.ema[0]["v"] == str(expected)
+    assert value.trades == ()
+    assert value.reference == ()
+
+
+def test_price_analysis_reports_candle_truncation_without_sampling() -> None:
+    experiment = _experiment()
+    experiment.parameter_snapshot = {"ema_period": 2}
+    experiment.strategy_version_id = uuid4()
+    experiment.trading_start = NOW
+    experiment.trading_end = NOW + timedelta(minutes=15 * 10001)
+    snapshot = SimpleNamespace(fingerprint="f" * 64)
+    version = SimpleNamespace(warm_up_bars=0)
+    bars = tuple(
+        Bar(
+            Instrument.EUR_USD,
+            Timeframe.M15,
+            PriceComponent.MID,
+            NOW + timedelta(minutes=15 * index),
+            NOW + timedelta(minutes=15 * (index + 1)),
+            Decimal("1.0"), Decimal("1.1"), Decimal("0.9"), Decimal("1.0"),
+        )
+        for index in range(10001)
+    )
+
+    class Session:
+        def get(self, model, _id):
+            return snapshot if model is DatasetSnapshotModel else version
+
+    class MarketData:
+        def derive_m15(self, _fingerprint, _component):
+            return bars
+
+    value = ExperimentResultReadService(
+        results=FakeRepo(experiment), market_data=MarketData()
+    ).price_analysis(Session(), experiment.id)
+    assert len(value.m15) == 10000
+    assert value.diagnostics["truncated"] is True
+    assert value.diagnostics["omitted_m15_count"] == 1

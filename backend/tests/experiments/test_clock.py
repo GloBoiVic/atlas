@@ -69,6 +69,22 @@ def test_signal_bar_is_not_reused_as_post_decision_execution_data() -> None:
     assert not set(frame.completed_m1).intersection(frame.executable_opens)
 
 
+def test_sparse_v2_execution_accepts_bid_ask_without_wall_clock_continuity() -> None:
+    start = datetime(2026, 1, 5, 10, tzinfo=UTC)
+    frontier = start + timedelta(minutes=15)
+    clock = SimulationClock(
+        (_m1(frontier, PriceComponent.ASK, "1.1001"),
+         _m1(frontier, PriceComponent.BID, "1.0999")),
+        (_m15(start),),
+        trading_start=start,
+        trading_end=start + timedelta(minutes=30),
+        sparse_execution=True,
+    )
+    frames = tuple(clock.frames())
+    assert frames[0].phase is ClockPhase.DECISION
+    assert tuple(clock.observations())[0].sparse is True
+
+
 def test_warmup_is_ordered_before_trading_and_disables_exposure() -> None:
     first = datetime(2026, 1, 5, 9, 45, tzinfo=UTC)
     m15 = (_m15(first), _m15(first + timedelta(minutes=15)))

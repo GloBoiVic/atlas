@@ -16,7 +16,10 @@ from sqlalchemy.orm import Session
 from backend.domain.market_data import (
     ALIGNMENT_CONVENTION,
     FINGERPRINT_SCHEMA,
+    FINGERPRINT_SCHEMA_V2,
+    GAP_POLICY_V1,
     SESSION_POLICY,
+    SNAPSHOT_SCHEMA_V2,
     Bar,
     DatasetSnapshot,
     Instrument,
@@ -29,10 +32,16 @@ from backend.market_data.fingerprint import dataset_fingerprint
 from backend.persistence.database import configure_utc_session_timezone
 from backend.persistence.market_data_repository import (
     BarBatchItem,
+    BarBatchResult,
     DatasetSnapshotRepository,
     MarketDataRepository,
 )
-from backend.persistence.models import MarketBarModel, VenueInstrumentModel
+from backend.persistence.models import (
+    DatasetSnapshotAnalyticalBarModel,
+    DatasetSnapshotGapModel,
+    MarketBarModel,
+    VenueInstrumentModel,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -182,6 +191,7 @@ def test_missing_ranges_and_snapshot_membership_are_immutable_boundary(
         )
         == ()
     )
+
     expected_fingerprint = dataset_fingerprint(
         snapshot_venue := VenueInstrument(
             Instrument.EUR_USD, Provider.OANDA, "EUR_USD"
@@ -267,6 +277,80 @@ def test_missing_ranges_and_snapshot_membership_are_immutable_boundary(
     )
 
 
+def test_v2_bulk_memberships_persist_representative_large_batch(
+    repository_session: tuple[Session, Engine],
+) -> None:
+    session, _ = repository_session
+    _mapping(session)
+    start = datetime(2026, 1, 5, 10, tzinfo=UTC)
+    analytical = tuple(
+        Bar(
+            Instrument.EUR_USD,
+            Timeframe.M15,
+            PriceComponent.MID,
+            start + timedelta(minutes=15 * index),
+            start + timedelta(minutes=15 * (index + 1)),
+            Decimal("1.1000"),
+            Decimal("1.1010"),
+            Decimal("1.0990"),
+            Decimal("1.1005"),
+        )
+        for index in range(500)
+    )
+    end = start + timedelta(minutes=15 * len(analytical))
+    gaps = tuple(
+        {
+            "start_time": start + timedelta(minutes=15 * index),
+            "end_time": start + timedelta(minutes=15 * (index + 1)),
+            "price_component": "MID",
+            "resolution": "M15",
+            "source": "OANDA",
+            "reason": "MISSING_NATIVE_COMPLETED_CANDLE",
+            "classification": "NON_BLOCKING",
+            "affected_state": None,
+            "affected_event": None,
+            "policy_version": GAP_POLICY_V1,
+            "blocked": False,
+        }
+        for index in range(100)
+    )
+    snapshot = DatasetSnapshot(
+        uuid4(),
+        VenueInstrument(Instrument.EUR_USD, Provider.OANDA, "EUR_USD"),
+        Timeframe.M15,
+        (PriceComponent.MID,),
+        start,
+        end,
+        ALIGNMENT_CONVENTION,
+        SESSION_POLICY,
+        FINGERPRINT_SCHEMA_V2,
+        "b" * 64,
+        {"status": "VALID", "policy_version": GAP_POLICY_V1},
+        start + timedelta(days=1),
+        SNAPSHOT_SCHEMA_V2,
+    )
+    stored = DatasetSnapshotRepository().create_v2_validated(
+        session, snapshot, analytical, (), gaps
+    )
+    assert stored.id == snapshot.id
+    assert (
+        session.scalar(
+            select(func.count(DatasetSnapshotAnalyticalBarModel.sequence)).where(
+                DatasetSnapshotAnalyticalBarModel.dataset_snapshot_id == snapshot.id
+            )
+        )
+        == 500
+    )
+    assert (
+        session.scalar(
+            select(func.count(DatasetSnapshotGapModel.sequence)).where(
+                DatasetSnapshotGapModel.dataset_snapshot_id == snapshot.id
+            )
+        )
+        == 100
+    )
+
+
 def test_concurrent_batches_serialize_current_projection(
     repository_session: tuple[Session, Engine],
 ) -> None:
@@ -317,3 +401,27 @@ def test_concurrent_batches_serialize_current_projection(
         )
     finally:
         check.close()
+
+
+def test_large_m1_batch_uses_set_based_existing_row_lookup(
+    repository_session: tuple[Session, Engine],
+) -> None:
+    session, _ = repository_session
+    mapping = _mapping(session)
+    start = datetime(2026, 1, 5, 10, tzinfo=UTC)
+    items = tuple(
+        BarBatchItem(
+            _bar(
+                start + timedelta(minutes=index),
+                component,
+            ),
+            start,
+            "large-batch",
+        )
+        for index in range(25_000)
+        for component in (PriceComponent.BID, PriceComponent.ASK)
+    )
+
+    result = MarketDataRepository().apply_bar_batch(session, mapping.id, items)
+
+    assert result == BarBatchResult(inserted=50_000)

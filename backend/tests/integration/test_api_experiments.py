@@ -10,6 +10,7 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
 from backend.api.app import create_app
+from backend.api.schemas import ExperimentDatasetSnapshotOptionResponse
 from backend.experiments.runner import ExperimentRunner
 from backend.persistence.database import configure_utc_session_timezone
 from backend.persistence.experiment_repository import ExperimentRepository
@@ -37,6 +38,48 @@ pytestmark = pytest.mark.integration
 @pytest.fixture(scope="module")
 def database_url():
     return os.environ["ATLAS_TEST_DATABASE_URL"]
+
+
+def _complete_experiment(database_url, *, direction, phase4=False):
+    """Persist a golden-flow Experiment, run it COMPLETED, and return its id."""
+    engine = configure_utc_session_timezone(create_engine(database_url))
+    try:
+        with Session(engine) as session, session.begin():
+            session.execute(
+                __import__("sqlalchemy").text(
+                    "TRUNCATE experiments, dataset_snapshots, market_bars, "
+                    "strategy_versions, strategies, venue_instruments, "
+                    "instruments CASCADE"
+                )
+            )
+            experiment_id, _, _ = _seed(session, direction, phase4=phase4)
+        with Session(engine) as session, session.begin():
+            result = ExperimentRunner(
+                strategy_registry=_registry()
+            ).run(session, experiment_id)
+            assert result.status == "COMPLETED", result.failure
+        return experiment_id
+    finally:
+        engine.dispose()
+
+
+def test_dataset_snapshot_option_accepts_v1_and_v2_schema_aliases():
+    base = {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "fingerprint": "a" * 64,
+        "coverageStart": "2026-01-01T00:00:00Z",
+        "coverageEnd": "2026-01-02T00:00:00Z",
+        "integrity": {},
+    }
+    for schema in (
+        "ATLAS_HISTORICAL_SNAPSHOT_V1",
+        "ATLAS_HISTORICAL_SIMULATION_SNAPSHOT_V2",
+    ):
+        value = ExperimentDatasetSnapshotOptionResponse.model_validate(
+            {**base, "snapshotSchema": schema}
+        )
+        assert value.snapshot_schema == schema
+        assert value.model_dump(by_alias=True)["snapshotSchema"] == schema
 
 
 def test_http_status_poll_observes_running_while_run_is_gated(database_url):
@@ -291,5 +334,118 @@ def test_http_comparison_uses_public_repeated_ids_and_is_read_only(database_url)
                 )
             }
             assert after_counts == before_counts
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.price_analysis
+def test_price_analysis_completed_returns_m15_ema_and_markers(database_url):
+    """LONG golden flow completed Experiment exposes M15/EMA + trade markers."""
+    engine = configure_utc_session_timezone(create_engine(database_url))
+    try:
+        experiment_id = _complete_experiment(
+            database_url, direction="LONG", phase4=True
+        )
+        # Snapshot counts BEFORE the API call so we can verify read-only behavior.
+        with Session(engine) as before_session:
+            before_counts = {
+                model.__tablename__: before_session.scalar(
+                    select(func.count()).select_from(model)
+                )
+                for model in (
+                    ExperimentModel,
+                    ExperimentResultModel,
+                    ExperimentEquityPointModel,
+                )
+            }
+        app = create_app(engine=engine, registry=_registry())
+        with TestClient(app) as client:
+            response = client.get(
+                f"/api/v1/experiments/{experiment_id}/price-analysis"
+            )
+            assert response.status_code == 200, response.text
+            payload = response.json()
+            assert payload["tradingWindow"]["start"].endswith("Z")
+            assert payload["tradingWindow"]["end"].endswith("Z")
+            assert len(payload["m15"]) > 0
+            assert len(payload["ema"]) > 0
+            # Phase4 LONG golden flow produces 2 Trades by design.
+            assert len(payload["trades"]) >= 1, (
+                "Completed Experiment must expose at least one trade marker"
+            )
+            diagnostics = payload["diagnostics"]
+            assert diagnostics["emaPeriod"] == PARAMETERS["ema_period"]
+            assert diagnostics["warmUpBars"] == 100
+            assert diagnostics["truncated"] is False
+            assert diagnostics["snapshotFingerprint"]
+            assert diagnostics["m15EligibleCount"] == diagnostics["m15ReturnedCount"]
+            # Trade markers come from persisted rows; verify shape per-trade
+            for trade in payload["trades"]:
+                assert trade["direction"] == "LONG"
+                assert trade["entry"]["t"].endswith("Z")
+                assert trade["exit"] is not None
+                assert trade["entry"]["price"]
+                assert trade["stop"] is not None
+                assert trade["stop"]["price"]
+                assert trade["stop"]["from"].endswith("Z")
+                assert trade["stop"]["to"].endswith("Z")
+                assert trade["target"] is not None
+                assert isinstance(trade["target"]["price"], str)
+            # Reference facts come from rationale.
+            assert len(payload["reference"]) == len(payload["trades"])
+            for fact in payload["reference"]:
+                assert fact["reference"]["t"].endswith("Z")
+                assert fact["sweep"]["t"].endswith("Z")
+                assert fact["confirmation"]["t"].endswith("Z")
+        # Read-only guarantee: counts unchanged after the API call
+        with Session(engine) as after_session:
+            after_counts = {
+                model.__tablename__: after_session.scalar(
+                    select(func.count()).select_from(model)
+                )
+                for model in (
+                    ExperimentModel,
+                    ExperimentResultModel,
+                    ExperimentEquityPointModel,
+                )
+            }
+            assert after_counts == before_counts, (
+                "GET /price-analysis must not mutate Experiment or result tables"
+            )
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.price_analysis
+def test_price_analysis_returns_404_for_missing_experiment(database_url):
+    engine = configure_utc_session_timezone(create_engine(database_url))
+    try:
+        app = create_app(engine=engine, registry=_registry())
+        with TestClient(app) as client:
+            bogus = "00000000-0000-0000-0000-000000000000"
+            response = client.get(f"/api/v1/experiments/{bogus}/price-analysis")
+            assert response.status_code == 404, response.text
+            body = response.json()
+            error = body.get("error") or body.get("detail", {}).get("error", {})
+            assert error["code"] == "NOT_FOUND"
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.price_analysis
+def test_price_analysis_returns_409_for_pending_experiment(database_url):
+    """Pending Experiments must return RESULT_NOT_READY before completion."""
+    engine = configure_utc_session_timezone(create_engine(database_url))
+    try:
+        experiment_id = _create(engine)
+        app = create_app(engine=engine, registry=_registry(), runner=GatedRunner())
+        with TestClient(app) as client:
+            response = client.get(
+                f"/api/v1/experiments/{experiment_id}/price-analysis"
+            )
+            assert response.status_code == 409, response.text
+            body = response.json()
+            error = body.get("error") or body.get("detail", {}).get("error", {})
+            assert error["code"] == "RESULT_NOT_READY"
     finally:
         engine.dispose()

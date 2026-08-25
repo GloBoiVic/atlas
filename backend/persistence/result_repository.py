@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from .models import (
     ExperimentEquityPointModel,
+    ExperimentGapDecisionModel,
     ExperimentModel,
     ExperimentResultModel,
     FillModel,
@@ -65,6 +66,17 @@ class ExperimentResultRepository:
                 select(ExperimentEquityPointModel)
                 .where(ExperimentEquityPointModel.experiment_id == experiment_id)
                 .order_by(ExperimentEquityPointModel.sequence_number)
+            ).all()
+        )
+
+    def gap_decisions(
+        self, session: Session, experiment_id: UUID
+    ) -> tuple[ExperimentGapDecisionModel, ...]:
+        return tuple(
+            session.scalars(
+                select(ExperimentGapDecisionModel)
+                .where(ExperimentGapDecisionModel.experiment_id == experiment_id)
+                .order_by(ExperimentGapDecisionModel.sequence)
             ).all()
         )
 

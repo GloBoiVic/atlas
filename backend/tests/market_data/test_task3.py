@@ -1,5 +1,6 @@
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from uuid import uuid4
 
 import pytest
 
@@ -8,6 +9,7 @@ from backend.domain.market_data import (
     FINGERPRINT_SCHEMA,
     SESSION_POLICY,
     Bar,
+    DatasetSnapshot,
     InputError,
     Instrument,
     PriceComponent,
@@ -16,13 +18,25 @@ from backend.domain.market_data import (
     VenueInstrument,
 )
 from backend.domain.strategy import StrategyContext
-from backend.market_data.aggregation import AggregationError, aggregate_m1_to_m15
-from backend.market_data.coverage import MissingMinute, coalesce_gaps, validate_coverage
+from backend.market_data.aggregation import aggregate_m1_to_m15
+from backend.market_data.coverage import (
+    MissingMinute,
+    coalesce_gaps,
+    diagnostic_payloads,
+    validate_coverage,
+)
 from backend.market_data.fingerprint import canonical_decimal, dataset_fingerprint
 from backend.market_data.session_calendar import (
     classify_minute,
     eligible_m15_windows,
     required_warmup_range,
+)
+from backend.market_data.session_policy import (
+    EXPECTED_DATA,
+    OANDA_EUR_USD_POLICY,
+    UNAVAILABLE_SESSION,
+    ExpectedSessionPolicy,
+    SessionException,
 )
 
 
@@ -55,6 +69,63 @@ def test_ny_daily_break_and_dst_and_weekend_are_policy_classified() -> None:
     assert not classify_minute(datetime(2026, 7, 6, 20, 59, tzinfo=UTC)).open
     assert classify_minute(datetime(2026, 7, 6, 21, 5, tzinfo=UTC)).open
     assert not classify_minute(datetime(2026, 1, 10, 12, 0, tzinfo=UTC)).open
+
+
+def test_versioned_policy_returns_stable_classification_reason_and_version() -> None:
+    weekday = OANDA_EUR_USD_POLICY.classify_minute(
+        datetime(2026, 1, 5, 21, 0, tzinfo=UTC)
+    )
+    maintenance = OANDA_EUR_USD_POLICY.classify_minute(
+        datetime(2026, 1, 5, 21, 59, tzinfo=UTC)
+    )
+    weekend = OANDA_EUR_USD_POLICY.classify_minute(
+        datetime(2026, 1, 10, 12, 0, tzinfo=UTC)
+    )
+    assert weekday == (EXPECTED_DATA, "EXPECTED_PROVIDER_SESSION", "OANDA_FX_NY_V1")
+    assert maintenance == (
+        UNAVAILABLE_SESSION,
+        "PROVIDER_MAINTENANCE_ROLLOVER",
+        "OANDA_FX_NY_V1",
+    )
+    assert weekend == (UNAVAILABLE_SESSION, "WEEKLY_CLOSURE", "OANDA_FX_NY_V1")
+
+
+def test_policy_uses_iana_dst_not_a_fixed_utc_offset() -> None:
+    before_dst = OANDA_EUR_USD_POLICY.classify_minute(
+        datetime(2026, 3, 9, 20, 59, tzinfo=UTC)
+    )
+    after_dst = OANDA_EUR_USD_POLICY.classify_minute(
+        datetime(2026, 3, 9, 21, 5, tzinfo=UTC)
+    )
+    assert before_dst[0] == UNAVAILABLE_SESSION
+    assert after_dst[0] == EXPECTED_DATA
+
+
+def test_effective_dated_exception_is_explicit_and_missing_data_is_not_inference(
+) -> None:
+    policy = ExpectedSessionPolicy(
+        "TEST_V1",
+        "America/New_York",
+        16 * 60 + 59,
+        17 * 60 + 5,
+        (
+            SessionException(
+                date(2026, 1, 5),
+                date(2026, 1, 5),
+                0,
+                1440,
+                UNAVAILABLE_SESSION,
+                "DECLARED_HOLIDAY",
+            ),
+        ),
+    )
+    assert policy.classify_minute(datetime(2026, 1, 5, 15, tzinfo=UTC)) == (
+        UNAVAILABLE_SESSION,
+        "DECLARED_HOLIDAY",
+        "TEST_V1",
+    )
+    # The empty V1 exception table does not learn a holiday from absent data.
+    assert OANDA_EUR_USD_POLICY.exceptions == ()
 
 
 def test_warmup_counts_eligible_windows_not_closure_minutes() -> None:
@@ -94,17 +165,20 @@ def test_coverage_detects_missing_components_and_scheduled_observation() -> None
 def test_aggregation_uses_exact_boundaries_and_never_forward_fills() -> None:
     start = at(5, 10)
     bars = tuple(m1(start + timedelta(minutes=i), n=i + 1) for i in range(15))
-    result = aggregate_m1_to_m15(
+    result, diagnostics = aggregate_m1_to_m15(
         bars, PriceComponent.MID, start, start + timedelta(minutes=15)
     )
     assert len(result) == 1
+    assert diagnostics == []
     assert result[0].open == Decimal("1")
     assert result[0].close == Decimal("15.1")
     assert result[0].volume == Decimal("120")
-    with pytest.raises(AggregationError):
-        aggregate_m1_to_m15(
-            bars[:-1], PriceComponent.MID, start, start + timedelta(minutes=15)
-        )
+    incomplete, diagnostics = aggregate_m1_to_m15(
+        bars[:-1], PriceComponent.MID, start, start + timedelta(minutes=15)
+    )
+    assert incomplete == []
+    assert diagnostics[0].reason == "UNEXPECTED_MISSING_DATA"
+    assert diagnostics[0].missing_times == (start + timedelta(minutes=14),)
 
 
 def test_aggregation_allows_daily_break_minutes_to_be_absent() -> None:
@@ -117,7 +191,7 @@ def test_aggregation_allows_daily_break_minutes_to_be_absent() -> None:
     ]
     bars = tuple(m1(moment, n=index + 1) for index, moment in enumerate(open_minutes))
 
-    result = aggregate_m1_to_m15(bars, PriceComponent.MID, start, end)
+    result, diagnostics = aggregate_m1_to_m15(bars, PriceComponent.MID, start, end)
 
     assert len(open_minutes) == 24
     assert [bar.start_time for bar in result] == [start, start + timedelta(minutes=15)]
@@ -141,7 +215,7 @@ def test_aggregation_allows_friday_close_minutes_to_be_absent() -> None:
     ]
     bars = tuple(m1(moment, n=index + 1) for index, moment in enumerate(open_minutes))
 
-    result = aggregate_m1_to_m15(bars, PriceComponent.MID, start, end)
+    result, diagnostics = aggregate_m1_to_m15(bars, PriceComponent.MID, start, end)
 
     assert len(open_minutes) == 14
     assert len(result) == 1
@@ -154,9 +228,9 @@ def test_derived_m15_mid_is_strategy_input_but_other_components_are_not() -> Non
     start = at(5, 10)
     bars = tuple(m1(start + timedelta(minutes=i)) for i in range(15))
     end = start + timedelta(minutes=15)
-    mid = aggregate_m1_to_m15(bars, PriceComponent.MID, start, end)
+    mid, _diagnostics = aggregate_m1_to_m15(bars, PriceComponent.MID, start, end)
 
-    assert StrategyContext(end, Instrument.EUR_USD, mid).bars == mid
+    assert StrategyContext(end, Instrument.EUR_USD, tuple(mid)).bars == tuple(mid)
     with pytest.raises(InputError):
         StrategyContext(
             end,
@@ -169,8 +243,31 @@ def test_derived_m15_mid_is_strategy_input_but_other_components_are_not() -> Non
                 PriceComponent.BID,
                 start,
                 end,
-            ),
+            )[0],
         )
+
+
+def test_aggregation_coalesces_adjacent_missing_intervals_and_is_repeatable() -> None:
+    start = at(5, 10)
+    bars = tuple(
+        m1(start + timedelta(minutes=i))
+        for i in range(45)
+        if i not in (1, 16)
+    )
+    end = start + timedelta(minutes=45)
+    first = aggregate_m1_to_m15(bars, PriceComponent.MID, start, end)
+    second = aggregate_m1_to_m15(bars, PriceComponent.MID, start, end)
+    assert first == second
+    eligible, diagnostics = first
+    assert len(eligible) == 1
+    assert len(diagnostics) == 1
+    assert diagnostics[0].interval_start == start
+    assert diagnostics[0].interval_end == start + timedelta(minutes=30)
+    assert diagnostics[0].missing_components == (PriceComponent.MID,)
+    assert diagnostics[0].missing_times == (
+        start + timedelta(minutes=1),
+        start + timedelta(minutes=16),
+    )
 
 
 def test_fingerprint_decimal_canonicalization_and_repeatability() -> None:
@@ -203,3 +300,39 @@ def test_fingerprint_decimal_canonicalization_and_repeatability() -> None:
     assert first == "8ba3453a7ee49acd4f06e884a57a5220036c61f2c7b3ed3696ee4f48da5a24a4"
     assert len(first) == 64
     assert FINGERPRINT_SCHEMA == "ATLAS_DATASET_SHA256_V1"
+
+
+def test_snapshot_integrity_and_fingerprint_bind_policy_version() -> None:
+    venue = VenueInstrument(Instrument.EUR_USD, Provider.OANDA, "EUR_USD")
+    start, end = at(5, 10), at(5, 12)
+    bars = tuple(
+        m1(start + timedelta(minutes=i), PriceComponent.MID, i + 1)
+        for i in range(2)
+    )
+    fingerprint = dataset_fingerprint(
+        venue, start, end, (PriceComponent.MID,), bars,
+        session_policy=SESSION_POLICY, alignment_convention=ALIGNMENT_CONVENTION,
+    )
+    alternate = dataset_fingerprint(
+        venue, start, end, (PriceComponent.MID,), bars,
+        session_policy="OANDA_FX_NY_V2", alignment_convention=ALIGNMENT_CONVENTION,
+    )
+    assert fingerprint != alternate
+    snapshot = DatasetSnapshot(
+        uuid4(), venue, Timeframe.M1,
+        (PriceComponent.ASK, PriceComponent.BID, PriceComponent.MID), start, end,
+        ALIGNMENT_CONVENTION, SESSION_POLICY, FINGERPRINT_SCHEMA, "a" * 64,
+        {"status": "VALID", "policy_version": SESSION_POLICY}, end,
+    )
+    assert snapshot.integrity_summary["policy_version"] == SESSION_POLICY
+
+
+def test_diagnostic_surface_is_bounded_and_retains_policy_reason_components() -> None:
+    start = at(5, 10)
+    bars = tuple(m1(start + timedelta(minutes=i)) for i in range(15))
+    report = validate_coverage(start, start + timedelta(minutes=15), bars[:-1])
+    diagnostics, truncated = diagnostic_payloads(report, limit=1)
+    assert truncated is True
+    assert diagnostics[0]["reason"] == "UNEXPECTED_MISSING_DATA"
+    assert diagnostics[0]["policy_version"] == SESSION_POLICY
+    assert diagnostics[0]["missing_components"] == ["ASK", "BID", "MID"]

@@ -11,6 +11,8 @@ import {
   Settings2,
 } from 'lucide-react';
 import { ApiStatus } from './api-status';
+import { DISPLAY_TIME_ZONES } from '../lib/time';
+import { useDisplayTimeZone } from '../app/providers';
 
 const navigation = [
   { label: 'Dashboard', href: '#', icon: Activity, disabled: true },
@@ -23,9 +25,10 @@ const navigation = [
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const { timeZone, setTimeZone } = useDisplayTimeZone();
   return (
-    <div className="min-h-screen bg-[var(--atlas-background)] text-[var(--atlas-ink)]">
-      <header className="border-b border-slate-200 bg-white">
+    <div className="min-h-screen bg-atlas-background text-atlas-foreground">
+      <header className="border-b border-atlas-border bg-atlas-surface">
         <div className="mx-auto flex min-h-16 max-w-[1440px] items-center justify-between gap-6 px-6 lg:px-10">
           <div className="flex min-w-0 items-center gap-8">
             <Link
@@ -56,16 +59,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
           <div className="flex shrink-0 items-center gap-4 text-sm">
             <ApiStatus />
-            <button
-              aria-label="Settings"
-              className="rounded-md p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
-            >
+            <label className="flex items-center gap-2 text-xs text-atlas-foreground-muted" title="Display timezone">
               <Settings2 aria-hidden className="size-4" />
-            </button>
+              <span className="sr-only">Display timezone</span>
+              <select aria-label="Display timezone" value={timeZone} onChange={(e) => setTimeZone(e.target.value as typeof timeZone)} className="rounded-md border border-atlas-control-border bg-atlas-surface px-2 py-1.5 text-xs text-atlas-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-atlas-primary">
+                {DISPLAY_TIME_ZONES.map((zone) => <option key={zone}>{zone}</option>)}
+              </select>
+            </label>
           </div>
         </div>
       </header>
       <main className="mx-auto max-w-[1440px] px-6 py-12 lg:px-10">
+        <p className="mb-6 text-xs text-atlas-foreground-muted" role="status">Times shown in {timeZone}</p>
         {children}
       </main>
     </div>

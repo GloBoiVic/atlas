@@ -2,12 +2,11 @@
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
 
-from backend.domain.market_data import SESSION_POLICY
+from .session_policy import OANDA_EUR_USD_POLICY
 
-NEW_YORK = ZoneInfo("America/New_York")
 MINUTE = timedelta(minutes=1)
+SESSION_POLICY = OANDA_EUR_USD_POLICY.version
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,24 +25,10 @@ def _utc_minute(value: datetime) -> datetime:
 
 
 def classify_minute(start: datetime) -> SessionMinute:
-    """Classify a UTC minute without applying holiday assumptions."""
+    """Compatibility adapter over the single versioned policy seam."""
     start = _utc_minute(start)
-    local = start.astimezone(NEW_YORK)
-    weekday = local.weekday()  # Monday=0, Sunday=6
-    local_minute = local.hour * 60 + local.minute
-    friday_close = 16 * 60 + 59
-    sunday_open = 17 * 60 + 5
-    daily_break = 16 * 60 + 59 <= local.hour * 60 + local.minute < 17 * 60 + 5
-    weekend = (
-        (weekday == 4 and local_minute >= friday_close)
-        or weekday == 5
-        or (weekday == 6 and local_minute < sunday_open)
-    )
-    if weekend:
-        return SessionMinute(start, False, "WEEKEND")
-    if daily_break:
-        return SessionMinute(start, False, "DAILY_BREAK")
-    return SessionMinute(start, True)
+    classification, reason, _version = OANDA_EUR_USD_POLICY.classify_minute(start)
+    return SessionMinute(start, classification == "EXPECTED_DATA", reason)
 
 
 def is_session_open_minute(start: datetime) -> bool:
@@ -64,7 +49,11 @@ def eligible_m15_windows(
         window_end = cursor + timedelta(minutes=15)
         if window_end > start and cursor < end:
             if any(
-                is_session_open_minute(cursor + MINUTE * offset) for offset in range(15)
+                OANDA_EUR_USD_POLICY.classify_minute(
+                    cursor + MINUTE * offset
+                )[0]
+                == "EXPECTED_DATA"
+                for offset in range(15)
             ):
                 windows.append((cursor, window_end))
         cursor = window_end
@@ -90,14 +79,16 @@ def required_warmup_range(
     while count < warm_up_m15_bars:
         cursor -= timedelta(minutes=15)
         if any(
-            is_session_open_minute(cursor + MINUTE * offset) for offset in range(15)
+            OANDA_EUR_USD_POLICY.classify_minute(cursor + MINUTE * offset)[0]
+            == "EXPECTED_DATA"
+            for offset in range(15)
         ):
             count += 1
     return cursor, requested_end
 
 
 __all__ = [
-    "NEW_YORK",
+    "OANDA_EUR_USD_POLICY",
     "SESSION_POLICY",
     "SessionMinute",
     "classify_minute",

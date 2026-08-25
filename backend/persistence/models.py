@@ -9,6 +9,7 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import (
+    BigInteger,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -22,6 +23,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.sql.naming import conv
 
 from .base import Base
 
@@ -181,14 +183,14 @@ class MarketBarModel(Base):
 class DatasetSnapshotModel(Base):
     __tablename__ = "dataset_snapshots"
     __table_args__ = (
-        CheckConstraint("base_resolution = 'M1'", name="base_resolution_m1"),
-        CheckConstraint("components = '[\"ASK\",\"BID\",\"MID\"]'::jsonb", name="fixed_components"),
+        CheckConstraint("(snapshot_schema = 'ATLAS_HISTORICAL_SNAPSHOT_V1' AND base_resolution = 'M1') OR (snapshot_schema = 'ATLAS_HISTORICAL_SIMULATION_SNAPSHOT_V2' AND base_resolution = 'M15')", name="snapshot_resolution_by_schema"),
+        CheckConstraint("(snapshot_schema = 'ATLAS_HISTORICAL_SNAPSHOT_V1' AND components = '[\"ASK\",\"BID\",\"MID\"]'::jsonb) OR (snapshot_schema = 'ATLAS_HISTORICAL_SIMULATION_SNAPSHOT_V2' AND components = '[\"MID\"]'::jsonb)", name="components_by_schema"),
         CheckConstraint("alignment_convention = 'UTC_HALF_OPEN_V1'", name="alignment_v1"),
         CheckConstraint("session_policy = 'OANDA_FX_NY_V1'", name="session_policy_v1"),
-        CheckConstraint("fingerprint_schema = 'ATLAS_DATASET_SHA256_V1'", name="fingerprint_schema_v1"),
+        CheckConstraint("(snapshot_schema = 'ATLAS_HISTORICAL_SNAPSHOT_V1' AND fingerprint_schema = 'ATLAS_DATASET_SHA256_V1') OR (snapshot_schema = 'ATLAS_HISTORICAL_SIMULATION_SNAPSHOT_V2' AND fingerprint_schema = 'ATLAS_DATASET_SHA256_V2')", name="fingerprint_schema_by_snapshot"),
         CheckConstraint("coverage_start = date_trunc('minute', coverage_start) AND coverage_end = date_trunc('minute', coverage_end) AND coverage_end > coverage_start", name="valid_coverage_range"),
         CheckConstraint("fingerprint ~ '^[0-9a-f]{64}$'", name="sha256_fingerprint"),
-        CheckConstraint("jsonb_typeof(integrity_summary) = 'object' AND integrity_summary ?& ARRAY['status','expected_open_minutes','expected_closure_minutes','member_minutes','bar_count','unexpected_gap_count','unexpected_observation_count','session_policy'] AND integrity_summary->>'status' = 'VALID' AND integrity_summary->>'session_policy' = 'OANDA_FX_NY_V1'", name="valid_integrity_summary"),
+        CheckConstraint("jsonb_typeof(integrity_summary) = 'object' AND integrity_summary->>'status' = 'VALID' AND ((snapshot_schema = 'ATLAS_HISTORICAL_SNAPSHOT_V1' AND integrity_summary ?& ARRAY['expected_open_minutes','expected_closure_minutes','member_minutes','bar_count','unexpected_gap_count','unexpected_observation_count','session_policy'] AND integrity_summary->>'session_policy' = 'OANDA_FX_NY_V1') OR (snapshot_schema = 'ATLAS_HISTORICAL_SIMULATION_SNAPSHOT_V2' AND integrity_summary->>'policy_version' = 'ATLAS_HISTORICAL_GAP_POLICY_V1'))", name="valid_integrity_summary"),
         UniqueConstraint("fingerprint"),
     )
 
@@ -206,6 +208,7 @@ class DatasetSnapshotModel(Base):
     session_policy: Mapped[str] = mapped_column(String(30), nullable=False)
     fingerprint_schema: Mapped[str] = mapped_column(String(40), nullable=False)
     fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    snapshot_schema: Mapped[str] = mapped_column(String(100), nullable=False, server_default=text("'ATLAS_HISTORICAL_SNAPSHOT_V1'"))
     integrity_summary: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
@@ -222,6 +225,131 @@ class DatasetSnapshotBarModel(Base):
     market_bar_id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True), ForeignKey("market_bars.id", ondelete="RESTRICT"), nullable=False
     )
+
+
+class DatasetSnapshotAnalyticalBarModel(Base):
+    __tablename__ = "dataset_snapshot_analytical_bars"
+    __table_args__ = (
+        PrimaryKeyConstraint("dataset_snapshot_id", "sequence"),
+        UniqueConstraint("dataset_snapshot_id", "start_time", "content_fingerprint"),
+        CheckConstraint(
+            "sequence > 0 AND resolution = 'M15' AND price_component = 'MID' "
+            "AND complete IS TRUE AND end_time = start_time + interval '15 minutes' "
+            "AND content_fingerprint ~ '^[0-9a-f]{64}$'",
+            name="valid_analytical_member",
+        ),
+    )
+    dataset_snapshot_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("dataset_snapshots.id", ondelete="RESTRICT"), nullable=False)
+    sequence: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    end_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    resolution: Mapped[str] = mapped_column(String(3), nullable=False, server_default=text("'M15'"))
+    price_component: Mapped[str] = mapped_column(String(3), nullable=False, server_default=text("'MID'"))
+    open_price: Mapped[Decimal] = mapped_column(Numeric(20, 10), nullable=False)
+    high_price: Mapped[Decimal] = mapped_column(Numeric(20, 10), nullable=False)
+    low_price: Mapped[Decimal] = mapped_column(Numeric(20, 10), nullable=False)
+    close_price: Mapped[Decimal] = mapped_column(Numeric(20, 10), nullable=False)
+    volume: Mapped[Decimal | None] = mapped_column(Numeric(20, 10))
+    complete: Mapped[bool] = mapped_column(nullable=False)
+    source_request_id: Mapped[str | None] = mapped_column(String(200))
+    content_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class DatasetSnapshotExecutionObservationModel(Base):
+    __tablename__ = "dataset_snapshot_execution_observations"
+    __table_args__ = (
+        PrimaryKeyConstraint("dataset_snapshot_id", "sequence"),
+        UniqueConstraint("dataset_snapshot_id", "market_bar_id"),
+        CheckConstraint(
+            "sequence > 0 AND price_component IN ('BID','ASK') "
+            "AND end_time = start_time + interval '1 minute' "
+            "AND observation_fingerprint ~ '^[0-9a-f]{64}$'",
+            name=conv(
+                "ck_dataset_snapshot_execution_observations_valid_execut_5670"
+            ),
+        ),
+    )
+    dataset_snapshot_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("dataset_snapshots.id", ondelete="RESTRICT"), nullable=False)
+    sequence: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    market_bar_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("market_bars.id", ondelete="RESTRICT"), nullable=False)
+    price_component: Mapped[str] = mapped_column(String(3), nullable=False)
+    start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    end_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    observation_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class DatasetSnapshotGapModel(Base):
+    __tablename__ = "dataset_snapshot_gaps"
+    __table_args__ = (
+        PrimaryKeyConstraint("dataset_snapshot_id", "sequence"),
+        CheckConstraint(
+            "sequence > 0 AND end_time > start_time AND resolution IN ('M1','M15') "
+            "AND classification IN ('NON_BLOCKING','RESOLVABLE','BLOCKING','EXTENDED_OUTAGE') "
+            "AND policy_version = 'ATLAS_HISTORICAL_GAP_POLICY_V1'",
+            name="valid_snapshot_gap",
+        ),
+    )
+    dataset_snapshot_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("dataset_snapshots.id", ondelete="RESTRICT"), nullable=False)
+    sequence: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    end_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    price_component: Mapped[str | None] = mapped_column(String(3))
+    resolution: Mapped[str] = mapped_column(String(3), nullable=False)
+    source: Mapped[str] = mapped_column(String(100), nullable=False)
+    reason: Mapped[str] = mapped_column(String(200), nullable=False)
+    classification: Mapped[str] = mapped_column(String(30), nullable=False)
+    affected_state: Mapped[str | None] = mapped_column(String(100))
+    affected_event: Mapped[str | None] = mapped_column(String(100))
+    policy_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    blocked: Mapped[bool] = mapped_column(nullable=False)
+
+
+class HistoricalDataLoadRequestModel(Base):
+    __tablename__ = "historical_data_load_requests"
+    __table_args__ = (
+        CheckConstraint("operation = 'LOAD_MISSING'", name="load_operation"),
+        CheckConstraint("status IN ('PENDING','RUNNING','COMPLETED','FAILED')", name="load_status"),
+        CheckConstraint("trading_end > trading_start AND load_start <= trading_start AND load_end = trading_end", name="load_order"),
+        CheckConstraint("extract(epoch from trading_start)::bigint % 900 = 0 AND extract(epoch from trading_end)::bigint % 900 = 0", name="trading_alignment"),
+        CheckConstraint("extract(epoch from load_start)::bigint % 60 = 0 AND extract(epoch from load_end)::bigint % 60 = 0", name="load_alignment"),
+        CheckConstraint("load_end - load_start <= interval '90 days'", name="load_maximum"),
+        CheckConstraint("atlas_historical_ranges_valid(fetched_ranges) AND atlas_historical_ranges_valid(committed_ranges)", name="progress_arrays"),
+        CheckConstraint("jsonb_typeof(coverage_summary) = 'object' OR coverage_summary IS NULL", name="coverage_object"),
+        CheckConstraint("jsonb_typeof(experiment_validation) = 'object' OR experiment_validation IS NULL", name="validation_object"),
+        CheckConstraint("inserted >= 0 AND reactivated >= 0 AND unchanged >= 0 AND incomplete_minute_count >= 0", name="nonnegative_counters"),
+        CheckConstraint("failure_category IS NULL OR failure_category IN ('VALIDATION','MARKET_DATA','PERSISTENCE','RUNTIME')", name="load_failure_category"),
+        CheckConstraint("failure_code IS NULL OR failure_code ~ '^[A-Z0-9_]+$'", name="load_failure_code"),
+        CheckConstraint("failure_detail IS NULL OR (length(failure_detail) BETWEEN 1 AND 500 AND failure_detail !~ '[[:cntrl:]]')", name="load_failure_detail"),
+        CheckConstraint("(status = 'PENDING' AND started_at IS NULL AND finished_at IS NULL AND failure_category IS NULL AND failure_code IS NULL AND failure_detail IS NULL AND snapshot_id IS NULL AND coverage_summary IS NULL AND experiment_validation IS NULL) OR (status = 'RUNNING' AND started_at IS NOT NULL AND finished_at IS NULL AND failure_category IS NULL AND failure_code IS NULL AND failure_detail IS NULL) OR (status = 'COMPLETED' AND started_at IS NOT NULL AND finished_at IS NOT NULL AND snapshot_id IS NOT NULL AND coverage_summary->>'valid' = 'true' AND experiment_validation->>'valid' = 'true' AND failure_category IS NULL AND failure_code IS NULL AND failure_detail IS NULL) OR (status = 'FAILED' AND finished_at IS NOT NULL AND failure_category IS NOT NULL AND failure_code IS NOT NULL AND failure_detail IS NOT NULL)", name="load_state_consistency"),
+        Index("uq_historical_data_load_requests_active", text("(1)"), unique=True, postgresql_where=text("status IN ('PENDING','RUNNING')")),
+        Index("ix_historical_data_load_requests_status", "status"),
+        Index("ix_historical_data_load_requests_created_at_id_desc", text("created_at DESC"), text("id DESC")),
+    )
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    operation: Mapped[str] = mapped_column(String(30), nullable=False, server_default=text("'LOAD_MISSING'"))
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'PENDING'"))
+    strategy_version_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("strategy_versions.id", ondelete="RESTRICT"), nullable=False)
+    trading_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    trading_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    load_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    load_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    fetched_ranges: Mapped[list[dict[str, str]]] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    committed_ranges: Mapped[list[dict[str, str]]] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    inserted: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("0"))
+    reactivated: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("0"))
+    unchanged: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("0"))
+    incomplete_minute_count: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("0"))
+    coverage_summary: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    experiment_validation: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    snapshot_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("dataset_snapshots.id", ondelete="RESTRICT"), nullable=True)
+    failure_category: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    failure_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    failure_detail: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class ExperimentModel(Base):
@@ -482,6 +610,7 @@ class ExperimentResultModel(Base):
         CheckConstraint("result_schema_version NOT LIKE 'PHASE5_%' OR metric_schema_version <> 'LEGACY_UNCOMPUTED'", name="result_phase5_metric_schema"),
         CheckConstraint("profit_factor IS NULL OR profit_factor >= 0", name="result_profit_factor_nonnegative"),
         CheckConstraint("win_rate IS NULL OR (win_rate >= 0 AND win_rate <= 1)", name="result_win_rate_range"),
+        CheckConstraint("jsonb_typeof(result_quality) = 'object' AND result_quality->>'schema' = 'ATLAS_RESULT_QUALITY_V1' AND result_quality->>'value' IN ('DETERMINED','DETERMINED_WITH_GAPS','CONSERVATIVE_AMBIGUITY_RESOLVED')", name="result_quality_values"),
     )
     experiment_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("experiments.id", ondelete="RESTRICT"), primary_key=True)
     result_schema_version: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -511,3 +640,33 @@ class ExperimentResultModel(Base):
     metric_schema_version: Mapped[str] = mapped_column(
         String(100), nullable=False, server_default=text("'LEGACY_UNCOMPUTED'")
     )
+    result_quality: Mapped[dict[str, str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'{\"schema\": \"ATLAS_RESULT_QUALITY_V1\", \"value\": \"DETERMINED\"}'::jsonb"),
+    )
+
+
+class ExperimentGapDecisionModel(Base):
+    __tablename__ = "experiment_gap_decisions"
+    __table_args__ = (
+        PrimaryKeyConstraint("experiment_id", "sequence"),
+        CheckConstraint("sequence > 0 AND end_time > start_time", name="gap_decision_interval"),
+        CheckConstraint("resolution IN ('M1','M15') AND (price_component IS NULL OR price_component IN ('BID','ASK','MID'))", name="gap_decision_market_shape"),
+        CheckConstraint("classification IN ('NON_BLOCKING','RESOLVABLE','BLOCKING','EXTENDED_OUTAGE')", name="gap_decision_classification"),
+        CheckConstraint("policy_version = 'ATLAS_HISTORICAL_GAP_POLICY_V1' AND rule_version <> ''", name="gap_decision_policy_version"),
+        CheckConstraint("jsonb_typeof(details) = 'object'", name="gap_decision_details_object"),
+    )
+    experiment_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("experiments.id", ondelete="RESTRICT"), nullable=False)
+    sequence: Mapped[int] = mapped_column(nullable=False)
+    start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    end_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    resolution: Mapped[str] = mapped_column(String(3), nullable=False)
+    price_component: Mapped[str | None] = mapped_column(String(3))
+    classification: Mapped[str] = mapped_column(String(30), nullable=False)
+    rule_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    policy_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    affected_state: Mapped[str | None] = mapped_column(String(100))
+    affected_event: Mapped[str | None] = mapped_column(String(100))
+    blocked: Mapped[bool] = mapped_column(nullable=False)
+    details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)

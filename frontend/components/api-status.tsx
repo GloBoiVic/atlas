@@ -40,7 +40,7 @@ export function ApiStatus() {
       <span className="status status-danger" role="status">
         <AlertCircle aria-hidden className="size-3.5" /> API unavailable
         <button
-          className="ml-1 underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-700"
+          className="ml-1 underline underline-offset-2 focus-visible:outline-none"
           onClick={check}
         >
           Retry
@@ -49,8 +49,9 @@ export function ApiStatus() {
     );
   }
   return (
-    <span className="status status-success" role="status">
-      <CheckCircle2 aria-hidden className="size-3.5" /> PAPER · connected
+    <span className="status status-primary" role="status">
+      <CheckCircle2 aria-hidden className="size-3.5 text-atlas-positive" />{' '}
+      PAPER · connected
     </span>
   );
 }

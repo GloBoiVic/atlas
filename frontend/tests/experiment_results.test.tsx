@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   getEquity: vi.fn(),
   listTrades: vi.fn(),
   getTrade: vi.fn(),
+  getPriceAnalysis: vi.fn(),
   createChart: vi.fn(),
   route: { experimentId: 'experiment-1', sequenceNumber: '1' },
 }));
@@ -35,6 +36,7 @@ vi.mock('../lib/api-client', () => ({
     getEquity: mocks.getEquity,
     listTrades: mocks.listTrades,
     getTrade: mocks.getTrade,
+    getPriceAnalysis: mocks.getPriceAnalysis,
   },
   ApiTransportTimeoutError: class ApiTransportTimeoutError extends Error {},
 }));
@@ -42,6 +44,7 @@ vi.mock('lightweight-charts', () => ({
   ColorType: { Solid: 0 },
   LineSeries: {},
   CandlestickSeries: {},
+  createSeriesMarkers: vi.fn(),
   createChart: mocks.createChart,
 }));
 import {
@@ -107,6 +110,37 @@ beforeEach(() => {
     samplingPolicy: 'FULL_CANONICAL_SERIES',
   });
   mocks.listTrades.mockResolvedValue({ items: [] });
+  mocks.getPriceAnalysis.mockResolvedValue({
+    m15: [
+      {
+        t: '2024-01-01T00:15:00Z',
+        o: '1.1',
+        h: '1.102',
+        l: '1.099',
+        c: '1.101',
+      },
+    ],
+    ema: [{ t: '2024-01-01T00:15:00Z', v: '1.1005' }],
+    tradingWindow: {
+      start: '2024-01-01T00:00:00Z',
+      end: '2024-01-02T00:00:00Z',
+    },
+    trades: [],
+    reference: [],
+    diagnostics: {
+      truncated: false,
+      emaPeriod: 20,
+      warmUpBars: 20,
+      snapshotFingerprint: 'snapshot',
+      m15EligibleCount: 1,
+      m15ReturnedCount: 1,
+      tradeEligibleCount: 0,
+      tradeReturnedCount: 0,
+      omittedRange: null,
+      omittedM15Count: 0,
+      omittedTradeCount: 0,
+    },
+  });
 });
 
 afterEach(() => cleanup());
@@ -125,11 +159,78 @@ describe('completed Experiment result states', () => {
     expect(
       screen.getByText('No executed Trades for this Experiment.'),
     ).toBeInTheDocument();
+    expect(
+      await screen.findByText('No trades were generated in this period.'),
+    ).toBeInTheDocument();
     await waitFor(() => expect(mocks.createChart).toHaveBeenCalledTimes(2));
+    const priceChartOptions = mocks.createChart.mock.calls.find(
+      ([, options]) => options?.timeScale?.tickMarkFormatter,
+    )?.[1];
+    expect(priceChartOptions.localization.timeFormatter(1704068100)).toContain(
+      'CST',
+    );
+    expect(mocks.getPriceAnalysis).toHaveBeenCalledWith('experiment-1');
 
     expect(screen.getByRole('heading', { name: 'Trades' })).toBeInTheDocument();
     unmount();
     expect(mocks.createChart.mock.results[0].value.remove).toHaveBeenCalled();
+  });
+
+  it('renders trade facts and a persistent truncation disclosure', async () => {
+    mocks.getExperiment.mockResolvedValue(completed('1'));
+    mocks.getPriceAnalysis.mockResolvedValue({
+      m15: [
+        {
+          t: '2024-01-01T00:15:00Z',
+          o: '1.1',
+          h: '1.102',
+          l: '1.099',
+          c: '1.101',
+        },
+      ],
+      ema: [{ t: '2024-01-01T00:15:00Z', v: '1.1005' }],
+      tradingWindow: {
+        start: '2024-01-01T00:00:00Z',
+        end: '2024-01-02T00:00:00Z',
+      },
+      trades: [
+        {
+          sequence: 1,
+          direction: 'LONG',
+          entry: { t: '2024-01-01T01:00:00Z', price: '1.1' },
+          exit: { t: '2024-01-01T02:00:00Z', price: '1.101' },
+          stop: {
+            price: '1.099',
+            from: '2024-01-01T01:00:00Z',
+            to: '2024-01-01T02:00:00Z',
+          },
+          target: null,
+        },
+      ],
+      reference: [],
+      diagnostics: {
+        truncated: true,
+        omittedM15Count: 3,
+        omittedTradeCount: 1,
+        omittedRange: {
+          start: '2024-01-02T00:00:00Z',
+          end: '2024-01-03T00:00:00Z',
+        },
+        emaPeriod: 20,
+        warmUpBars: 20,
+        snapshotFingerprint: 'snapshot',
+        m15EligibleCount: 4,
+        m15ReturnedCount: 1,
+        tradeEligibleCount: 2,
+        tradeReturnedCount: 1,
+      },
+    });
+    render(<ExperimentStatusPage />);
+    expect(await screen.findByText(/Chart truncated/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/M15 candles and 1 Trades omitted/),
+    ).toBeInTheDocument();
+    expect(mocks.getPriceAnalysis).toHaveBeenCalledWith('experiment-1');
   });
 });
 

@@ -1,4 +1,4 @@
-"""ATLAS_DATASET_SHA256_V1 canonical streaming fingerprint."""
+"""Canonical streaming fingerprints for immutable dataset snapshots."""
 
 import hashlib
 import json
@@ -9,6 +9,7 @@ from typing import Any
 
 from backend.domain.market_data import (
     FINGERPRINT_SCHEMA,
+    FINGERPRINT_SCHEMA_V2,
     Bar,
     PriceComponent,
     VenueInstrument,
@@ -32,9 +33,25 @@ def canonical_timestamp(value: datetime) -> str:
     return value.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _canonical_value(value: Any) -> Any:
+    """Convert nested timestamp values to the one V2 wire representation."""
+    if isinstance(value, datetime):
+        return canonical_timestamp(value)
+    if isinstance(value, dict):
+        return {key: _canonical_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_canonical_value(item) for item in value]
+    return value
+
+
 def _line(value: dict[str, Any]) -> bytes:
     return (
-        json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        json.dumps(
+            _canonical_value(value),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        )
         + "\n"
     ).encode("utf-8")
 
@@ -108,6 +125,34 @@ def dataset_fingerprint(
     return digest.hexdigest()
 
 
+def dataset_fingerprint_v2(
+    *,
+    metadata: dict[str, Any],
+    analytical_members: Iterable[dict[str, Any]],
+    execution_members: Iterable[dict[str, Any]],
+    gaps: Iterable[dict[str, Any]],
+) -> str:
+    """Hash the exact V2 contract, without imposing acquisition semantics."""
+    digest = hashlib.sha256()
+    header = dict(metadata)
+    header["schema"] = FINGERPRINT_SCHEMA_V2
+    for kind, values in (
+        ("header", (header,)),
+        ("analytical", analytical_members),
+        ("execution", execution_members),
+        ("gap", gaps),
+    ):
+        for value in values:
+            digest.update(_line({"kind": kind, "value": value}))
+    return digest.hexdigest()
+
+
+def bar_content_fingerprint(bar: Bar) -> str:
+    """Stable provider-observation fingerprint shared by V2 memberships."""
+    value = {"bar": bar.to_json(), "content_schema": "ATLAS_BAR_CONTENT_SHA256_V1"}
+    return hashlib.sha256(_line(value)).hexdigest()
+
+
 fingerprint_dataset = dataset_fingerprint
 
 __all__ = [
@@ -116,4 +161,6 @@ __all__ = [
     "canonical_timestamp",
     "dataset_fingerprint",
     "fingerprint_dataset",
+    "dataset_fingerprint_v2",
+    "bar_content_fingerprint",
 ]

@@ -38,6 +38,11 @@ class PriceComponent(StrEnum):
 ALIGNMENT_CONVENTION = "UTC_HALF_OPEN_V1"
 SESSION_POLICY = "OANDA_FX_NY_V1"
 FINGERPRINT_SCHEMA = "ATLAS_DATASET_SHA256_V1"
+SNAPSHOT_SCHEMA_V1 = "ATLAS_HISTORICAL_SNAPSHOT_V1"
+SNAPSHOT_SCHEMA_V2 = "ATLAS_HISTORICAL_SIMULATION_SNAPSHOT_V2"
+FINGERPRINT_SCHEMA_V2 = "ATLAS_DATASET_SHA256_V2"
+NATIVE_M15_CONTRACT_V1 = "OANDA_M15_NATIVE_UTC_V1"
+GAP_POLICY_V1 = "ATLAS_HISTORICAL_GAP_POLICY_V1"
 
 
 def _decimal(value: Decimal, name: str) -> Decimal:
@@ -181,6 +186,7 @@ class DatasetSnapshot:
     fingerprint: str
     integrity_summary: dict[str, Any]
     created_at: datetime
+    snapshot_schema: str = SNAPSHOT_SCHEMA_V1
 
     def __post_init__(self) -> None:
         if (
@@ -188,14 +194,26 @@ class DatasetSnapshot:
             or type(self.venue_instrument) is not VenueInstrument
         ):
             raise InputError("snapshot identity fields have invalid types")
-        if self.base_resolution is not Timeframe.M1:
-            raise InputError("snapshot base_resolution must be M1")
-        if type(self.components) is not tuple or self.components != (
-            PriceComponent.ASK,
-            PriceComponent.BID,
-            PriceComponent.MID,
+        if self.snapshot_schema not in (SNAPSHOT_SCHEMA_V1, SNAPSHOT_SCHEMA_V2):
+            raise InputError("unsupported snapshot schema")
+        expected = (
+            (
+                Timeframe.M1,
+                (PriceComponent.ASK, PriceComponent.BID, PriceComponent.MID),
+            ),
+            (Timeframe.M15, (PriceComponent.MID,)),
+        )
+        allowed = (
+            expected[0]
+            if self.snapshot_schema == SNAPSHOT_SCHEMA_V1
+            else expected[1]
+        )
+        if (
+            self.base_resolution is not allowed[0]
+            or type(self.components) is not tuple
+            or self.components != allowed[1]
         ):
-            raise InputError("snapshot components must be ASK, BID, MID")
+            raise InputError("snapshot resolution/components do not match schema")
         if any(type(component) is not PriceComponent for component in self.components):
             raise InputError("snapshot components must be PriceComponents")
         start = _utc(self.coverage_start, "coverage_start")
@@ -214,13 +232,32 @@ class DatasetSnapshot:
             raise InputError("unsupported alignment convention")
         if self.session_policy != SESSION_POLICY:
             raise InputError("unsupported session policy")
-        if self.fingerprint_schema != FINGERPRINT_SCHEMA:
+        expected_fingerprint = (
+            FINGERPRINT_SCHEMA
+            if self.snapshot_schema == SNAPSHOT_SCHEMA_V1
+            else FINGERPRINT_SCHEMA_V2
+        )
+        if self.fingerprint_schema != expected_fingerprint:
             raise InputError("unsupported fingerprint schema")
         _sha256(self.fingerprint, "fingerprint")
         if type(self.integrity_summary) is not dict:
             raise InputError("integrity_summary must be a JSON object")
         if self.integrity_summary.get("status") != "VALID":
             raise InputError("snapshot integrity status must be VALID")
+        policy_version = self.integrity_summary.get("policy_version")
+        if (
+            self.snapshot_schema == SNAPSHOT_SCHEMA_V2
+            and policy_version != GAP_POLICY_V1
+        ):
+            raise InputError("V2 snapshot must declare the historical gap policy")
+        if (
+            self.snapshot_schema == SNAPSHOT_SCHEMA_V1
+            and policy_version is not None
+            and policy_version != self.session_policy
+        ):
+            raise InputError(
+                "snapshot integrity policy version does not match session policy"
+            )
         _utc(self.created_at, "created_at")
 
     def to_json(self) -> dict[str, Any]:
@@ -237,4 +274,5 @@ class DatasetSnapshot:
             "fingerprint": self.fingerprint,
             "integrity_summary": self.integrity_summary.copy(),
             "created_at": self.created_at.isoformat().replace("+00:00", "Z"),
+            "snapshot_schema": self.snapshot_schema,
         }

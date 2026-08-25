@@ -29,6 +29,7 @@ from backend.experiments.lifecycle import (
     ExperimentRunService,
 )
 from backend.experiments.results import ExperimentResultReadService, ResultReadError
+from backend.market_data.coverage import diagnostic_payloads
 from backend.persistence.database import session_scope
 from backend.persistence.models import ExperimentModel
 from backend.persistence.result_repository import ExperimentResultRepository
@@ -40,6 +41,7 @@ from .schemas import (
     ExperimentConfigurationOptionsResponse,
     ExperimentCreateRequest,
     PeriodRequest,
+    PriceAnalysisResponse,
 )
 
 
@@ -128,8 +130,12 @@ def _failure(row: ExperimentModel) -> dict[str, Any] | None:
 
 
 def _detail(
-    row: ExperimentModel, metrics: Any = None, result: Any = None
+    row: ExperimentModel, metrics: Any = None, result: Any = None,
+    gap_decisions: Any = (),
 ) -> dict[str, Any]:
+    result_payload = _json(result)
+    result_quality = getattr(result, "result_quality", None)
+    gap_decisions = _json(gap_decisions)
     payload: dict[str, Any] = {
         "id": str(row.id),
         "label": f"Experiment {str(row.id)[:8]}",
@@ -148,7 +154,9 @@ def _detail(
         "modelVersion": row.model_version,
         "failure": _failure(row),
         "metrics": metrics,
-        "result": _json(result),
+        "result": result_payload,
+        "resultQuality": result_quality,
+        "gapDecisions": gap_decisions,
         "provenance": {
             "strategyVersionId": str(row.strategy_version_id),
             "datasetSnapshotId": str(row.dataset_snapshot_id),
@@ -264,6 +272,7 @@ def create_experiment_router(
                     "fingerprint": snapshot.fingerprint,
                     "coverageStart": _utc(snapshot.coverage_start),
                     "coverageEnd": _utc(snapshot.coverage_end),
+                    "snapshotSchema": snapshot.snapshot_schema,
                     "integrity": snapshot.integrity_summary,
                 }
             )
@@ -293,6 +302,14 @@ def create_experiment_router(
         except ConfigurationError as exc:
             raise _error(exc.code, str(exc), http_status=422) from exc
         report = value.report
+        diagnostics, diagnostics_truncated = (
+            diagnostic_payloads(report) if report else ([], False)
+        )
+        policy_version = (
+            diagnostics[0].get("policy_version", "OANDA_FX_NY_V1")
+            if diagnostics
+            else "OANDA_FX_NY_V1"
+        )
         return {
             "valid": value.valid,
             "requested": {
@@ -320,6 +337,9 @@ def create_experiment_router(
                     "start": _utc(g.start),
                     "end": _utc(g.end),
                     "components": [c.value for c in g.components],
+                    "reason": "UNEXPECTED_MISSING_DATA",
+                    "policy_version": policy_version,
+                    "missing_components": [c.value for c in g.components],
                 }
                 for g in value.gaps
             ],
@@ -327,7 +347,9 @@ def create_experiment_router(
                 _utc(item) for item in (report.closure_anomalies if report else ())
             ],
             "blockingReasons": list(value.reasons),
-            "truncated": len(value.gaps) >= 100,
+            "truncated": diagnostics_truncated,
+            "policy_version": policy_version,
+            "diagnostics": diagnostics,
         }
 
     @router.post("", status_code=status.HTTP_201_CREATED)
@@ -378,6 +400,7 @@ def create_experiment_router(
                     row,
                     _metrics_payload(composed["metrics"]),
                     composed["result"],
+                    results.gap_decisions(db, row.id),
                 )
             )
         return {"items": items, "nextCursor": next_cursor}
@@ -418,7 +441,10 @@ def create_experiment_router(
             raise _error(
                 exc.code, str(exc), http_status=404 if exc.code == "NOT_FOUND" else 409
             ) from exc
-        return _detail(row, _metrics_payload(composed["metrics"]), composed["result"])
+        return _detail(
+            row, _metrics_payload(composed["metrics"]), composed["result"],
+            results.gap_decisions(db, row.id),
+        )
 
     @router.post("/{experiment_id}/run")
     def run(experiment_id: UUID, db: Session = Depends(session)) -> dict[str, Any]:
@@ -453,6 +479,20 @@ def create_experiment_router(
             "returnedCount": len(value.points),
             "samplingPolicy": value.sampling_policy,
         }
+
+    @router.get("/{experiment_id}/price-analysis", response_model=PriceAnalysisResponse)
+    def price_analysis(experiment_id: UUID, db: Session = Depends(session)) -> Any:
+        try:
+            value = results.price_analysis(db, experiment_id)
+        except ResultReadError as exc:
+            code_status = {
+                "NOT_FOUND": 404,
+                "RESULT_NOT_READY": 409,
+                "EXPERIMENT_FAILED": 409,
+                "INCOMPLETE_RESULT": 409,
+            }
+            raise _error(exc.code, str(exc), http_status=code_status.get(exc.code, 422)) from exc
+        return _json(value)
 
     @router.get("/{experiment_id}/trades")
     def trades(

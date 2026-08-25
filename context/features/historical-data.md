@@ -36,6 +36,14 @@ DatasetSnapshot identifies exact data view. Provenance: [Domain Model](../archit
 
 Simple Data page: EUR/USD, OANDA, 1m, MID/BID/ASK, Coverage, Integrity, Last Updated. Actions: Load Data, Update Data, Inspect Coverage. User chooses date range → inspect coverage → identify missing → fetch OANDA → validate → persist → refresh. Before Experiment: validate StrategyVersion requirements + dates + warm-up + coverage + price components + integrity. Validation failure blocks Experiment.
 
+## Bounded Load Command / Lifecycle
+
+Experiment setup exposes one narrow "Load missing historical data" action for EUR/USD OANDA Practice M1 MID/BID/ASK. A POST commits a durable `historical_data_load_requests` row in `PENDING`, then an in-process coordinator runs `PENDING -> RUNNING -> COMPLETED|FAILED`. It is a bounded command, not a generic Job/worker/queue. Only one request is active at a time (enforced by a DB partial unique index). An interrupted request left by a prior process is failed at startup (`LOAD_INTERRUPTED_BEFORE_START` for `PENDING`, `LOAD_INTERRUPTED` for `RUNNING`); it is never resumed or auto-reissued. Retry is an explicit user action that creates a new row.
+
+**Server-only OANDA boundary:** the Practice credential is composed server-side only; it is never in a client bundle, HTTP payload, URL, log, or durable diagnostic. If no server token is configured the app still starts but `POST` returns `503` and creates no row; an invalid configured credential yields a terminal `MARKET_DATA / OANDA_AUTHORIZATION_FAILED` without provider text.
+
+**Retry interpretation:** "no automatic retry" means Atlas never reissues, resumes, or loops a failed load command. The OANDA adapter's existing bounded transport behavior (at most three attempts for connection failures and 429/5xx, finite timeouts, `Retry-After` capped at 30 seconds) stays inside one request window. One accepted command is therefore at most 40 provider windows and 120 HTTP attempts. Retry after a terminal failure is an explicit user command that creates a new request.
+
 ## Errors / Performance / Data Retention
 
 Actionable errors: "EUR/USD history missing between dates. Load or repair." Avoid "Dataset invalid." Batch inserts, appropriate indexes, bounded requests, efficient range queries. No TimescaleDB, ClickHouse, Redis cache, data lake, distributed ingestion without measured need. Retain historical data for reproducibility and future Experiments.
@@ -51,6 +59,8 @@ OANDA→canonical normalization, UTC handling, completed-candle filtering, MID/B
 ## Acceptance Flow
 
 Open Data → EUR/USD coverage displayed → request period → Atlas determines missing → OANDA loaded → canonical 1m MID/BID/ASK persisted → integrity validated → 15m bars derive deterministically → DatasetSnapshot available → Experiment data validation passes.
+
+Durable setup flow: Experiment setup → enter labelled UTC 15-minute bounds → "Load missing historical data" → durable `PENDING` → RUNNING → bounded M1 load → coverage recomputed → immutable DatasetSnapshot created/reused → M15 MID derived from snapshot membership → Experiment coverage validated → COMPLETED → snapshot auto-selected and coverage auto-validated → Experiment creation enabled. A partial/failed/interrupted load stays inspectable and never enables creation.
 
 ## Success Criteria
 

@@ -158,7 +158,7 @@ class EmaSweepEngulfingV2Strategy:
         parameters: StrategyParameters,
     ) -> tuple[StrategyDecision, StrategyState]:
         if state.phase is Phase.SEARCHING:
-            if len(history) < 200:
+            if len(history) < 20:
                 return StrategyDecision(
                     Action.NO_ACTION, Rationale("WARMING_UP")
                 ), StrategyState(last_evaluated_bar_end=bar.end_time)

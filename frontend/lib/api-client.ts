@@ -15,6 +15,17 @@ export class ApiTransportTimeoutError extends ApiUnavailableError {
     this.name = 'ApiTransportTimeoutError';
   }
 }
+export class ApiError extends Error {
+  constructor(
+    public status: number,
+    public code: string,
+    message: string,
+    public details: unknown = {},
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
 
 async function request<T>(
   path: string,
@@ -40,7 +51,59 @@ async function request<T>(
   }
 
   if (!response.ok) {
-    throw new ApiUnavailableError(`Atlas API returned ${response.status}.`);
+    let body: unknown = {};
+    try {
+      body = await response.json();
+    } catch {
+      /* stable fallback below */
+    }
+    const maybeError =
+      typeof body === 'object' && body !== null && 'error' in body
+        ? (
+            body as {
+              error?: {
+                code?: unknown;
+                message?: unknown;
+                details?: unknown;
+              };
+            }
+          ).error
+        : undefined;
+    // FastAPI Pydantic validation returns {detail: [{loc, msg, type}]} — surface it as HTTP_422 with structured fields
+    const validation =
+      typeof body === 'object' && body !== null && 'detail' in body
+        ? (body as { detail?: unknown }).detail
+        : undefined;
+    if (Array.isArray(validation)) {
+      const fields = Object.fromEntries(
+        validation.map((item: unknown) => {
+          const v =
+            typeof item === 'object' && item !== null
+              ? (item as { loc?: unknown; msg?: unknown })
+              : {};
+          const loc = Array.isArray(v.loc)
+            ? v.loc.join('.')
+            : String(v.loc ?? 'field');
+          return [loc, String(v.msg ?? 'Invalid value')];
+        }),
+      );
+      throw new ApiError(
+        response.status,
+        `HTTP_${response.status}`,
+        `Validation failed — ${validation.map((i: unknown) => String((i as { msg?: string }).msg ?? '')).join('; ') || `Atlas API returned ${response.status}.`}`,
+        { fields },
+      );
+    }
+    throw new ApiError(
+      response.status,
+      typeof maybeError?.code === 'string'
+        ? maybeError.code
+        : `HTTP_${response.status}`,
+      typeof maybeError?.message === 'string'
+        ? maybeError.message
+        : `Atlas API returned ${response.status}.`,
+      maybeError?.details ?? {},
+    );
   }
 
   return (await response.json()) as T;
@@ -94,10 +157,40 @@ export const atlasApi = {
     request<unknown>(`/api/v1/experiments/${id}/run`, { method: 'POST' }, 8000),
   getEquity: (id: string) =>
     request<unknown>(`/api/v1/experiments/${id}/equity`),
+  getPriceAnalysis: (id: string) =>
+    request<components['schemas']['PriceAnalysisResponse']>(
+      `/api/v1/experiments/${id}/price-analysis`,
+    ),
   listTrades: (id: string, afterSequence = 0) =>
     request<unknown>(
       `/api/v1/experiments/${id}/trades?limit=250&afterSequence=${afterSequence}`,
     ),
   getTrade: (id: string, sequence: number) =>
     request<unknown>(`/api/v1/experiments/${id}/trades/${sequence}`),
+  historicalCapability: () =>
+    request<unknown>('/api/v1/historical-data/capability'),
+  activeHistoricalLoad: () =>
+    request<unknown>('/api/v1/historical-data/load-requests/active').catch(
+      (error) => {
+        // An absent active request is the expected empty state on first load.
+        if (
+          error instanceof ApiError &&
+          error.code === 'HISTORICAL_LOAD_NOT_ACTIVE'
+        )
+          return null;
+        throw error;
+      },
+    ),
+  createHistoricalLoad: (
+    body: components['schemas']['HistoricalDataLoadRequest'],
+  ) =>
+    request<unknown>('/api/v1/historical-data/load-requests', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  historicalLoadStatus: (id: string) =>
+    request<unknown>(
+      `/api/v1/historical-data/load-requests/${encodeURIComponent(id)}`,
+    ),
 };

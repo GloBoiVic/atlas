@@ -72,6 +72,74 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/v1/historical-data/capability': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Capability */
+    get: operations['capability_api_v1_historical_data_capability_get'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/historical-data/load-requests/active': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Active */
+    get: operations['active_api_v1_historical_data_load_requests_active_get'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/historical-data/load-requests': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Create */
+    post: operations['create_api_v1_historical_data_load_requests_post'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/historical-data/load-requests/{request_id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get */
+    get: operations['get_api_v1_historical_data_load_requests__request_id__get'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/v1/experiments/configuration-options': {
     parameters: {
       query?: never;
@@ -184,6 +252,23 @@ export interface paths {
     };
     /** Equity */
     get: operations['equity_api_v1_experiments__experiment_id__equity_get'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/experiments/{experiment_id}/price-analysis': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Price Analysis */
+    get: operations['price_analysis_api_v1_experiments__experiment_id__price_analysis_get'];
     put?: never;
     post?: never;
     delete?: never;
@@ -380,6 +465,8 @@ export interface components {
       coverageStart: string;
       /** Coverageend */
       coverageEnd: string;
+      /** Snapshotschema */
+      snapshotSchema: string;
       /** Integrity */
       integrity: {
         [key: string]: unknown;
@@ -433,6 +520,91 @@ export interface components {
         [key: string]: string;
       };
     };
+    /** HistoricalDataCapabilityResponse */
+    HistoricalDataCapabilityResponse: {
+      /** Provider */
+      provider: string;
+      /** Instrument */
+      instrument: string;
+      /** Resolution */
+      resolution: string;
+      /** Components */
+      components: string[];
+      /** Available */
+      available: boolean;
+      /** Reasoncode */
+      reasonCode: string | null;
+    };
+    /** HistoricalDataLoadRequest */
+    HistoricalDataLoadRequest: {
+      /**
+       * Strategyversionid
+       * Format: uuid
+       */
+      strategyVersionId: string;
+      /**
+       * Tradingstart
+       * Format: date-time
+       */
+      tradingStart: string;
+      /**
+       * Tradingend
+       * Format: date-time
+       */
+      tradingEnd: string;
+    };
+    /** HistoricalDataLoadStatusResponse */
+    HistoricalDataLoadStatusResponse: {
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** Displaylabel */
+      displayLabel: string;
+      /** Status */
+      status: string;
+      /** Statusurl */
+      statusUrl: string;
+      /** Source */
+      source: {
+        [key: string]: unknown;
+      };
+      /** Requestedperiod */
+      requestedPeriod: {
+        [key: string]: string;
+      };
+      /** Loadrange */
+      loadRange: {
+        [key: string]: string;
+      };
+      /** Progress */
+      progress: {
+        [key: string]: unknown;
+      };
+      /** Coverage */
+      coverage: {
+        [key: string]: unknown;
+      } | null;
+      /** Snapshot */
+      snapshot: {
+        [key: string]: unknown;
+      } | null;
+      /** Experimentvalidation */
+      experimentValidation: {
+        [key: string]: unknown;
+      } | null;
+      /** Failure */
+      failure: {
+        [key: string]: unknown;
+      } | null;
+      /** Createdat */
+      createdAt: string;
+      /** Startedat */
+      startedAt: string | null;
+      /** Finishedat */
+      finishedAt: string | null;
+    };
     /** PeriodRequest */
     PeriodRequest: {
       /**
@@ -456,6 +628,54 @@ export interface components {
        */
       tradingEnd: string;
     };
+    PriceAnalysisBarResponse: {
+      t: string;
+      o: string;
+      h: string;
+      l: string;
+      c: string;
+    };
+    PriceAnalysisDiagnosticsResponse: {
+      truncated: boolean;
+      emaPeriod: number;
+      warmUpBars: number;
+      snapshotFingerprint: string;
+      m15EligibleCount: number;
+      m15ReturnedCount: number;
+      tradeEligibleCount: number;
+      tradeReturnedCount: number;
+      omittedRange: { [key: string]: string } | null;
+      omittedM15Count: number;
+      omittedTradeCount: number;
+    };
+    PriceAnalysisEmaResponse: { t: string; v: string };
+    PriceAnalysisFactResponse: {
+      tradeSequence: number;
+      reference: { [key: string]: string };
+      sweep: { [key: string]: string };
+      confirmation: { [key: string]: string };
+    };
+    PriceAnalysisPointResponse: { t: string; price: string };
+    PriceAnalysisRangeResponse: { price: string; from: string; to: string };
+    PriceAnalysisResponse: {
+      m15: components['schemas']['PriceAnalysisBarResponse'][];
+      ema: components['schemas']['PriceAnalysisEmaResponse'][];
+      tradingWindow: components['schemas']['PriceAnalysisWindowResponse'];
+      trades: components['schemas']['PriceAnalysisTradeResponse'][];
+      reference: components['schemas']['PriceAnalysisFactResponse'][];
+      diagnostics: components['schemas']['PriceAnalysisDiagnosticsResponse'];
+      provenance?: { [key: string]: unknown };
+      gaps?: { [key: string]: unknown }[];
+    };
+    PriceAnalysisTradeResponse: {
+      sequence: number;
+      direction: string;
+      entry: components['schemas']['PriceAnalysisPointResponse'];
+      exit: components['schemas']['PriceAnalysisPointResponse'] | null;
+      stop: components['schemas']['PriceAnalysisRangeResponse'] | null;
+      target: components['schemas']['PriceAnalysisRangeResponse'] | null;
+    };
+    PriceAnalysisWindowResponse: { start: string; end: string };
     /** StrategyCatalogItemResponse */
     StrategyCatalogItemResponse: {
       /** Strategykey */
@@ -583,6 +803,29 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+  price_analysis_api_v1_experiments__experiment_id__price_analysis_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: { experiment_id: string };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: { [name: string]: unknown };
+        content: {
+          'application/json': components['schemas']['PriceAnalysisResponse'];
+        };
+      };
+      422: {
+        headers: { [name: string]: unknown };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
   live_health_live_get: {
     parameters: {
       query?: never;
@@ -663,6 +906,110 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['StrategyDetailResponse'];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  capability_api_v1_historical_data_capability_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HistoricalDataCapabilityResponse'];
+        };
+      };
+    };
+  };
+  active_api_v1_historical_data_load_requests_active_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HistoricalDataLoadStatusResponse'];
+        };
+      };
+    };
+  };
+  create_api_v1_historical_data_load_requests_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['HistoricalDataLoadRequest'];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HistoricalDataLoadStatusResponse'];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  get_api_v1_historical_data_load_requests__request_id__get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        request_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HistoricalDataLoadStatusResponse'];
         };
       };
       /** @description Validation Error */

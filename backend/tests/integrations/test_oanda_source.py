@@ -8,7 +8,7 @@ import pytest
 from pydantic import SecretStr
 
 from backend.config import Settings
-from backend.domain.market_data import PriceComponent
+from backend.domain.market_data import PriceComponent, Timeframe
 from backend.integrations.oanda import (
     OandaAuthError,
     OandaConfigurationError,
@@ -69,6 +69,44 @@ def test_exact_practice_request_and_all_components() -> None:
         PriceComponent.ASK,
     ]
     assert result.bars[0].open == Decimal("1.1000")
+
+
+def test_native_m15_contract_requests_mid_and_aligned_complete_candles() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={"candles": [candle(moment(0)) | {"time": "2026-01-05T10:00:00Z"}]},
+        )
+
+    result = source(handler).fetch_native_m15(moment(0), moment(15))
+    assert requests[0].url.params["price"] == "M"
+    assert requests[0].url.params["granularity"] == "M15"
+    assert requests[0].url.params["smooth"] == "false"
+    assert len(result.bars) == 1
+    assert result.bars[0].timeframe is Timeframe.M15
+    assert result.bars[0].price_component is PriceComponent.MID
+
+
+def test_native_m15_rejects_non_quarter_hour_alignment() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"candles": [candle(moment(1))]})
+
+    with pytest.raises(OandaNormalizationError, match="quarter-hour"):
+        source(handler).fetch_native_m15(moment(0), moment(15))
+
+
+def test_execution_m1_requests_sparse_bid_ask_without_mid() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"candles": [candle(moment(0))]})
+
+    result = source(handler).fetch_execution_m1(moment(0), moment(1))
+    assert [bar.price_component for bar in result.bars] == [
+        PriceComponent.BID,
+        PriceComponent.ASK,
+    ]
 
 
 def test_paginates_at_4000_minutes_and_filters_boundaries() -> None:

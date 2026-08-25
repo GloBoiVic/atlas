@@ -7,15 +7,18 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.domain.market_data import Instrument, PriceComponent, Provider
 from backend.domain.strategy import StrategyParameters
-from backend.market_data.aggregation import AggregationError, aggregate_m1_to_m15
+from backend.market_data.aggregation import aggregate_m1_to_m15
 from backend.market_data.coverage import CoverageGap, CoverageReport, validate_coverage
 from backend.persistence.experiment_repository import ExperimentRepository
 from backend.persistence.market_data_repository import DatasetSnapshotRepository
 from backend.persistence.models import (
+    DatasetSnapshotAnalyticalBarModel,
+    DatasetSnapshotGapModel,
     DatasetSnapshotModel,
     InstrumentModel,
     StrategyVersionModel,
@@ -92,6 +95,10 @@ class CoverageValidation:
     @property
     def gaps(self) -> tuple[CoverageGap, ...]:
         return () if self.report is None else self.report.gaps[:100]
+
+    @property
+    def diagnostics(self):
+        return () if self.report is None else self.report.interval_diagnostics[:100]
 
 
 class ConfigurationError(ValueError):
@@ -239,20 +246,25 @@ class ExperimentConfigurationService:
                 None,
                 ("SNAPSHOT_VENUE_INCOMPATIBLE",),
             )
+        if snapshot_row.snapshot_schema == "ATLAS_HISTORICAL_SIMULATION_SNAPSHOT_V2":
+            return self._validate_v2_coverage(
+                session,
+                snapshot_row,
+                version.warm_up_bars,
+                trading_start,
+                trading_end,
+            )
         descriptor = self.snapshots.by_fingerprint(session, snapshot_row.fingerprint)
         members = self.snapshots.members(session, descriptor.id)
         mid = tuple(
             item for item in members if item.price_component is PriceComponent.MID
         )
-        try:
-            m15 = aggregate_m1_to_m15(
-                mid,
-                PriceComponent.MID,
-                descriptor.coverage_start,
-                descriptor.coverage_end,
-            )
-        except AggregationError:
-            m15 = ()
+        m15, warmup_diagnostics = aggregate_m1_to_m15(
+            mid,
+            PriceComponent.MID,
+            descriptor.coverage_start,
+            descriptor.coverage_end,
+        )
         warm = tuple(bar for bar in m15 if bar.end_time <= trading_start)
         selected = warm[-version.warm_up_bars :] if version.warm_up_bars else ()
         required_start = (
@@ -275,6 +287,9 @@ class ExperimentConfigurationService:
                     (
                         "MISSING_COMPONENTS" if report.missing else "",
                         "GAPS" if report.gaps else "",
+                        "UNEXPECTED_MISSING_DATA"
+                        if report.interval_diagnostics
+                        else "",
                         "CLOSURE_ANOMALY" if report.closure_anomalies else "",
                         "UNEXPECTED_OBSERVATION"
                         if report.unexpected_observations
@@ -282,6 +297,12 @@ class ExperimentConfigurationService:
                     )
                 )
                 reasons = [reason for reason in reasons if reason]
+        if any(
+            diagnostic.interval_end > required_start
+            and diagnostic.interval_start < trading_end
+            for diagnostic in warmup_diagnostics
+        ):
+            reasons.append("UNEXPECTED_MISSING_DATA")
         return CoverageValidation(
             not reasons,
             trading_start,
@@ -292,6 +313,81 @@ class ExperimentConfigurationService:
             dataset_snapshot_id,
             snapshot_row.fingerprint,
             report,
+            tuple(dict.fromkeys(reasons)),
+        )
+
+    @staticmethod
+    def _validate_v2_coverage(
+        session: Session,
+        snapshot: DatasetSnapshotModel,
+        warm_up_required: int,
+        trading_start: datetime,
+        trading_end: datetime,
+    ) -> CoverageValidation:
+        """Validate V2 from its immutable native analytical membership.
+
+        V2 execution observations are intentionally sparse.  Configuration
+        must therefore never pass them through the V1 wall-clock coverage
+        validator; only native completed M15 availability and persisted,
+        explicitly blocking snapshot gaps can invalidate the requested range.
+        """
+        analytical = tuple(
+            session.scalars(
+                select(DatasetSnapshotAnalyticalBarModel)
+                .where(
+                    DatasetSnapshotAnalyticalBarModel.dataset_snapshot_id
+                    == snapshot.id,
+                    DatasetSnapshotAnalyticalBarModel.complete.is_(True),
+                )
+                .order_by(DatasetSnapshotAnalyticalBarModel.end_time)
+            ).all()
+        )
+        warm = tuple(item for item in analytical if item.end_time <= trading_start)
+        selected = warm[-warm_up_required:] if warm_up_required else ()
+        required_start = (
+            selected[0].start_time if len(selected) == warm_up_required else None
+        )
+        reasons: list[str] = []
+        if required_start is None:
+            reasons.append("INSUFFICIENT_WARMUP")
+            required_start = trading_start
+        if (
+            required_start < snapshot.coverage_start
+            or trading_end > snapshot.coverage_end
+        ):
+            reasons.append("RANGE_OUTSIDE_SNAPSHOT")
+
+        requested_analytical = tuple(
+            item
+            for item in analytical
+            if trading_start <= item.start_time < trading_end
+        )
+        if not requested_analytical:
+            reasons.append("INSUFFICIENT_ANALYTICAL_DATA")
+
+        blocked_gaps = session.scalars(
+            select(DatasetSnapshotGapModel)
+            .where(
+                DatasetSnapshotGapModel.dataset_snapshot_id == snapshot.id,
+                DatasetSnapshotGapModel.blocked.is_(True),
+                DatasetSnapshotGapModel.end_time > required_start,
+                DatasetSnapshotGapModel.start_time < trading_end,
+            )
+            .order_by(DatasetSnapshotGapModel.sequence)
+        ).all()
+        if blocked_gaps:
+            reasons.append("BLOCKING_GAPS")
+
+        return CoverageValidation(
+            not reasons,
+            trading_start,
+            trading_end,
+            required_start,
+            warm_up_required,
+            len(warm),
+            snapshot.id,
+            snapshot.fingerprint,
+            None,
             tuple(dict.fromkeys(reasons)),
         )
 
