@@ -56,7 +56,7 @@ def _version(registry: StrategyRegistry, row: Any, usage: Any) -> dict[str, Any]
         "parameterSchema": row.parameter_schema,
         "contextTimeframes": row.context_timeframes,
         "timeframe": row.primary_timeframe,
-        "warmUpBars": row.warm_up_bars,
+        "requiredHistoricalContextBars": row.required_historical_context_bars,
         "stateSchemaVersion": row.state_schema_version,
         "capabilities": row.capabilities,
         "experimentCount": usage.count,

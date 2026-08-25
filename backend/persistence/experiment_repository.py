@@ -66,11 +66,7 @@ class ExperimentRepository:
             risk_config=dict(risk_config),
             simulation_config=dict(simulation_config),
             model_version=model_version,
-            status=(
-                "PENDING"
-                if model_version == "PHASE4_HISTORICAL_EXECUTION_V1"
-                else "RUNNING"
-            ),
+            status="PENDING",
         )
         session.add(row)
         session.flush()

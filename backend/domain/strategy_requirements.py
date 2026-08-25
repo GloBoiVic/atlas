@@ -49,16 +49,42 @@ class StrategyMarketDataRequirement:
     strategy_version_id: str
     analytical: AnalyticalRequirement
     context: RequiredHistoricalContext
+    execution_components: tuple[PriceComponent, ...] = (
+        PriceComponent.BID,
+        PriceComponent.ASK,
+    )
+
+    @property
+    def required_historical_context_bars(self) -> int:
+        """The canonical warm-history requirement exposed to loaders."""
+        return self.context.analytical_bars
+
+    def __post_init__(self) -> None:
+        if type(self.strategy_version_id) is not str or not self.strategy_version_id:
+            raise ValueError("strategy_version_id must be a non-empty string")
+        if (
+            type(self.execution_components) is not tuple
+            or self.execution_components
+            != (
+                PriceComponent.BID,
+                PriceComponent.ASK,
+            )
+        ):
+            raise ValueError("execution_components must be BID and ASK")
 
 
 def requirement_for_version(version) -> StrategyMarketDataRequirement:
     """Derive the canonical requirement from a StrategyVersion domain object.
 
     ``version`` is expected to expose ``id``, ``primary_timeframe``,
-    and ``warm_up_bars``.  This keeps the historical loader decoupled from
+    and ``required_historical_context_bars``. A transitional warm-up read is
+    accepted only at this boundary for rows created before the contract change.
+    This keeps the historical loader decoupled from
     EMA/ATR internals — it only consumes this value object.
     """
-    warm_up = int(getattr(version, "warm_up_bars", 0))
+    context_bars = getattr(version, "required_historical_context_bars", None)
+    if context_bars is None:
+        context_bars = getattr(version, "warm_up_bars", 0)
     timeframe = getattr(version, "primary_timeframe", Timeframe.M15)
     # Normalize string timeframe to enum when coming from persistence
     if isinstance(timeframe, str):
@@ -69,5 +95,5 @@ def requirement_for_version(version) -> StrategyMarketDataRequirement:
             resolution=timeframe,
             price_component=PriceComponent.MID,
         ),
-        context=RequiredHistoricalContext(analytical_bars=warm_up),
+        context=RequiredHistoricalContext(analytical_bars=int(context_bars)),
     )

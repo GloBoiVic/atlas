@@ -164,7 +164,7 @@ class StrategyRepository:
                 for path, content in source_archive.exact_source_snapshot
             },
             primary_timeframe=version.primary_timeframe.value,
-            warm_up_bars=version.warm_up_bars,
+            required_historical_context_bars=version.required_historical_context_bars,
             state_schema_version=version.state_schema_version,
             git_sha=git_sha,
             created_at=version.created_at,
@@ -208,7 +208,7 @@ def version_to_domain(row: StrategyVersionModel) -> StrategyVersion:
         implementation_key=row.implementation_key,
         parameter_schema=schema,
         primary_timeframe=Timeframe(row.primary_timeframe),
-        warm_up_bars=row.warm_up_bars,
+        required_historical_context_bars=row.required_historical_context_bars,
         state_schema_version=row.state_schema_version,
         created_at=created_at,
     )

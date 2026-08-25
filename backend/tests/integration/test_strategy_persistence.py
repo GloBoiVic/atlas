@@ -59,7 +59,7 @@ def _version(fingerprint: str, identifier: UUID | None = None) -> StrategyVersio
             ParameterSchema("period", "Period", "integer", 14, False, 1, 100, "period"),
         ),
         primary_timeframe=Timeframe.M15,
-        warm_up_bars=100,
+        required_historical_context_bars=100,
         state_schema_version=1,
         created_at=datetime.now(UTC),
     )

@@ -286,7 +286,7 @@ def test_price_analysis_uses_persisted_period_and_keeps_zero_trade_context() -> 
     experiment.parameter_snapshot = {"ema_period": 3}
     experiment.strategy_version_id = uuid4()
     snapshot = SimpleNamespace(fingerprint="f" * 64)
-    version = SimpleNamespace(warm_up_bars=2)
+    version = SimpleNamespace(required_historical_context_bars=2)
     bars = tuple(
         Bar(
             Instrument.EUR_USD,
@@ -333,7 +333,7 @@ def test_price_analysis_reports_candle_truncation_without_sampling() -> None:
     experiment.trading_start = NOW
     experiment.trading_end = NOW + timedelta(minutes=15 * 10001)
     snapshot = SimpleNamespace(fingerprint="f" * 64)
-    version = SimpleNamespace(warm_up_bars=0)
+    version = SimpleNamespace(required_historical_context_bars=0)
     bars = tuple(
         Bar(
             Instrument.EUR_USD,

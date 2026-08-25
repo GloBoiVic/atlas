@@ -42,10 +42,15 @@ class StrategyDefinition:
     primary_timeframe: Timeframe = Timeframe.M15
     context_timeframes: tuple[Timeframe, ...] = ()
     capabilities: tuple[str, ...] = ()
-    warm_up_bars: int = 100
+    required_historical_context_bars: int = 100
     state_schema_version: int = 1
     source_files: tuple[str, ...] = ()
     implementation_key: str = ""
+
+    @property
+    def warm_up_bars(self) -> int:
+        """Deprecated compatibility read for older runtime callers."""
+        return self.required_historical_context_bars
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,8 +112,13 @@ def validate_registration(registration: StrategyRegistration) -> None:
         type(value) is not str or not value for value in definition.capabilities
     ):
         raise StrategyContractError("capabilities must be a tuple of non-empty strings")
-    if type(definition.warm_up_bars) is not int or definition.warm_up_bars < 0:
-        raise StrategyContractError("warm_up_bars must be a nonnegative integer")
+    if (
+        type(definition.required_historical_context_bars) is not int
+        or definition.required_historical_context_bars < 0
+    ):
+        raise StrategyContractError(
+            "required_historical_context_bars must be a nonnegative integer"
+        )
     if (
         type(definition.state_schema_version) is not int
         or definition.state_schema_version <= 0

@@ -91,7 +91,7 @@ DEFINITION = StrategyDefinition(
     description="EUR/USD MID 15m EMA-100 sweep and engulfing confirmation strategy.",
     parameter_schema=_schema(),
     capabilities=("LONG", "SHORT", "STOP_LOSS", "TAKE_PROFIT"),
-    warm_up_bars=100,
+    required_historical_context_bars=100,
     state_schema_version=1,
     source_files=(
         "backend/strategies/ema_sweep_engulfing.py",

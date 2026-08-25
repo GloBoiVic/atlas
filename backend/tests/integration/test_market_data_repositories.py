@@ -141,6 +141,7 @@ def test_first_load_replay_correction_and_reversion(
         _bar(moment, PriceComponent.MID, "1.2000"), moment + timedelta(minutes=3)
     )
     assert repo.apply_bar_batch(session, mapping.id, (corrected,)).inserted == 1
+    session.flush()
     assert repo.apply_bar_batch(session, mapping.id, (item,)).reactivated == 1
     current = repo.current_bars(
         session,

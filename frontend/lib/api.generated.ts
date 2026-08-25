@@ -497,8 +497,10 @@ export interface components {
       parameterSchema: {
         [key: string]: unknown;
       }[];
-      /** Warmupbars */
-      warmUpBars: number;
+      /** Required historical context bars */
+      requiredHistoricalContextBars: number;
+      /** Architecture */
+      architecture: string;
       /** Executionavailable */
       executionAvailable: boolean;
       /** Unavailablereason */
@@ -638,7 +640,7 @@ export interface components {
     PriceAnalysisDiagnosticsResponse: {
       truncated: boolean;
       emaPeriod: number;
-      warmUpBars: number;
+      requiredHistoricalContextBars: number;
       snapshotFingerprint: string;
       m15EligibleCount: number;
       m15ReturnedCount: number;
@@ -766,8 +768,8 @@ export interface components {
       contextTimeframes: string[];
       /** Timeframe */
       timeframe: string;
-      /** Warmupbars */
-      warmUpBars: number;
+      /** Required historical context bars */
+      requiredHistoricalContextBars: number;
       /** Stateschemaversion */
       stateSchemaVersion: number;
       /** Capabilities */

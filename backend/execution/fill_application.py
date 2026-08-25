@@ -97,11 +97,19 @@ def apply_fill(
         )
         if order is None:
             raise ValueError("fill order does not exist")
-        phase4 = session.scalar(
+        model_version = session.scalar(
             select(ExperimentModel.model_version).where(
                 ExperimentModel.id == order.experiment_id
             )
-        ) == "PHASE4_HISTORICAL_EXECUTION_V1"
+        )
+        # Historical V2 uses the same constrained exit-reason vocabulary as
+        # the original Phase 4 model.  Keep the legacy value for persisted
+        # Phase 4 rows while ensuring V2 end-of-experiment fills are not
+        # misclassified as the unrestricted live/runtime EXIT reason.
+        phase4 = model_version in {
+            "PHASE4_HISTORICAL_EXECUTION_V1",
+            "PHASE5_HISTORICAL_EXECUTION_V2",
+        }
         if order.current_status in {
             "FILLED", "CANCELED", "REJECTED", "EXPIRED", "UNKNOWN"
         }:
@@ -130,7 +138,7 @@ def apply_fill(
         if existing is not None:
             raise ValueError("fill sequence already exists")
 
-        if phase4 and order.current_status == "PENDING_SUBMISSION":
+        if order.current_status == "PENDING_SUBMISSION":
             order.current_status = "SUBMITTED"
             order.submitted_at = fill.executed_at
             _append_event(session, order, "ORDER_SUBMITTED", fill.executed_at)

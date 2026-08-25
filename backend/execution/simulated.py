@@ -20,17 +20,23 @@ class ProtectionDecision:
 
 
 def _intrabar_touch(order: Order, observation: ExecutionObservation) -> bool:
-    if observation.intrabar_trigger:
-        return True
     price = order.requested_price
     assert price is not None
-    ranges = (
-        (observation.bid_high, observation.bid_low)
-        if order.direction == "LONG"
-        else (observation.ask_high, observation.ask_low)
+    if order.purpose == "STOP_LOSS":
+        level = (
+            observation.bid_low
+            if order.direction == "LONG"
+            else observation.ask_high
+        )
+        return level is not None and (
+            level <= price if order.direction == "LONG" else level >= price
+        )
+    level = (
+        observation.bid_high if order.direction == "LONG" else observation.ask_low
     )
-    high, low = ranges
-    return (high is not None and high >= price) or (low is not None and low <= price)
+    return level is not None and (
+        level >= price if order.direction == "LONG" else level <= price
+    )
 
 
 class SimulatedExecutionAdapter:
@@ -123,18 +129,25 @@ class SimulatedExecutionAdapter:
 
     @staticmethod
     def _triggered(order: Order, observation: ExecutionObservation) -> bool:
+        quote = (
+            observation.bid_open
+            if order.direction == "LONG"
+            else observation.ask_open
+        )
         if order.purpose == "TAKE_PROFIT":
-            quote = (
-                observation.bid_open
-                if order.direction == "LONG"
-                else observation.ask_open
-            )
-            if (
+            reached = (
                 quote >= order.requested_price
                 if order.direction == "LONG"
                 else quote <= order.requested_price
-            ):
+            )
+            if reached:
                 return True
+        elif (
+            quote <= order.requested_price
+            if order.direction == "LONG"
+            else quote >= order.requested_price
+        ):
+            return True
         return _intrabar_touch(order, observation)
 
     def _fill(

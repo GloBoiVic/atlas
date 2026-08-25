@@ -135,10 +135,17 @@ def _detail(
 ) -> dict[str, Any]:
     result_payload = _json(result)
     result_quality = getattr(result, "result_quality", None)
+    if result_quality is None and isinstance(result_payload, dict):
+        result_quality = result_payload.get("result_quality")
+    if result_quality is None and row.status == "FAILED":
+        result_quality = {"schema": "ATLAS_RESULT_QUALITY_V1", "value": "FAILED"}
+    result_schema_version = getattr(result, "result_schema_version", None)
+    if result_schema_version is None and isinstance(result_payload, dict):
+        result_schema_version = result_payload.get("result_schema_version")
     gap_decisions = _json(gap_decisions)
     payload: dict[str, Any] = {
         "id": str(row.id),
-        "label": f"Experiment {str(row.id)[:8]}",
+        "label": f"Experiment · {_utc(row.trading_start)[:10]} → {_utc(row.trading_end)[:10]}",
         "status": row.status,
         "createdAt": _utc(row.created_at),
         "completedAt": _utc(row.completed_at) if row.completed_at else None,
@@ -156,6 +163,7 @@ def _detail(
         "metrics": metrics,
         "result": result_payload,
         "resultQuality": result_quality,
+        "resultSchemaVersion": result_schema_version,
         "gapDecisions": gap_decisions,
         "provenance": {
             "strategyVersionId": str(row.strategy_version_id),
@@ -169,6 +177,9 @@ def _detail(
             "risk": row.risk_config,
             "simulation": row.simulation_config,
             "modelVersion": row.model_version,
+            "resultSchemaVersion": result_schema_version,
+            "quality": result_quality,
+            "gapCount": len(gap_decisions),
         },
     }
     return payload
@@ -237,6 +248,8 @@ def create_experiment_router(
     def options(db: Session = Depends(session)) -> dict[str, Any]:
         versions = []
         for row in strategy_repo.list_all_versions(db):
+            if not row.implementation_key.endswith(".v2"):
+                continue
             try:
                 configuration.registry.get(
                     row.strategy.strategy_key,
@@ -259,13 +272,16 @@ def create_experiment_router(
                     "implementationKey": row.implementation_key,
                     "sourceFingerprint": row.source_fingerprint,
                     "parameterSchema": row.parameter_schema,
-                    "warmUpBars": row.warm_up_bars,
+                    "requiredHistoricalContextBars": row.required_historical_context_bars,
+                    "architecture": "V2",
                     "executionAvailable": execution_available,
                     "unavailableReason": unavailable_reason,
                 }
             )
         snapshots = []
         for snapshot in configuration.snapshots.list_options(db):
+            if snapshot.snapshot_schema != "ATLAS_HISTORICAL_SIMULATION_SNAPSHOT_V2":
+                continue
             snapshots.append(
                 {
                     "id": str(snapshot.id),
@@ -306,9 +322,9 @@ def create_experiment_router(
             diagnostic_payloads(report) if report else ([], False)
         )
         policy_version = (
-            diagnostics[0].get("policy_version", "OANDA_FX_NY_V1")
+            diagnostics[0].get("policy_version", "ATLAS_HISTORICAL_GAP_POLICY_V1")
             if diagnostics
-            else "OANDA_FX_NY_V1"
+            else "ATLAS_HISTORICAL_GAP_POLICY_V1"
         )
         return {
             "valid": value.valid,
@@ -320,10 +336,14 @@ def create_experiment_router(
                 "start": _utc(value.required_start) if value.required_start else None,
                 "end": _utc(value.requested_end),
             },
-            "warmUp": {
+            "historicalContext": {
                 "required": value.warm_up_required,
                 "available": value.warm_up_available,
             },
+            "modelVersion": "V2",
+            "analysis": "native M15 MID",
+            "execution": "sparse M1 BID/ASK",
+            "entryPolicy": "[frontier, frontier + 1 minute)",
             "snapshot": {
                 "id": str(value.snapshot_id),
                 "fingerprint": value.snapshot_fingerprint,
@@ -350,6 +370,7 @@ def create_experiment_router(
             "truncated": diagnostics_truncated,
             "policy_version": policy_version,
             "diagnostics": diagnostics,
+            "diagnosticCount": len(diagnostics),
         }
 
     @router.post("", status_code=status.HTTP_201_CREATED)

@@ -360,7 +360,9 @@ function Chart({
         if (data.length) series.setData(strictlyAscending(data));
         chart.timeScale().fitContent();
         const observer = new ResizeObserver(() =>
-          chart?.applyOptions({ width: Math.max(ref.current?.clientWidth ?? 0, 1) }),
+          chart?.applyOptions({
+            width: Math.max(ref.current?.clientWidth ?? 0, 1),
+          }),
         );
         observer.observe(ref.current);
         (
@@ -422,7 +424,12 @@ function StateDisclosure({ data }: { data: Json }) {
         <div>
           <dt className="text-slate-500">Execution</dt>
           <dd>
-            {text(config.execution_resolution, 'M1')} · BID/ASK · MID analysis
+            Native M15 MID analysis · sparse{' '}
+            {text(config.execution_resolution, 'M1')} BID/ASK
+            <span className="block text-xs text-slate-600">
+              Entry only in the immediately following bucket [frontier, frontier
+              + 1 minute)
+            </span>
           </dd>
         </div>
         <div>
@@ -431,11 +438,17 @@ function StateDisclosure({ data }: { data: Json }) {
         </div>
         <div>
           <dt className="text-slate-500">DatasetSnapshot</dt>
-          <dd>{text(provenance.snapshotSchema, 'Immutable snapshot')} · immutable provenance retained</dd>
+          <dd>
+            {text(provenance.snapshotSchema, 'Immutable snapshot')} · immutable
+            provenance retained
+          </dd>
         </div>
         <div>
           <dt className="text-slate-500">Model</dt>
-          <dd>{text(data.modelVersion)}</dd>
+          <dd>{text(data.modelVersion, 'V2')}</dd>
+          <dd className="text-xs text-slate-600">
+            Result schema {text(data.resultSchemaVersion, 'V2')}
+          </dd>
         </div>
       </dl>
       {Boolean(quality.value) && (
@@ -445,8 +458,15 @@ function StateDisclosure({ data }: { data: Json }) {
       )}
       {gaps.length > 0 && (
         <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
-          <strong>Historical data gaps disclosed:</strong> {gaps.length} persisted gap decision{gaps.length === 1 ? '' : 's'}. Missing observations are not shown as continuous prices.
+          <strong>Historical data gaps disclosed:</strong> {gaps.length}{' '}
+          persisted gap decision{gaps.length === 1 ? '' : 's'}. Missing
+          observations are not shown as continuous prices.
         </div>
+      )}
+      {gaps.length === 0 && Boolean(data.resultQuality) && (
+        <p className="mt-4 text-sm text-slate-700">
+          No execution gaps affected this result.
+        </p>
       )}
       <p className="mt-5 text-xs leading-5 text-slate-600">
         Spread is embedded in BID/ASK execution and is not double-counted. Chart
@@ -675,8 +695,12 @@ function PriceAnalysisChart({ id }: { id: string }) {
           Price analysis
         </h2>
         <p className="text-sm text-slate-600">
-           {text(object(analysis?.provenance).analyticalSeries, 'M15 analytical')} — persisted analytical M15 candles and the Experiment’s authoritative EMA. Times shown in{' '}
-          {timeZone}.
+          {text(
+            object(analysis?.provenance).analyticalSeries,
+            'M15 analytical',
+          )}{' '}
+          — persisted analytical M15 candles and the Experiment’s authoritative
+          EMA. Times shown in {timeZone}.
         </p>
       </div>
       {error ? (
@@ -932,7 +956,8 @@ function PriceAnalysisCanvas({
                 strictlyAscending([
                   { time, value: low },
                   {
-                    time: (Number(time) + 0.001) as import('lightweight-charts').Time,
+                    time: (Number(time) +
+                      0.001) as import('lightweight-charts').Time,
                     value: high,
                   },
                 ]),
@@ -964,7 +989,8 @@ function PriceAnalysisCanvas({
                   {
                     time:
                       Number(to) === Number(from)
-                        ? (Number(to) + 0.001) as import('lightweight-charts').Time
+                        ? ((Number(to) +
+                            0.001) as import('lightweight-charts').Time)
                         : to,
                     value: price,
                   },
@@ -975,7 +1001,9 @@ function PriceAnalysisCanvas({
         });
         instance.timeScale().fitContent();
         observer = new ResizeObserver(() =>
-          instance?.applyOptions({ width: Math.max(ref.current?.clientWidth ?? 0, 1) }),
+          instance?.applyOptions({
+            width: Math.max(ref.current?.clientWidth ?? 0, 1),
+          }),
         );
         observer.observe(ref.current);
       },
@@ -1353,18 +1381,23 @@ export function ExperimentForm() {
   const schema = Array.isArray(selectedVersion.parameterSchema)
     ? selectedVersion.parameterSchema
     : [];
-  const warmUpBars = Number(selectedVersion.warmUpBars);
+  const requiredHistoricalContextBars = Number(
+    selectedVersion.requiredHistoricalContextBars,
+  );
   const strategyReady = Boolean(
     strategy &&
     versionsMap.has(strategy) &&
     selectedVersion.executionAvailable !== false &&
-    Number.isFinite(warmUpBars) &&
-    warmUpBars >= 0,
+    Number.isFinite(requiredHistoricalContextBars) &&
+    requiredHistoricalContextBars >= 0,
   );
   const loadStart = (() => {
     const instant = utcDate(start);
-    if (!instant || !Number.isFinite(warmUpBars)) return null;
-    instant.setUTCMinutes(instant.getUTCMinutes() - warmUpBars * 15);
+    if (!instant || !Number.isFinite(requiredHistoricalContextBars))
+      return null;
+    instant.setUTCMinutes(
+      instant.getUTCMinutes() - requiredHistoricalContextBars * 15,
+    );
     return instant;
   })();
   const tradingEnd = utcDate(end);
@@ -1378,7 +1411,8 @@ export function ExperimentForm() {
       ? `${formatInstant(loadStart.toISOString(), 'UTC')} → ${formatInstant(tradingEnd.toISOString(), 'UTC')}`
       : 'Choose valid UTC start and end times.';
   const applyPreset = (kind: '1W' | '1M' | '3M') => {
-    if (!strategyReady || !Number.isFinite(warmUpBars)) return;
+    if (!strategyReady || !Number.isFinite(requiredHistoricalContextBars))
+      return;
     const anchor = utcDate(end) ?? utcDate(quarterHourNow()) ?? new Date();
     if (!anchor) return;
     anchor.setUTCMinutes(Math.floor(anchor.getUTCMinutes() / 15) * 15, 0, 0);
@@ -1534,7 +1568,7 @@ export function ExperimentForm() {
     }
     if (loadRangeTooLarge) {
       setLoadMessage(
-        'Shorten the period so the warm-up-inclusive load range is 90 days or less.',
+        'Shorten the period so the required-context-inclusive load range is 90 days or less.',
       );
       return;
     }
@@ -1630,12 +1664,6 @@ export function ExperimentForm() {
   );
   const selectedSnapshotIntegrity = object(selectedSnapshot.integrity);
   const proofSource = object(historicalLoad?.source ?? capability);
-  const proofBarCount = Number(
-    selectedSnapshotIntegrity.barCount ??
-      selectedSnapshot.barCount ??
-      selectedSnapshotIntegrity.memberMinutes ??
-      selectedSnapshot.memberMinutes,
-  );
   const proofFingerprint = text(selectedSnapshot.fingerprint, 'awaiting data');
   const proofStatus = historicalLoad
     ? text(historicalLoad.status, 'awaiting data')
@@ -1644,7 +1672,7 @@ export function ExperimentForm() {
       : capability?.available === false
         ? 'unavailable'
         : 'awaiting data';
-  const proofLine = `Proof: Source: ${text(proofSource.provider, 'awaiting data')} ${text(proofSource.instrument, 'awaiting data')} ${text(proofSource.resolution, 'awaiting data')} → ${Number.isFinite(proofBarCount) ? proofBarCount : 'awaiting data'} stored in market_bars → snapshot ${proofFingerprint === 'awaiting data' ? proofFingerprint : proofFingerprint.slice(0, 8)} → derived M15 · load ${proofStatus}`;
+  const proofLine = `Proof: ${text(proofSource.provider, 'OANDA Practice')} ${text(proofSource.instrument, 'EUR/USD')} · native M15 MID + sparse M1 BID/ASK → immutable snapshot ${proofFingerprint === 'awaiting data' ? proofFingerprint : proofFingerprint.slice(0, 8)} · load ${proofStatus}`;
   return (
     <AppShell>
       <section
@@ -1836,12 +1864,14 @@ export function ExperimentForm() {
                     selectedSnapshotIntegrity.policy_version ??
                     selectedSnapshotIntegrity.sessionPolicy ??
                     selectedSnapshotIntegrity.session_policy,
-                  'OANDA_FX_NY_V1',
+                  'ATLAS_HISTORICAL_GAP_POLICY_V1',
                 )}
               </p>
               <dl className="mt-3 grid gap-3 sm:grid-cols-3">
                 <div>
-                  <dt className="text-xs text-slate-500">Earliest M1</dt>
+                  <dt className="text-xs text-slate-500">
+                    Earliest native M15
+                  </dt>
                   <dd className="font-medium">
                     {snapshots.length
                       ? formatInstant(
@@ -1857,7 +1887,7 @@ export function ExperimentForm() {
                   </dd>
                 </div>
                 <div>
-                  <dt className="text-xs text-slate-500">Latest M1</dt>
+                  <dt className="text-xs text-slate-500">Latest native M15</dt>
                   <dd className="font-medium">
                     {snapshots.length
                       ? formatInstant(
@@ -1960,7 +1990,7 @@ export function ExperimentForm() {
               <p className="mt-1">
                 {loadDurationDays === null
                   ? 'Enter valid UTC times to preview duration.'
-                  : `${loadDurationDays.toFixed(1)} days · includes ${Number.isFinite(warmUpBars) ? warmUpBars : 'unknown'} × 15m warm-up`}
+                  : `${loadDurationDays.toFixed(1)} days · includes ${Number.isFinite(requiredHistoricalContextBars) ? requiredHistoricalContextBars : 'unknown'} required M15 context bars`}
               </p>
               <p className="mt-1 text-xs">
                 Constraints: ≤90 days · ≤40 missing windows (server preflight)
@@ -1968,7 +1998,7 @@ export function ExperimentForm() {
               {loadRangeTooLarge && (
                 <p className="mt-2 font-medium">
                   Product validation: shorten the period so the
-                  warm-up-inclusive load range is 90 days or less.
+                  required-context-inclusive load range is 90 days or less.
                 </p>
               )}
             </div>
@@ -2244,7 +2274,8 @@ export function ExperimentForm() {
               </label>
             </div>
             <p className="text-xs text-slate-500">
-              M1 execution · MID analysis · BID/ASK execution · Financing
+              Native M15 MID analysis · sparse M1 BID/ASK execution · entry only
+              in the immediately following one-minute bucket · Financing
               excluded
             </p>
           </fieldset>
@@ -2261,8 +2292,8 @@ export function ExperimentForm() {
                 <h2 className="font-medium">Coverage validation</h2>
                 {!coverage ? (
                   <p className="mt-1 text-sm text-slate-600">
-                    Validate the selected period to check warm-up and immutable
-                    snapshot coverage.
+                    Validate the selected period to check required historical
+                    context and immutable V2 snapshot coverage.
                   </p>
                 ) : (
                   <>
@@ -2273,10 +2304,10 @@ export function ExperimentForm() {
                     </p>
                     <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-3">
                       <div>
-                        <dt className="text-slate-600">Warm-up</dt>
+                        <dt className="text-slate-600">Historical context</dt>
                         <dd className="font-medium">
-                          {text(object(coverage.warmUp).available)} /{' '}
-                          {text(object(coverage.warmUp).required)}
+                          {text(object(coverage.historicalContext).available)} /{' '}
+                          {text(object(coverage.historicalContext).required)}
                         </dd>
                       </div>
                       <div>
