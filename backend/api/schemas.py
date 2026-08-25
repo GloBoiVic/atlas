@@ -1,4 +1,4 @@
-"""Public Phase 5 HTTP contract.
+"""Public V2 HTTP contract.
 
 The API deliberately keeps the financial representation as decimal strings and
 rejects unknown request fields.  Response payloads use small typed envelopes;
@@ -57,7 +57,8 @@ class ExperimentStrategyVersionOptionResponse(StrictModel):
     implementation_key: str
     source_fingerprint: str
     parameter_schema: list[dict[str, Any]]
-    warm_up_bars: int
+    required_historical_context_bars: int
+    architecture: str
     execution_available: bool
     unavailable_reason: str | None
 
@@ -140,7 +141,7 @@ class PriceAnalysisFactResponse(StrictModel):
 class PriceAnalysisDiagnosticsResponse(StrictModel):
     truncated: bool
     ema_period: int
-    warm_up_bars: int
+    required_historical_context_bars: int
     snapshot_fingerprint: str
     m15_eligible_count: int
     m15_returned_count: int
@@ -240,7 +241,7 @@ class StrategyVersionHistoryResponse(StrictModel):
     parameter_schema: list[dict[str, Any]]
     context_timeframes: list[str]
     timeframe: str
-    warm_up_bars: int
+    required_historical_context_bars: int
     state_schema_version: int
     capabilities: list[str]
     experiment_count: int

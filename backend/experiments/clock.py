@@ -100,16 +100,21 @@ class SimulationClock:
         *,
         trading_start: datetime,
         trading_end: datetime,
-        warmup_m15_bars: int = 0,
+        required_historical_context_bars: int = 0,
         sparse_execution: bool = False,
     ) -> None:
         self.trading_start = _utc_aligned(trading_start, "trading_start")
         self.trading_end = _utc_aligned(trading_end, "trading_end")
         if self.trading_end <= self.trading_start:
             raise ValueError("trading_end must be after trading_start")
-        if type(warmup_m15_bars) is not int or warmup_m15_bars < 0:
-            raise ValueError("warmup_m15_bars must be a non-negative integer")
-        self.warmup_m15_bars = warmup_m15_bars
+        if (
+            type(required_historical_context_bars) is not int
+            or required_historical_context_bars < 0
+        ):
+            raise ValueError(
+                "required_historical_context_bars must be a non-negative integer"
+            )
+        self.required_historical_context_bars = required_historical_context_bars
         self.sparse_execution = sparse_execution
         self._m1 = self._index_m1(m1_bars)
         self._m15 = self._index_m15(m15_bars)
@@ -118,11 +123,12 @@ class SimulationClock:
             for end, bar in self._m15.items()
             if end <= self.trading_start
         )
-        if len(warmup) < warmup_m15_bars:
+        if len(warmup) < required_historical_context_bars:
             raise ValueError("insufficient completed M15 bars for warmup")
         self._warmup_ends = frozenset(
-            bar.end_time for bar in warmup[-warmup_m15_bars:]
-        ) if warmup_m15_bars else frozenset()
+            bar.end_time
+            for bar in warmup[-required_historical_context_bars:]
+        ) if required_historical_context_bars else frozenset()
 
     @staticmethod
     def _index_m1(
@@ -211,6 +217,12 @@ class SimulationClock:
             if not self.sparse_execution:
                 required.add(PriceComponent.MID)
             if set(by_component) != required:
+                # Sparse execution is intentionally not wall-clock complete.
+                # An incomplete bucket is unavailable execution data, not a
+                # reason to stop the chronological replay.  The runner makes
+                # the affected frontier explicit when it needs this bucket.
+                if self.sparse_execution:
+                    continue
                 raise ValueError(f"incomplete M1 observation at {minute.isoformat()}")
             yield M1Observation(
                 minute,
@@ -220,6 +232,17 @@ class SimulationClock:
                     *(() if self.sparse_execution else (PriceComponent.MID,)),
                 )), self.sparse_execution,
             )
+
+    def entry_observation(self, frontier: datetime) -> M1Observation | None:
+        """Return only the complete executable bucket immediately at frontier.
+
+        This is deliberately an exact lookup.  In particular, a later quote
+        cannot become an eventual fill for an earlier decision frontier.
+        """
+        frontier = _minute_utc(frontier, "frontier")
+        if not self.sparse_execution or not is_session_open_minute(frontier):
+            return None
+        return next(self.observations(frontier, frontier + timedelta(minutes=1)), None)
 
     def frames(self) -> Iterator[ClockFrame]:
         """Yield warmup and trading frontiers in strictly increasing order."""
@@ -239,7 +262,7 @@ class SimulationClock:
             completed = self._m1.get(frontier - timedelta(minutes=1), ())
             if not completed and not self.sparse_execution:
                 # The NY daily break has no executable minute ending at the
-                # frontier.  The derived M15 bar may still contain the
+                # frontier. The native M15 bar is the completed signal bar;
                 # eligible minutes in that window; it is not a decision
                 # frontier until a completed executable minute exists.
                 if not is_session_open_minute(frontier - timedelta(minutes=1)):
@@ -252,19 +275,6 @@ class SimulationClock:
                 for item in self._m1.get(frontier, ())
                 if item.bar.price_component in (PriceComponent.BID, PriceComponent.ASK)
             )
-            execution = ()
-            if phase is ClockPhase.DECISION and (
-                self.sparse_execution or is_session_open_minute(frontier)
-            ):
-                items = self._m1.get(frontier, ())
-                if {item.bar.price_component for item in items} == {
-                    PriceComponent.ASK,
-                    PriceComponent.BID,
-                    PriceComponent.MID,
-                }:
-                    execution = tuple(
-                        self.observations(frontier, frontier + timedelta(minutes=1))
-                    )
             yield ClockFrame(
                 frontier,
                 phase,
@@ -272,7 +282,7 @@ class SimulationClock:
                 decision_bar,
                 opens,
                 exposure_allowed,
-                execution,
+                (),
             )
 
     def __iter__(self) -> Iterator[ClockFrame]:

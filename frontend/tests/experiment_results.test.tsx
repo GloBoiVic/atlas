@@ -72,6 +72,13 @@ const completed = (tradeCount: string) => ({
   startingCapital: '10000',
   riskPerTrade: '0.01',
   modelVersion: 'PHASE4_HISTORICAL_EXECUTION_V1',
+  resultSchemaVersion: 'PHASE5_EXPERIMENT_RESULT_V1',
+  resultQuality: { schema: 'ATLAS_RESULT_QUALITY_V1', value: 'DETERMINED' },
+  provenance: {
+    snapshotSchema: 'ATLAS_HISTORICAL_SIMULATION_SNAPSHOT_V2',
+    analyticalSeries: 'PERSISTED_NATIVE_M15_MID',
+    executionSeries: 'SPARSE_PROVIDER_M1_BID_ASK',
+  },
   simulationConfig: { execution_resolution: 'M1' },
   metrics: {
     netReturn: { state: 'VALUE', value: '0.125', reason: null },
@@ -156,6 +163,10 @@ describe('completed Experiment result states', () => {
     expect(screen.getAllByText('Unavailable')).toHaveLength(3);
     expect(screen.getAllByText('ZERO_TRADES')).toHaveLength(3);
     expect(screen.getByText(/FINANCING EXCLUDED/)).toBeInTheDocument();
+    expect(screen.getByText(/Native M15 MID analysis/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Result schema PHASE5_EXPERIMENT_RESULT_V1/),
+    ).toBeInTheDocument();
     expect(
       screen.getByText('No executed Trades for this Experiment.'),
     ).toBeInTheDocument();

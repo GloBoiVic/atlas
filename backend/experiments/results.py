@@ -214,6 +214,7 @@ class ExperimentResultReadService:
             getattr(snapshot, "snapshot_schema", None)
             == "ATLAS_HISTORICAL_SIMULATION_SNAPSHOT_V2"
         )
+        context_bars = version.required_historical_context_bars
         try:
             if v2:
                 venue = session.get(VenueInstrumentModel, snapshot.venue_instrument_id)
@@ -257,11 +258,11 @@ class ExperimentResultReadService:
                 for bar in all_bars
                 if experiment.trading_start < bar.end_time <= experiment.trading_end
             )
-            if len(warmup) < version.warm_up_bars:
+            if len(warmup) < context_bars:
                 raise ValueError("strategy warm-up history is incomplete")
             bars = (
-                warmup[-version.warm_up_bars :] + window
-                if version.warm_up_bars
+                warmup[-context_bars:] + window
+                if context_bars
                 else window
             )
             if not bars or any(
@@ -348,10 +349,13 @@ class ExperimentResultReadService:
         omitted_range = None
         if truncated:
             omitted_range = {"start": bars[10000].end_time, "end": bars[-1].end_time}
+        result_row = self.results.result(session, experiment.id)
         diagnostics = {
             "truncated": truncated or trade_cap or omitted_facts > 0,
             "ema_period": raw_period,
-            "warm_up_bars": version.warm_up_bars,
+            "required_historical_context_bars": (
+                context_bars
+            ),
             "snapshot_fingerprint": snapshot.fingerprint,
             "m15_eligible_count": len(bars),
             "m15_returned_count": len(returned_bars),
@@ -383,6 +387,11 @@ class ExperimentResultReadService:
             for row in gap_rows
         )
         provenance = {
+            "modelVersion": experiment.model_version,
+            "resultSchemaVersion": getattr(
+                result_row, "result_schema_version", None
+            ),
+            "metricSchemaVersion": getattr(result_row, "metric_schema_version", None),
             "snapshotSchema": getattr(
                 snapshot, "snapshot_schema", "ATLAS_HISTORICAL_SNAPSHOT_V1"
             ),
@@ -398,6 +407,8 @@ class ExperimentResultReadService:
             "gapPolicyVersion": snapshot.integrity_summary.get("policy_version")
             if v2
             else None,
+            "quality": getattr(result_row, "result_quality", None),
+            "gapCount": len(gaps),
         }
         return PriceAnalysisRead(
             m15,

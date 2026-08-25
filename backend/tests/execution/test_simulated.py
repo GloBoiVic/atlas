@@ -94,6 +94,71 @@ def test_dual_touch_is_adverse_first_and_preserves_source_provenance() -> None:
     assert decision.fill.price_basis == "INTRABAR_STOP"
 
 
+@pytest.mark.parametrize(
+    ("direction", "purpose", "price", "kwargs"),
+    [
+        ("LONG", "STOP_LOSS", "1.1000", {
+            "bid_low": Decimal("1.0999"), "bid_high": Decimal("1.1040"),
+            "ask_low": Decimal("1.1050"), "ask_high": Decimal("1.1100"),
+        }),
+        ("LONG", "TAKE_PROFIT", "1.1050", {
+            "bid_low": Decimal("1.1010"), "bid_high": Decimal("1.1051"),
+            "ask_low": Decimal("1.0990"), "ask_high": Decimal("1.1000"),
+        }),
+        ("SHORT", "STOP_LOSS", "1.1050", {
+            "ask_low": Decimal("1.1010"), "ask_high": Decimal("1.1051"),
+            "bid_low": Decimal("1.0990"), "bid_high": Decimal("1.1000"),
+        }),
+        ("SHORT", "TAKE_PROFIT", "1.1000", {
+            "ask_low": Decimal("1.0999"), "ask_high": Decimal("1.1040"),
+            "bid_low": Decimal("1.1050"), "bid_high": Decimal("1.1100"),
+        }),
+    ],
+)
+def test_protection_uses_directional_executable_side(
+    direction: str, purpose: str, price: str, kwargs: dict[str, Decimal]
+) -> None:
+    stop = order(
+        "STOP", "STOP_LOSS", direction,
+        "1.1000" if direction == "LONG" else "1.1050",
+    )
+    target = order(
+        "LIMIT", "TAKE_PROFIT", direction,
+        "1.1050" if direction == "LONG" else "1.1000",
+    )
+    decision = SimulatedExecutionAdapter().execute_protection(
+        stop, target, obs("1.1002", "1.1004", **kwargs)
+    )
+    assert decision.fill is not None
+    assert decision.fill.order_id == (stop.id if purpose == "STOP_LOSS" else target.id)
+    assert decision.ambiguous is False
+
+
+def test_protection_marks_only_genuine_directional_dual_touch_ambiguous() -> None:
+    stop = order("STOP", "STOP_LOSS", "SHORT", "1.1050")
+    target = order("LIMIT", "TAKE_PROFIT", "SHORT", "1.1000")
+    decision = SimulatedExecutionAdapter().execute_protection(
+        stop,
+        target,
+        obs("1.1000", "1.1002", ask_high=Decimal("1.1051"), ask_low=Decimal("1.0999")),
+    )
+    assert decision.fill is not None and decision.fill.order_id == stop.id
+    assert decision.ambiguous is True
+    assert decision.ambiguity_policy == "STOP_LOSS_ADVERSE_FIRST_V1"
+
+
+def test_opposite_side_extremes_do_not_create_false_ambiguity() -> None:
+    stop = order("STOP", "STOP_LOSS", "LONG", "1.1000")
+    target = order("LIMIT", "TAKE_PROFIT", "LONG", "1.1050")
+    decision = SimulatedExecutionAdapter().execute_protection(
+        stop,
+        target,
+        obs("1.1002", "1.1004", bid_high=Decimal("1.1051"), ask_low=Decimal("1.0998")),
+    )
+    assert decision.fill is not None and decision.fill.order_id == target.id
+    assert decision.ambiguous is False
+
+
 def test_end_close_is_executable_side_with_adverse_slippage() -> None:
     adapter = SimulatedExecutionAdapter(slippage_ticks=1)
     fill = adapter.execute(

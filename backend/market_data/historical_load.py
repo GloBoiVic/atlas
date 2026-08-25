@@ -7,7 +7,7 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from backend.domain.market_data import PriceComponent
+from backend.domain.strategy_requirements import requirement_for_version
 from backend.experiments.configuration import ExperimentConfigurationService
 from backend.persistence.database import session_scope
 from backend.persistence.historical_data_load_repository import (
@@ -20,7 +20,6 @@ from backend.persistence.strategy_repository import (
 )
 from backend.strategies.registry import StrategyVersionUnavailableError
 
-from .coverage import diagnostic_payloads
 from .ingestion import MarketDataService, classify_failure
 
 MAX_WINDOWS = 40
@@ -45,7 +44,7 @@ def _warmup_plan(
     load_start: datetime,
     eligible_bars: int,
     provider_windows: int,
-    warm_up_bars: int,
+    required_historical_context_bars: int,
 ) -> WarmupPlan:
     """Return the next deterministic range or a bounded terminal outcome.
 
@@ -53,14 +52,17 @@ def _warmup_plan(
     estimate based on open minutes.  A caller repeats this function after
     fetching the returned range and recomputing aggregation.
     """
-    if eligible_bars >= warm_up_bars:
+    if eligible_bars >= required_historical_context_bars:
         return WarmupPlan(
             load_start, trading_end, eligible_bars, provider_windows, "READY"
         )
     bound = trading_start - timedelta(days=MAX_ELAPSED_DAYS)
     if load_start <= bound or provider_windows >= MAX_WINDOWS:
         return WarmupPlan(
-            load_start, trading_end, eligible_bars, provider_windows,
+            load_start,
+            trading_end,
+            eligible_bars,
+            provider_windows,
             "INSUFFICIENT_WARMUP",
         )
     next_start = max(bound, load_start - INITIAL_ESTIMATE)
@@ -140,7 +142,7 @@ class HistoricalDataLoadCoordinator:
                 "STRATEGY_VERSION_UNAVAILABLE",
                 "StrategyVersion is not executable on this server.",
             ) from exc
-        # 25 hours is only the first provider request.  Semantic warm-up is
+        # 25 hours is only the first provider request. Semantic context is
         # established later from completed, policy-eligible M15 results.
         load_start = trading_start - INITIAL_ESTIMATE
         load_end = trading_end
@@ -166,245 +168,72 @@ class HistoricalDataLoadCoordinator:
                     row = self.repository.claim(db, request_id)
             if row is None or row.status != "RUNNING":
                 return
-            # The durable API workflow uses the approved split-contract loader.
-            # Legacy callers that provide only ``load_missing`` continue through
-            # the V1 path (notably the explicit CLI flow).
-            load_v2 = getattr(self.ingestion, "load_v2", None)
-            if callable(load_v2):
-                warm_up_bars = self._warmup_bars(row)
-                load_start = row.load_start
-                windows = 0
-                while True:
-                    snapshot_report = load_v2(load_start, row.load_end)
-                    snapshot = snapshot_report.snapshot
-                    if snapshot is None:
-                        self._fail(
-                            request_id,
-                            "VALIDATION",
-                            "SNAPSHOT_CREATION_FAILED",
-                            "A valid V2 dataset snapshot could not be created.",
-                        )
-                        return
-                    windows += 1
-                    eligible = self._v2_warmup_count(
-                        snapshot.id, row.trading_start, snapshot_report
+            with session_scope(self.session_factory) as db:
+                version_row = self.strategies.get_version(db, row.strategy_version_id)
+                requirement = requirement_for_version(version_to_domain(version_row))
+            required_context = requirement.required_historical_context_bars
+            load_start = row.load_start
+            windows = 0
+            while True:
+                snapshot_report = self.ingestion.load_v2(load_start, row.load_end)
+                snapshot = snapshot_report.snapshot
+                if snapshot is None:
+                    self._fail(
+                        request_id,
+                        "VALIDATION",
+                        "SNAPSHOT_CREATION_FAILED",
+                        "A valid V2 dataset snapshot could not be created.",
                     )
-                    plan = _warmup_plan(
-                        row.trading_start,
-                        row.trading_end,
-                        load_start,
-                        eligible,
-                        windows,
-                        warm_up_bars,
-                    )
-                    if plan.outcome == "READY":
-                        break
-                    if plan.outcome == "INSUFFICIENT_WARMUP":
-                        self._fail(
-                            request_id,
-                            "VALIDATION",
-                            "INSUFFICIENT_WARMUP",
-                            "Fewer than the configured eligible native M15 bars "
-                            "are available within the bounded warm-up horizon.",
-                        )
-                        return
-                    load_start = plan.load_start
-                if eligible < warm_up_bars:
-                    # Keep completion fail-closed even if a future planner
-                    # change accidentally reports READY from non-membership
-                    # metadata.
+                    return
+                windows += 1
+                eligible = self._v2_warmup_count(
+                    snapshot.id, row.trading_start, snapshot_report
+                )
+                plan = _warmup_plan(
+                    row.trading_start,
+                    row.trading_end,
+                    load_start,
+                    eligible,
+                    windows,
+                    required_context,
+                )
+                if plan.outcome == "READY":
+                    break
+                if plan.outcome == "INSUFFICIENT_WARMUP":
                     self._fail(
                         request_id,
                         "VALIDATION",
                         "INSUFFICIENT_WARMUP",
-                        "The V2 snapshot does not contain enough actual native "
-                        "M15 bars before trading_start.",
-                        snapshot.id,
+                        "Fewer than the configured eligible native M15 bars are "
+                        "available within the bounded warm-up horizon.",
                     )
                     return
-                coverage_json = {
-                    "valid": True,
-                    "policy_version": "ATLAS_HISTORICAL_GAP_POLICY_V1",
-                    "snapshot_schema": snapshot.snapshot_schema,
-                    "analytical_contract": "OANDA_M15_NATIVE_UTC_V1",
-                    "gapCount": snapshot.integrity_summary.get("gap_count", 0),
-                    "diagnostics": [],
-                }
-                validation_json = {
-                    "valid": True,
-                    "warmUpRequired": self._warmup_bars(row),
-                    "warmUpAvailable": eligible,
-                    "reasons": [],
-                    "snapshot_schema": snapshot.snapshot_schema,
-                }
-                with session_scope(self.session_factory) as db:
-                    with db.begin():
-                        self.repository.complete(
-                            db,
-                            request_id,
-                            snapshot_id=snapshot.id,
-                            coverage_summary=coverage_json,
-                            experiment_validation=validation_json,
-                        )
-                return
-            report = self.ingestion.load_missing(
-                row.load_start,
-                row.load_end,
-                progress=lambda r: self._progress(request_id, r),
-            )
-            coverage = report.coverage
-            diagnostics, diagnostics_truncated = diagnostic_payloads(coverage)
-            coverage_json = {
-                "valid": coverage.valid,
-                "expectedOpenMinutes": coverage.expected_open_minutes,
-                "memberMinutes": coverage.member_minutes,
-                "gapCount": len(coverage.gaps),
-                "policy_version": "OANDA_FX_NY_V1",
-                "gaps": [
-                    item
-                    for item in diagnostics
-                    if item["reason"] == "UNEXPECTED_MISSING_DATA"
-                ],
-                "anomalies": [
-                    item
-                    for item in diagnostics
-                    if item["reason"]
-                    == "UNEXPECTED_OBSERVATION_DURING_UNAVAILABLE_SESSION"
-                ],
-                "diagnostics": diagnostics,
-                "truncated": diagnostics_truncated,
-            }
-            self._progress(request_id, report, coverage_json)
-            if report.failure or report.incomplete_minutes or not coverage.valid:
-                if report.failure:
-                    category, code, detail = (
-                        report.failure.category,
-                        report.failure.code,
-                        report.failure.detail,
-                    )
-                else:
-                    category, code, detail = (
-                        "MARKET_DATA",
-                        "INCOMPLETE_HISTORICAL_DATA",
-                        "Historical data coverage is incomplete.",
-                    )
-                self._fail(request_id, category, code, detail)
-                return
-            warm_up_bars = self._warmup_bars(row)
-            warmup_enabled = warm_up_bars > 0
-            load_start = row.load_start
-            if warmup_enabled:
-                windows = len(report.fetched_ranges)
-                eligible = len(
-                    self.ingestion.current_m15(
-                        load_start, row.trading_start, PriceComponent.MID
-                    )
-                )
-                while True:
-                    plan = _warmup_plan(
-                        row.trading_start,
-                        row.trading_end,
-                        load_start,
-                        eligible,
-                        windows,
-                        warm_up_bars,
-                    )
-                    if plan.outcome == "READY":
-                        break
-                    if plan.outcome == "INSUFFICIENT_WARMUP":
-                        self._fail(
-                            request_id,
-                            "VALIDATION",
-                            "INSUFFICIENT_WARMUP",
-                            "Fewer than 100 eligible completed M15 bars are "
-                            "available within the 90-day/40-window bounds.",
-                        )
-                        return
-                    extension_ranges = self.ingestion.plan_missing(
-                        plan.load_start, load_start
-                    )
-                    if windows + len(extension_ranges) > MAX_WINDOWS:
-                        self._fail(
-                            request_id,
-                            "VALIDATION",
-                            "INSUFFICIENT_WARMUP",
-                            "Fewer than 100 eligible completed M15 bars are "
-                            "available within the 90-day/40-window bounds.",
-                        )
-                        return
-                    extension = self.ingestion.load_missing(
-                        plan.load_start,
-                        load_start,
-                        progress=lambda r: self._progress(request_id, r),
-                    )
-                    if (
-                        extension.failure
-                        or extension.incomplete_minutes
-                        or not extension.coverage.valid
-                    ):
-                        self._fail(
-                            request_id,
-                            "MARKET_DATA",
-                            "INCOMPLETE_HISTORICAL_DATA",
-                            "Historical data coverage is incomplete.",
-                        )
-                        return
-                    load_start = plan.load_start
-                    windows += len(extension.fetched_ranges)
-                    eligible = len(
-                        self.ingestion.current_m15(
-                            load_start, row.trading_start, PriceComponent.MID
-                        )
-                    )
-            snapshot = self.ingestion.create_snapshot(
-                load_start if warmup_enabled else row.load_start,
-                row.load_end,
-            ).snapshot
-            if snapshot is None:
+                load_start = plan.load_start
+            if eligible < required_context:
                 self._fail(
                     request_id,
                     "VALIDATION",
-                    "SNAPSHOT_CREATION_FAILED",
-                    "A valid dataset snapshot could not be created.",
-                )
-                return
-            self.ingestion.derive_m15(snapshot.fingerprint, PriceComponent.MID)
-            with session_scope(self.session_factory) as db:
-                validation = self.configuration.validate_coverage(
-                    db,
-                    strategy_version_id=row.strategy_version_id,
-                    dataset_snapshot_id=snapshot.id,
-                    trading_start=row.trading_start,
-                    trading_end=row.trading_end,
-                )
-            validation_json = {
-                "valid": validation.valid,
-                "warmUpRequired": validation.warm_up_required,
-                "warmUpAvailable": validation.warm_up_available,
-                "reasons": list(validation.reasons),
-            }
-            validation_report = getattr(validation, "report", None)
-            validation_diagnostics, validation_truncated = (
-                diagnostic_payloads(validation_report)
-                if validation_report
-                else ([], False)
-            )
-            validation_json.update(
-                {
-                    "policy_version": "OANDA_FX_NY_V1",
-                    "diagnostics": validation_diagnostics,
-                    "diagnostics_truncated": validation_truncated,
-                }
-            )
-            if not validation.valid:
-                self._fail(
-                    request_id,
-                    "VALIDATION",
-                    "EXPERIMENT_COVERAGE_INVALID",
-                    "Experiment coverage validation did not pass.",
+                    "INSUFFICIENT_WARMUP",
+                    "The V2 snapshot does not contain enough actual native M15 "
+                    "bars before trading_start.",
                     snapshot.id,
                 )
                 return
+            coverage_json = {
+                "valid": True,
+                "policy_version": "ATLAS_HISTORICAL_GAP_POLICY_V1",
+                "snapshot_schema": snapshot.snapshot_schema,
+                "analytical_contract": "OANDA_M15_NATIVE_UTC_V1",
+                "gapCount": snapshot.integrity_summary.get("gap_count", 0),
+                "diagnostics": [],
+            }
+            validation_json = {
+                "valid": True,
+                "requiredHistoricalContextBars": required_context,
+                "warmUpAvailable": eligible,
+                "reasons": [],
+                "snapshot_schema": snapshot.snapshot_schema,
+            }
             with session_scope(self.session_factory) as db:
                 with db.begin():
                     self.repository.complete(
@@ -433,14 +262,20 @@ class HistoricalDataLoadCoordinator:
                     coverage_summary=coverage,
                 )
 
-    def _warmup_bars(self, row) -> int:
-        """Read the immutable StrategyVersion setting for the planning pass."""
+    def _required_context_bars(self, row) -> int:
+        """Read the canonical Strategy market-data requirement."""
         if not hasattr(row, "strategy_version_id"):
             return 0
         try:
             with session_scope(self.session_factory) as db:
                 version_row = self.strategies.get_version(db, row.strategy_version_id)
-                return version_to_domain(version_row).warm_up_bars if version_row else 0
+                return (
+                    requirement_for_version(
+                        version_to_domain(version_row)
+                    ).required_historical_context_bars
+                    if version_row
+                    else 0
+                )
         except (AttributeError, TypeError):
             # Small coordinator fakes used by unit tests need not implement
             # the persistence seam; normal model rows always do.
@@ -456,7 +291,9 @@ class HistoricalDataLoadCoordinator:
                 return int(summary.get("analytical_count", 0))
             return int(
                 db.scalar(
-                    select(func.count(DatasetSnapshotAnalyticalBarModel.sequence)).where(
+                    select(
+                        func.count(DatasetSnapshotAnalyticalBarModel.sequence)
+                    ).where(
                         DatasetSnapshotAnalyticalBarModel.dataset_snapshot_id
                         == snapshot_id,
                         DatasetSnapshotAnalyticalBarModel.start_time < trading_start,

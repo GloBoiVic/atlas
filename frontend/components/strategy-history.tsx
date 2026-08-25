@@ -18,7 +18,7 @@ type Version = {
   gitSha: string | null;
   parameterSchema: Record<string, unknown>[];
   timeframe: string;
-  warmUpBars: number;
+  requiredHistoricalContextBars: number;
   capabilities: string[];
   experimentCount: number;
   lastUsedAt: string | null;
@@ -218,10 +218,11 @@ export function StrategyDetailPage() {
                     </div>
                     <div>
                       <dt className="text-atlas-foreground-muted">
-                        Timeframe / warm-up
+                        Timeframe / required context
                       </dt>
                       <dd className="font-medium">
-                        {v.timeframe} · {v.warmUpBars} bars
+                        {v.timeframe} · {v.requiredHistoricalContextBars}{' '}
+                        context bars
                       </dd>
                     </div>
                     <div>

@@ -1,13 +1,18 @@
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
 
+from backend.experiments.configuration import missing_analytical_frontiers
 from backend.experiments.runner import (
     ExperimentRunner,
     Phase4DiagnosticStage,
     Phase4RunnerComparisonDiagnostic,
     Phase4ValueErrorDiagnostic,
     _diagnostic_reason,
+    result_quality_for_gaps,
+    terminal_protection_observation,
 )
+from backend.market_data.session_calendar import eligible_m15_windows
 
 
 def test_known_value_error_diagnostic_has_only_closed_fields() -> None:
@@ -84,6 +89,58 @@ def test_absent_or_raising_sink_cannot_escape() -> None:
         experiment, Phase4DiagnosticStage.RESULT_FINALIZATION, ValueError("unknown")
     )
 
+
+def test_terminal_sparse_absence_fails_closed_even_with_entry_observation() -> None:
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    entry = SimpleNamespace(start_time=start, end_time=start + timedelta(minutes=1))
+    assert terminal_protection_observation(
+        (entry,), start, start + timedelta(minutes=15)
+    ) is None
+
+
+def test_terminal_quote_before_end_is_not_a_terminal_observation() -> None:
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    quote = SimpleNamespace(start_time=start, end_time=start + timedelta(minutes=1))
+    assert terminal_protection_observation(
+        (quote,), start, start + timedelta(minutes=2)
+    ) is None
+
+
+def test_quality_distinguishes_material_and_non_material_gaps() -> None:
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    end = start + timedelta(minutes=15)
+    non_material = SimpleNamespace(blocked=False, start_time=start, end_time=end)
+    material = SimpleNamespace(blocked=True, start_time=start, end_time=end)
+    assert result_quality_for_gaps((non_material,), (), start, end) == "DETERMINED"
+    assert result_quality_for_gaps((material,), (), start, end) == "DEGRADED"
+
+
+def test_internal_native_analytical_frontier_is_explicitly_missing() -> None:
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    assert missing_analytical_frontiers(
+        {start, start + timedelta(minutes=30)}, start, start + timedelta(minutes=45)
+    ) == (start + timedelta(minutes=15),)
+
+
+def test_weekend_session_closure_is_not_an_analytical_frontier_gap() -> None:
+    start = datetime(2025, 1, 10, 21, 0, tzinfo=UTC)
+    end = datetime(2025, 1, 13, 23, 0, tzinfo=UTC)
+    eligible = eligible_m15_windows(start, end)
+
+    assert eligible
+    assert (
+        missing_analytical_frontiers({item[0] for item in eligible}, start, end) == ()
+    )
+
+
+def test_internal_open_session_frontier_remains_a_gap() -> None:
+    start = datetime(2025, 1, 6, 14, 0, tzinfo=UTC)
+    end = datetime(2025, 1, 6, 16, 0, tzinfo=UTC)
+    eligible = eligible_m15_windows(start, end)
+    missing = eligible[len(eligible) // 2][0]
+
+    analytical_starts = {item[0] for item in eligible} - {missing}
+    assert missing_analytical_frontiers(analytical_starts, start, end) == (missing,)
 
 def test_comparison_record_has_exact_closed_shape_and_no_raw_values() -> None:
     record = Phase4RunnerComparisonDiagnostic(

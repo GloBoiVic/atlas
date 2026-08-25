@@ -342,6 +342,7 @@ class MarketDataRepository:
             (row.start_time, row.price_component): row for row in rows if row.is_current
         }
         new_rows: list[MarketBarModel] = []
+        reactivations: list[MarketBarModel] = []
         current_changed = False
         for item, logical, fingerprint in prepared:
             key = (
@@ -375,13 +376,20 @@ class MarketDataRepository:
                 variants[(*key, fingerprint)] = variant
                 inserted += 1
             else:
-                variant.is_current = True
+                # Deactivate the current projection before reactivating an
+                # existing variant. PostgreSQL's partial unique index must
+                # observe that ordering; assigning both flags in one unit of
+                # work lets SQLAlchemy emit the INSERT/UPDATE in the wrong
+                # order.
+                reactivations.append(variant)
                 reactivated += 1
             current_by_key[key] = variant
         if current_changed:
             # PostgreSQL's partial unique index requires old projections to be
             # durable before a replacement is made current.
             session.flush()
+        for variant in reactivations:
+            variant.is_current = True
         session.add_all(new_rows)
         session.flush()
         return BarBatchResult(inserted, reactivated, unchanged)

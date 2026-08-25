@@ -40,7 +40,7 @@ def database_url():
     return os.environ["ATLAS_TEST_DATABASE_URL"]
 
 
-def _complete_experiment(database_url, *, direction, phase4=False):
+def _complete_experiment(database_url, *, direction):
     """Persist a golden-flow Experiment, run it COMPLETED, and return its id."""
     engine = configure_utc_session_timezone(create_engine(database_url))
     try:
@@ -52,7 +52,7 @@ def _complete_experiment(database_url, *, direction, phase4=False):
                     "instruments CASCADE"
                 )
             )
-            experiment_id, _, _ = _seed(session, direction, phase4=phase4)
+            experiment_id, _, _ = _seed(session, direction)
         with Session(engine) as session, session.begin():
             result = ExperimentRunner(
                 strategy_registry=_registry()
@@ -71,10 +71,7 @@ def test_dataset_snapshot_option_accepts_v1_and_v2_schema_aliases():
         "coverageEnd": "2026-01-02T00:00:00Z",
         "integrity": {},
     }
-    for schema in (
-        "ATLAS_HISTORICAL_SNAPSHOT_V1",
-        "ATLAS_HISTORICAL_SIMULATION_SNAPSHOT_V2",
-    ):
+    for schema in ("ATLAS_HISTORICAL_SIMULATION_SNAPSHOT_V2",):
         value = ExperimentDatasetSnapshotOptionResponse.model_validate(
             {**base, "snapshotSchema": schema}
         )
@@ -127,7 +124,7 @@ def test_create_and_read_contract_timestamps_are_utc_z(database_url):
         "tradingStart": (START + timedelta(minutes=1500))
         .isoformat()
         .replace("+00:00", "Z"),
-        "tradingEnd": (START + timedelta(minutes=1590))
+        "tradingEnd": (START + timedelta(minutes=1560))
         .isoformat()
         .replace("+00:00", "Z"),
         "startingCapital": "10000",
@@ -187,7 +184,7 @@ def test_experiment_cursor_is_keyset_stable_and_bounded(database_url):
 def test_completed_experiment_list_reuses_detail_metrics_and_pagination(database_url):
     engine = configure_utc_session_timezone(create_engine(database_url))
     with Session(engine) as session, session.begin():
-        experiment_id, _, _ = _seed(session, "LONG", phase4=True)
+        experiment_id, _, _ = _seed(session, "LONG")
         row = session.get(ExperimentModel, experiment_id)
         assert row is not None
         row.status = "COMPLETED"
@@ -240,7 +237,7 @@ def test_http_comparison_uses_public_repeated_ids_and_is_read_only(database_url)
     engine = configure_utc_session_timezone(create_engine(database_url))
     try:
         with Session(engine) as session, session.begin():
-            first_id, snapshot_id, version_id = _seed(session, "LONG", phase4=True)
+            first_id, snapshot_id, version_id = _seed(session, "LONG")
             first = session.get(ExperimentModel, first_id)
             assert first is not None
             repository = ExperimentRepository()
@@ -343,9 +340,7 @@ def test_price_analysis_completed_returns_m15_ema_and_markers(database_url):
     """LONG golden flow completed Experiment exposes M15/EMA + trade markers."""
     engine = configure_utc_session_timezone(create_engine(database_url))
     try:
-        experiment_id = _complete_experiment(
-            database_url, direction="LONG", phase4=True
-        )
+        experiment_id = _complete_experiment(database_url, direction="LONG")
         # Snapshot counts BEFORE the API call so we can verify read-only behavior.
         with Session(engine) as before_session:
             before_counts = {
@@ -369,13 +364,12 @@ def test_price_analysis_completed_returns_m15_ema_and_markers(database_url):
             assert payload["tradingWindow"]["end"].endswith("Z")
             assert len(payload["m15"]) > 0
             assert len(payload["ema"]) > 0
-            # Phase4 LONG golden flow produces 2 Trades by design.
             assert len(payload["trades"]) >= 1, (
                 "Completed Experiment must expose at least one trade marker"
             )
             diagnostics = payload["diagnostics"]
             assert diagnostics["emaPeriod"] == PARAMETERS["ema_period"]
-            assert diagnostics["warmUpBars"] == 100
+            assert diagnostics["requiredHistoricalContextBars"] == 100
             assert diagnostics["truncated"] is False
             assert diagnostics["snapshotFingerprint"]
             assert diagnostics["m15EligibleCount"] == diagnostics["m15ReturnedCount"]

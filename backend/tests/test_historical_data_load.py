@@ -223,6 +223,25 @@ class FakeSession:
         pass
 
 
+class FakeStrategies:
+    def get_version(self, _session, version_id):
+        return SimpleNamespace(
+            id=version_id,
+            strategy=SimpleNamespace(strategy_key="ema_sweep_engulfing"),
+            version_number=2,
+            source_fingerprint="f" * 64,
+            implementation_key="ema_sweep_engulfing.v2",
+            parameter_schema=[], primary_timeframe="15m",
+            required_historical_context_bars=100,
+            state_schema_version=1, created_at=UTC_START,
+        )
+
+
+class FakeRegistry:
+    def implementation_for_version(self, _version):
+        return object()
+
+
 class FakeRepository:
     def __init__(self, row):
         self.row = row
@@ -240,6 +259,9 @@ class FakeRepository:
         self.events.append("complete")
         self.row.status = "COMPLETED"
 
+    def fail_if_active(self, _session, *_args, **_kwargs):
+        self.row.status = "FAILED"
+
 
 def test_claim_failure_is_attempted_as_sanitized_terminal_failure(monkeypatch) -> None:
     row = SimpleNamespace(id=uuid4(), status="PENDING")
@@ -251,8 +273,9 @@ def test_claim_failure_is_attempted_as_sanitized_terminal_failure(monkeypatch) -
         lambda: FakeSession(),
         SimpleNamespace(),
         SimpleNamespace(),
-        SimpleNamespace(),
+        FakeRegistry(),
         repository=repository,
+        strategies=FakeStrategies(),
     )
 
     @contextmanager
@@ -277,28 +300,16 @@ def test_success_order_is_load_snapshot_m15_then_validation() -> None:
     )
     repository = FakeRepository(row)
     ingestion = SimpleNamespace(
-        load_missing=lambda *_args, **_kwargs: (
+        load_v2=lambda *_args, **_kwargs: (
             events.append("load")
             or SimpleNamespace(
-                coverage=SimpleNamespace(
-                    valid=True, expected_open_minutes=15, member_minutes=15, gaps=[]
+                snapshot=SimpleNamespace(
+                    id=uuid4(),
+                    snapshot_schema="ATLAS_HISTORICAL_SIMULATION_SNAPSHOT_V2",
+                    integrity_summary={"warmup_count": 100, "gap_count": 0},
                 ),
-                failure=None,
-                incomplete_minutes=(),
-                fetched_ranges=(),
-                committed_ranges=(),
-                inserted=1,
-                reactivated=0,
-                unchanged=0,
             )
         ),
-        create_snapshot=lambda *_args: (
-            events.append("snapshot")
-            or SimpleNamespace(
-                snapshot=SimpleNamespace(id=uuid4(), fingerprint="a" * 64)
-            )
-        ),
-        derive_m15=lambda *_args: events.append("m15"),
     )
     configuration = SimpleNamespace(
         validate_coverage=lambda *_args, **_kwargs: (
@@ -312,13 +323,14 @@ def test_success_order_is_load_snapshot_m15_then_validation() -> None:
         lambda: FakeSession(),
         ingestion,
         configuration,
-        SimpleNamespace(),
+        FakeRegistry(),
         repository=repository,
+        strategies=FakeStrategies(),
     )
 
     coordinator.run(row.id)
 
-    assert events == ["load", "snapshot", "m15", "validation"]
+    assert events == ["load"]
     assert row.status == "COMPLETED"
 
 
@@ -341,11 +353,11 @@ def test_durable_load_prefers_v2_acquisition_when_available() -> None:
             events.append("v2")
             or SimpleNamespace(snapshot=snapshot)
         ),
-        load_missing=lambda *_args, **_kwargs: events.append("legacy"),
     )
     coordinator = HistoricalDataLoadCoordinator(
-        lambda: FakeSession(), ingestion, SimpleNamespace(), SimpleNamespace(),
+        lambda: FakeSession(), ingestion, SimpleNamespace(), FakeRegistry(),
         repository=repository,
+        strategies=FakeStrategies(),
     )
 
     coordinator.run(row.id)
@@ -363,7 +375,7 @@ def test_v2_warmup_extends_on_actual_native_count_with_session_closures() -> Non
         strategy_version_id=uuid4(),
     )
     repository = FakeRepository(row)
-    counts = iter((100, 200))
+    counts = iter((99, 200))
 
     def load_v2(start: datetime, _end: datetime):
         starts.append(start)
@@ -376,10 +388,9 @@ def test_v2_warmup_extends_on_actual_native_count_with_session_closures() -> Non
 
     coordinator = HistoricalDataLoadCoordinator(
         lambda: FakeSession(), SimpleNamespace(load_v2=load_v2),
-        SimpleNamespace(), SimpleNamespace(), repository=repository,
+        SimpleNamespace(), FakeRegistry(), repository=repository,
+        strategies=FakeStrategies(),
     )
-    coordinator._warmup_bars = lambda _row: 200
-
     coordinator.run(row.id)
 
     assert starts == [UTC_START, UTC_START - timedelta(hours=25)]

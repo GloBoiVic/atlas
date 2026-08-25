@@ -33,7 +33,7 @@ def synchronize_strategy_catalog(
                 implementation_key=definition.implementation_key,
                 parameter_schema=definition.parameter_schema,
                 primary_timeframe=definition.primary_timeframe,
-                warm_up_bars=definition.warm_up_bars,
+                required_historical_context_bars=definition.required_historical_context_bars,
                 state_schema_version=definition.state_schema_version,
                 created_at=datetime.now(UTC),
             )

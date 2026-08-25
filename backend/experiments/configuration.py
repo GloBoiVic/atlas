@@ -10,10 +10,11 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.domain.market_data import Instrument, PriceComponent, Provider
+from backend.domain.market_data import Instrument, Provider
 from backend.domain.strategy import StrategyParameters
-from backend.market_data.aggregation import aggregate_m1_to_m15
-from backend.market_data.coverage import CoverageGap, CoverageReport, validate_coverage
+from backend.domain.strategy_requirements import requirement_for_version
+from backend.market_data.coverage import CoverageGap, CoverageReport
+from backend.market_data.session_calendar import eligible_m15_windows
 from backend.persistence.experiment_repository import ExperimentRepository
 from backend.persistence.market_data_repository import DatasetSnapshotRepository
 from backend.persistence.models import (
@@ -33,9 +34,9 @@ from backend.strategies.registry import (
     StrategyVersionUnavailableError,
 )
 
-RISK_SCHEMA_VERSION = "PHASE4_RISK_CONFIG_V1"
-SIMULATION_SCHEMA_VERSION = "PHASE4_SIMULATION_CONFIG_V1"
-MODEL_VERSION = "PHASE4_HISTORICAL_EXECUTION_V1"
+RISK_SCHEMA_VERSION = "PHASE5_RISK_CONFIG_V1"
+SIMULATION_SCHEMA_VERSION = "PHASE5_SIMULATION_CONFIG_V1"
+MODEL_VERSION = "PHASE5_HISTORICAL_EXECUTION_V2"
 
 
 def simulation_config(
@@ -107,6 +108,19 @@ class ConfigurationError(ValueError):
     def __init__(self, code: str, detail: str) -> None:
         self.code = code
         super().__init__(detail)
+
+
+def missing_analytical_frontiers(
+    analytical_starts: set[datetime], required_start: datetime, trading_end: datetime
+) -> tuple[datetime, ...]:
+    """Return eligible native M15 frontiers absent from the snapshot."""
+    expected = (
+        window_start
+        for window_start, _window_end in eligible_m15_windows(
+            required_start, trading_end
+        )
+    )
+    return tuple(frontier for frontier in expected if frontier not in analytical_starts)
 
 
 def _utc_aligned(value: datetime, name: str, *, fifteen: bool = False) -> None:
@@ -209,6 +223,7 @@ class ExperimentConfigurationService:
             )
         try:
             version = version_to_domain(version_row)
+            requirement = requirement_for_version(version)
             self.registry.implementation_for_version(version)
         except StrategyVersionUnavailableError:
             return CoverageValidation(
@@ -216,7 +231,7 @@ class ExperimentConfigurationService:
                 trading_start,
                 trading_end,
                 None,
-                version_row.warm_up_bars,
+                requirement.required_historical_context_bars,
                 0,
                 dataset_snapshot_id,
                 snapshot_row.fingerprint,
@@ -239,81 +254,32 @@ class ExperimentConfigurationService:
                 trading_start,
                 trading_end,
                 None,
-                version.warm_up_bars,
+                requirement.required_historical_context_bars,
                 0,
                 dataset_snapshot_id,
                 snapshot_row.fingerprint,
                 None,
                 ("SNAPSHOT_VENUE_INCOMPATIBLE",),
             )
-        if snapshot_row.snapshot_schema == "ATLAS_HISTORICAL_SIMULATION_SNAPSHOT_V2":
-            return self._validate_v2_coverage(
-                session,
-                snapshot_row,
-                version.warm_up_bars,
+        if snapshot_row.snapshot_schema != "ATLAS_HISTORICAL_SIMULATION_SNAPSHOT_V2":
+            return CoverageValidation(
+                False,
                 trading_start,
                 trading_end,
+                None,
+                requirement.required_historical_context_bars,
+                0,
+                dataset_snapshot_id,
+                snapshot_row.fingerprint,
+                None,
+                ("UNSUPPORTED_SNAPSHOT_SCHEMA",),
             )
-        descriptor = self.snapshots.by_fingerprint(session, snapshot_row.fingerprint)
-        members = self.snapshots.members(session, descriptor.id)
-        mid = tuple(
-            item for item in members if item.price_component is PriceComponent.MID
-        )
-        m15, warmup_diagnostics = aggregate_m1_to_m15(
-            mid,
-            PriceComponent.MID,
-            descriptor.coverage_start,
-            descriptor.coverage_end,
-        )
-        warm = tuple(bar for bar in m15 if bar.end_time <= trading_start)
-        selected = warm[-version.warm_up_bars :] if version.warm_up_bars else ()
-        required_start = (
-            selected[0].start_time if len(selected) == version.warm_up_bars else None
-        )
-        reasons: list[str] = []
-        if required_start is None:
-            reasons.append("INSUFFICIENT_WARMUP")
-            required_start = trading_start
-        if (
-            required_start < descriptor.coverage_start
-            or trading_end > descriptor.coverage_end
-        ):
-            reasons.append("RANGE_OUTSIDE_SNAPSHOT")
-            report = None
-        else:
-            report = validate_coverage(required_start, trading_end, members)
-            if not report.valid:
-                reasons.extend(
-                    (
-                        "MISSING_COMPONENTS" if report.missing else "",
-                        "GAPS" if report.gaps else "",
-                        "UNEXPECTED_MISSING_DATA"
-                        if report.interval_diagnostics
-                        else "",
-                        "CLOSURE_ANOMALY" if report.closure_anomalies else "",
-                        "UNEXPECTED_OBSERVATION"
-                        if report.unexpected_observations
-                        else "",
-                    )
-                )
-                reasons = [reason for reason in reasons if reason]
-        if any(
-            diagnostic.interval_end > required_start
-            and diagnostic.interval_start < trading_end
-            for diagnostic in warmup_diagnostics
-        ):
-            reasons.append("UNEXPECTED_MISSING_DATA")
-        return CoverageValidation(
-            not reasons,
+        return self._validate_v2_coverage(
+            session,
+            snapshot_row,
+            requirement.required_historical_context_bars,
             trading_start,
             trading_end,
-            required_start,
-            version.warm_up_bars,
-            len(warm),
-            dataset_snapshot_id,
-            snapshot_row.fingerprint,
-            report,
-            tuple(dict.fromkeys(reasons)),
         )
 
     @staticmethod
@@ -364,6 +330,10 @@ class ExperimentConfigurationService:
         )
         if not requested_analytical:
             reasons.append("INSUFFICIENT_ANALYTICAL_DATA")
+        if missing_analytical_frontiers(
+            {item.start_time for item in analytical}, required_start, trading_end
+        ):
+            reasons.append("MISSING_ANALYTICAL_FRONTIERS")
 
         blocked_gaps = session.scalars(
             select(DatasetSnapshotGapModel)

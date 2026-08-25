@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     )
 
     database_url: SecretStr
+    test_database_url: SecretStr | None = None
     environment: Environment = Environment.DEVELOPMENT
     log_level: LogLevel = LogLevel.INFO
     database_connect_timeout_seconds: int = Field(default=3, ge=1, le=30)

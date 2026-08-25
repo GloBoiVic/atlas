@@ -512,9 +512,14 @@ class StrategyVersion:
     implementation_key: str
     parameter_schema: tuple[ParameterSchema, ...]
     primary_timeframe: Timeframe = Timeframe.M15
-    warm_up_bars: int = 100
+    required_historical_context_bars: int = 100
     state_schema_version: int = 1
     created_at: datetime = datetime.min.replace(tzinfo=UTC)
+
+    @property
+    def warm_up_bars(self) -> int:
+        """Deprecated compatibility read; persistence uses the canonical name."""
+        return self.required_historical_context_bars
 
     def __post_init__(self) -> None:
         if (
@@ -526,7 +531,7 @@ class StrategyVersion:
             raise VersionError("version identity fields have invalid types")
         if (
             type(self.version_number) is not int
-            or type(self.warm_up_bars) is not int
+            or type(self.required_historical_context_bars) is not int
             or type(self.state_schema_version) is not int
         ):
             raise VersionError("version fields must be integers")
@@ -538,11 +543,11 @@ class StrategyVersion:
             raise VersionError("parameter_schema must be a tuple of descriptors")
         if (
             self.version_number <= 0
-            or self.warm_up_bars < 0
+            or self.required_historical_context_bars < 0
             or self.state_schema_version <= 0
         ):
             raise VersionError(
-                "version numbers must be positive and warm-up nonnegative"
+                "version numbers must be positive and historical context nonnegative"
             )
         if (
             len(self.source_fingerprint) != 64
@@ -567,7 +572,7 @@ class StrategyVersion:
             "implementation_key": self.implementation_key,
             "parameter_schema": [item.to_json() for item in self.parameter_schema],
             "primary_timeframe": self.primary_timeframe.value,
-            "warm_up_bars": self.warm_up_bars,
+            "required_historical_context_bars": self.required_historical_context_bars,
             "state_schema_version": self.state_schema_version,
             "created_at": self.created_at.isoformat().replace("+00:00", "Z"),
         }

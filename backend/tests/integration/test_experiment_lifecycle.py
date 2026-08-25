@@ -1,12 +1,10 @@
-from datetime import UTC, datetime, timedelta
-from decimal import Decimal
+from datetime import UTC, datetime
 from threading import Event, Thread
 
 import pytest
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from backend.experiments.configuration import ExperimentConfigurationService
 from backend.experiments.lifecycle import (
     ExperimentRunInfrastructureError,
     ExperimentRunService,
@@ -18,13 +16,9 @@ from backend.experiments.runner import (
 )
 from backend.persistence.experiment_repository import ExperimentRepository
 from backend.persistence.models import ExperimentEquityPointModel, ExperimentModel
-from backend.tests.integration.test_experiment_configuration import (
-    _seed_configuration,
-)
 from backend.tests.integration.test_golden_flows import (
-    PARAMETERS,
     START,
-    _registry,
+    _seed,
     database_url,  # noqa: F401
 )
 
@@ -72,23 +66,10 @@ class GatedRunner:
 
 def _create(engine, count: int = 1):
     with Session(engine) as session:
-        version, snapshot = _seed_configuration(session)
-        service = ExperimentConfigurationService(_registry())
-        experiments = [
-            service.create(
-                session,
-                strategy_version_id=version.id,
-                dataset_snapshot_id=snapshot.id,
-                trading_start=START + timedelta(minutes=1500),
-                trading_end=START + timedelta(minutes=1590),
-                starting_capital=Decimal("10000"),
-                risk_per_trade=Decimal("0.01"),
-                parameters=PARAMETERS,
-                slippage_ticks=0,
-                commission_per_unit=Decimal("0"),
-            )
-            for _ in range(count)
-        ]
+        experiments = []
+        for _ in range(count):
+            experiment_id, _, _ = _seed(session, "LONG")
+            experiments.append(session.get(ExperimentModel, experiment_id))
         session.commit()
         return (
             experiments[0].id

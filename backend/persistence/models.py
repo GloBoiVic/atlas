@@ -22,7 +22,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, synonym
 from sqlalchemy.sql.naming import conv
 
 from .base import Base
@@ -87,7 +87,10 @@ class StrategyVersionModel(Base):
     source_manifest: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
     exact_source_snapshot: Mapped[dict[str, str]] = mapped_column(JSONB, nullable=False)
     primary_timeframe: Mapped[str] = mapped_column(String(20), nullable=False)
-    warm_up_bars: Mapped[int] = mapped_column(nullable=False)
+    required_historical_context_bars: Mapped[int] = mapped_column(nullable=False)
+    # Transitional read alias for older runtime callers; the database column
+    # and canonical persistence contract use required_historical_context_bars.
+    warm_up_bars = synonym("required_historical_context_bars")
     state_schema_version: Mapped[int] = mapped_column(nullable=False)
     git_sha: Mapped[str | None] = mapped_column(String(40), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -610,7 +613,7 @@ class ExperimentResultModel(Base):
         CheckConstraint("result_schema_version NOT LIKE 'PHASE5_%' OR metric_schema_version <> 'LEGACY_UNCOMPUTED'", name="result_phase5_metric_schema"),
         CheckConstraint("profit_factor IS NULL OR profit_factor >= 0", name="result_profit_factor_nonnegative"),
         CheckConstraint("win_rate IS NULL OR (win_rate >= 0 AND win_rate <= 1)", name="result_win_rate_range"),
-        CheckConstraint("jsonb_typeof(result_quality) = 'object' AND result_quality->>'schema' = 'ATLAS_RESULT_QUALITY_V1' AND result_quality->>'value' IN ('DETERMINED','DETERMINED_WITH_GAPS','CONSERVATIVE_AMBIGUITY_RESOLVED')", name="result_quality_values"),
+        CheckConstraint("jsonb_typeof(result_quality) = 'object' AND result_quality->>'schema' = 'ATLAS_RESULT_QUALITY_V1' AND result_quality->>'value' IN ('DETERMINED','DEGRADED','DETERMINED_WITH_GAPS','CONSERVATIVE_AMBIGUITY_RESOLVED')", name="result_quality_values"),
     )
     experiment_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("experiments.id", ondelete="RESTRICT"), primary_key=True)
     result_schema_version: Mapped[str] = mapped_column(String(100), nullable=False)

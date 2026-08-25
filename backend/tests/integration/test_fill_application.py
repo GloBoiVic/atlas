@@ -25,6 +25,7 @@ from backend.persistence.models import (
     StrategyModel,
     StrategyVersionModel,
     TradeIntentModel,
+    TradeModel,
     VenueInstrumentModel,
 )
 
@@ -56,7 +57,9 @@ def _seed(session: Session) -> tuple[ExperimentModel, OrderModel]:
         strategy_id=strategy.id, version_number=1, source_fingerprint="a" * 64,
         implementation_key="test", parameter_schema=[], context_timeframes=[],
         capabilities=[], source_manifest=[], exact_source_snapshot={},
-        primary_timeframe="M15", warm_up_bars=100, state_schema_version=1,
+        primary_timeframe="M15",
+        required_historical_context_bars=100,
+        state_schema_version=1,
     )
     instrument = InstrumentModel(
         code="EUR/USD", base_currency="EUR", quote_currency="USD"
@@ -93,7 +96,7 @@ def _seed(session: Session) -> tuple[ExperimentModel, OrderModel]:
         venue_instrument_id=venue.id, trading_start=now,
         trading_end=now + timedelta(hours=1), starting_capital=Decimal("10000"),
         risk_per_trade=Decimal("0.01"), parameter_snapshot={}, risk_config={},
-        simulation_config={}, model_version="PHASE4_HISTORICAL_EXECUTION_V1",
+        simulation_config={}, model_version="PHASE5_HISTORICAL_EXECUTION_V2",
     )
     session.add(experiment)
     session.flush()
@@ -151,6 +154,9 @@ def test_entry_fill_is_the_only_exposure_transition(session: Session) -> None:
     assert session.scalar(
         select(OrderModel.current_status).where(OrderModel.id == order.id)
     ) == "FILLED"
+    assert session.scalar(
+        select(OrderModel.submitted_at).where(OrderModel.id == order.id)
+    ) == datetime(2026, 1, 1, 0, 1, tzinfo=UTC)
     events = session.scalars(
         select(OrderEventModel)
         .where(OrderEventModel.order_id == order.id)
@@ -183,3 +189,31 @@ def test_failed_fill_rolls_back_all_projections(session: Session) -> None:
     assert session.scalar(
         select(FillModel).where(FillModel.order_id == order.id)
     ) is None
+
+
+def test_v2_end_close_uses_constrained_historical_exit_reason(session: Session) -> None:
+    experiment, entry = _seed(session)
+    apply_fill(session, FillModel(
+        order_id=entry.id, sequence_number=1, quantity=Decimal("10"),
+        execution_price=Decimal("1.10"),
+        executed_at=datetime(2026, 1, 1, 0, 1, tzinfo=UTC), fee=Decimal("0"),
+    ))
+    risk_id = entry.risk_decision_id
+    intent_id = entry.trade_intent_id
+    exit_order = OrderModel(
+        experiment_id=experiment.id, trade_intent_id=intent_id,
+        risk_decision_id=risk_id, order_type="MARKET", purpose="EXIT",
+        direction="LONG", quantity=Decimal("10"),
+        client_correlation_id=str(uuid4()),
+    )
+    session.add(exit_order)
+    session.flush()
+    apply_fill(session, FillModel(
+        order_id=exit_order.id, sequence_number=1, quantity=Decimal("10"),
+        execution_price=Decimal("1.11"),
+        executed_at=datetime(2026, 1, 1, 0, 2, tzinfo=UTC), fee=Decimal("0"),
+    ))
+    trade = session.scalar(
+        select(TradeModel).where(TradeModel.experiment_id == experiment.id)
+    )
+    assert trade is not None and trade.exit_reason == "END_OF_EXPERIMENT"

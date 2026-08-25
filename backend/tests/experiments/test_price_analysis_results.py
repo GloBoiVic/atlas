@@ -53,7 +53,7 @@ def _snapshot(fingerprint):
 
 
 def _version(warm_up_bars):
-    return SimpleNamespace(warm_up_bars=warm_up_bars)
+    return SimpleNamespace(required_historical_context_bars=warm_up_bars)
 
 
 def _bar(index, base=NOW):
@@ -749,11 +749,13 @@ def test_price_analysis_does_not_mutate_persisted_query_state():
         results=repo, market_data=MarketDataSpy(bars)
     )
     before_snapshot_fingerprint = session.snapshot.fingerprint
-    before_version_warmup = session.version.warm_up_bars
+    before_version_context = session.version.required_historical_context_bars
     before_experiment_id = repo.experiment_row.id
     before_result_row = repo.result_row
     service.price_analysis(session, repo.experiment_row.id)
     assert session.snapshot.fingerprint == before_snapshot_fingerprint
-    assert session.version.warm_up_bars == before_version_warmup
+    assert (
+        session.version.required_historical_context_bars == before_version_context
+    )
     assert repo.experiment_row.id == before_experiment_id
     assert repo.result_row is before_result_row

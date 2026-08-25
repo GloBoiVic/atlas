@@ -38,7 +38,7 @@ def test_configuration_derives_only_supported_phase4_assumptions() -> None:
         "end_policy": "FINAL_ELIGIBLE_M1_CLOSE_V1",
         "equity_sampling": "TRADING_START_AND_EACH_ELIGIBLE_M1_CLOSE_V1",
     }
-    assert MODEL_VERSION == "PHASE4_HISTORICAL_EXECUTION_V1"
+    assert MODEL_VERSION == "PHASE5_HISTORICAL_EXECUTION_V2"
 
 
 def test_configuration_rejects_negative_simulation_values_at_boundary() -> None:
