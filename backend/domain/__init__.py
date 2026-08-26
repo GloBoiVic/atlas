@@ -13,7 +13,9 @@ from .market_data import (
 )
 from .strategy import (
     Action,
+    CandleFacts,
     Direction,
+    EntryPolicy,
     EvaluationError,
     ParameterError,
     ParameterSchema,
@@ -28,6 +30,7 @@ from .strategy import (
     StrategyParameters,
     StrategyState,
     StrategyVersion,
+    SetupFacts,
     TargetMethodology,
     TargetProposal,
     VersionError,
@@ -36,9 +39,11 @@ from .trading import FinancialPositionState, Position, TradingInputError
 
 __all__ = [
     "Action",
+    "CandleFacts",
     "Bar",
     "DatasetSnapshot",
     "Direction",
+    "EntryPolicy",
     "DomainError",
     "EvaluationError",
     "FinancialPositionState",
@@ -60,6 +65,7 @@ __all__ = [
     "StrategyParameters",
     "StrategyState",
     "StrategyVersion",
+    "SetupFacts",
     "TargetMethodology",
     "TargetProposal",
     "TradingInputError",

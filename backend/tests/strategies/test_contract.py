@@ -80,6 +80,26 @@ def test_context_requires_warmup_when_exposure_is_allowed() -> None:
         validate_context(context, StrategyState(), definition())
 
 
+def test_non_ema_strategy_uses_declared_analytical_metadata() -> None:
+    candle = bar(datetime(2026, 1, 1, 10, 0, tzinfo=UTC))
+    non_ema_definition = StrategyDefinition(
+        "range_observer",
+        "Range Observer",
+        "Non-EMA contract fixture",
+        (),
+        required_historical_context_bars=0,
+        required_instrument=Instrument.EUR_USD,
+        required_resolution=Timeframe.M15,
+        required_price_component=PriceComponent.MID,
+        implementation_key="range_observer.v1",
+    )
+    validate_context(
+        StrategyContext(candle.end_time, Instrument.EUR_USD, (candle,)),
+        StrategyState(),
+        non_ema_definition,
+    )
+
+
 def test_duplicate_frontier_is_typed_and_does_not_call_strategy() -> None:
     candle = bar(datetime(2026, 1, 1, 10, 0, tzinfo=UTC))
     state = StrategyState(last_evaluated_bar_end=candle.end_time)

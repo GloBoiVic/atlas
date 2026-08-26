@@ -57,7 +57,7 @@ from backend.persistence.models import (
 )
 from backend.persistence.strategy_repository import StrategyRepository
 from backend.strategies.contract import StrategyRegistration
-from backend.strategies.ema_sweep_engulfing import EmaSweepEngulfingStrategy
+from backend.strategies.ema_sweep_confirmation_break import EmaSweepConfirmationBreakStrategy
 from backend.strategies.fingerprint import archive_source
 from backend.strategies.registry import StrategyRegistry
 
@@ -171,7 +171,7 @@ def _native_m15_bars(direction: str, *, end_open: bool = False) -> tuple[Bar, ..
 def _registry() -> StrategyRegistry:
     registry = StrategyRegistry()
     registry.register(
-        StrategyRegistration(EmaSweepEngulfingStrategy.definition, EmaSweepEngulfingStrategy()),
+        StrategyRegistration(EmaSweepConfirmationBreakStrategy.definition, EmaSweepConfirmationBreakStrategy()),
         ROOT,
     )
     return registry
@@ -190,7 +190,7 @@ def _seed(session: Session, direction: str, *, slippage_ticks: int = 0, end_open
     stored_bars = { (row.start_time, row.price_component): row for row in session.scalars(select(MarketBarModel).where(MarketBarModel.venue_instrument_id == venue.id)).all() }
     # Keep the executable product intentionally sparse: the bounded entry quote
     # and one later quote that establishes the protected terminal outcome.
-    executable_times = {START + timedelta(minutes=1530), START + timedelta(minutes=1545)}
+    executable_times = {START + timedelta(minutes=1530), START + timedelta(minutes=1545), START + timedelta(minutes=1559)}
     execution = tuple((stored_bars[(bar.start_time, bar.price_component.value)], bar) for bar in bars if bar.start_time in executable_times)
     metadata = {"provider": "OANDA", "instrument": "EUR/USD", "coverage_start": START.isoformat(), "coverage_end": (START + timedelta(minutes=1560)).isoformat(), "native_resolution": "M15", "analytical_contract": NATIVE_M15_CONTRACT_V1, "gap_policy": GAP_POLICY_V1}
     analytical_members = tuple({"sequence": i, "start_time": bar.start_time.isoformat(), "end_time": bar.end_time.isoformat(), "content_fingerprint": bar_content_fingerprint(bar)} for i, bar in enumerate(native, 1))
@@ -207,20 +207,20 @@ def _seed(session: Session, direction: str, *, slippage_ticks: int = 0, end_open
     snapshot = DatasetSnapshotRepository().create_v2_validated(
         session, snapshot, native, execution, ()
     )
-    archive = archive_source(ROOT, EmaSweepEngulfingStrategy.definition.source_files)
+    archive = archive_source(ROOT, EmaSweepConfirmationBreakStrategy.definition.source_files)
     strategy_repo = StrategyRepository()
     version = StrategyVersion(
-        id=uuid4(), strategy_key="ema_sweep_engulfing", version_number=1,
-        source_fingerprint=archive.fingerprint, implementation_key="ema_sweep_engulfing.v1",
-        parameter_schema=EmaSweepEngulfingStrategy.definition.parameter_schema,
+        id=uuid4(), strategy_key="ema_sweep_confirmation_break", version_number=1,
+        source_fingerprint=archive.fingerprint, implementation_key="ema_sweep_confirmation_break.v1",
+        parameter_schema=EmaSweepConfirmationBreakStrategy.definition.parameter_schema,
         primary_timeframe=Timeframe.M15, required_historical_context_bars=100, state_schema_version=1,
         created_at=START,
     )
-    version_row = strategy_repo.create_version(session, version, strategy_name="EMA Sweep Engulfing", strategy_description="golden", capabilities=("LONG", "SHORT", "STOP_LOSS", "TAKE_PROFIT"), source_archive=archive)
+    version_row = strategy_repo.create_version(session, version, strategy_name="EMA Sweep Confirmation Break", strategy_description="golden", capabilities=("LONG", "SHORT", "STOP_LOSS", "TAKE_PROFIT"), source_archive=archive)
     experiment = ExperimentRepository().create(
         session, strategy_version_id=version_row.id, dataset_snapshot_id=snapshot.id,
         venue_instrument_id=venue.id, trading_start=START + timedelta(minutes=1500),
-          trading_end=START + timedelta(minutes=1545 if end_open else 1560), starting_capital=Decimal("10000"),
+          trading_end=START + timedelta(minutes=1560), starting_capital=Decimal("10000"),
         risk_per_trade=Decimal("0.01"), parameter_snapshot=PARAMETERS,
           risk_config={"risk_per_trade": "0.01"}, simulation_config={
               "resolution": "M1", "analysis_component": "MID", "execution_components": ["BID", "ASK"], "spread_model": "DATASET_BID_ASK_EMBEDDED", "slippage_model": {"type": "ADVERSE_FIXED_TICKS", "ticks": slippage_ticks, "tick_size": "0.00001"}, "commission_model": {"type": "PER_FILL_PER_UNIT_USD", "amount": "0.10"}, "financing_model": {"type": "EXCLUDED", "disclosure": "FINANCING EXCLUDED"}
@@ -266,7 +266,7 @@ def test_persisted_golden_flow_and_semantic_rerun(database_url: str, direction: 
             assert facts["risks"][1][0:2] == ("PRE_SUBMISSION", "APPROVED")
             assert facts["intent"][2] == START + timedelta(minutes=1530)
             assert facts["position"] == "FLAT"
-            assert facts["trade"][5] == "STOP_LOSS"
+            assert facts["trade"][5] == "END_OF_EXPERIMENT"
             assert facts["fills"][0][1] == facts["risks"][1][3]
             assert facts["fills"][1][1] == facts["trade"][3]
         with Session(engine) as session, session.begin():

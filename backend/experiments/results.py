@@ -64,6 +64,11 @@ class PriceAnalysisRead:
     diagnostics: dict[str, object]
     provenance: dict[str, object]
     gaps: tuple[dict[str, object], ...]
+    # These are persisted Strategy facts, never reconstructed by the reader.
+    evidence: tuple[dict[str, object], ...] = ()
+    landmarks: tuple[dict[str, object], ...] = ()
+    proposal_diagnostics: tuple[dict[str, object], ...] = ()
+    setup_facts: tuple[dict[str, object], ...] = ()
 
 
 def _metric(value: MetricValue) -> dict[str, object]:
@@ -123,12 +128,20 @@ class ExperimentResultReadService:
             raise ResultReadError("NOT_FOUND", "Experiment does not exist")
         result = None
         metrics = None
+        strategy_version = (
+            self.results.strategy_version(session, experiment.strategy_version_id)
+            if hasattr(self.results, "strategy_version")
+            else session.get(StrategyVersionModel, experiment.strategy_version_id)
+            if session is not None
+            else None
+        )
         if experiment.status == "COMPLETED":
             result = self.results.result(session, experiment_id)
             trades = self.results.trades(session, experiment_id, 100000)
             equity = self.results.equity(session, experiment_id)
             metrics = self._metrics(experiment, trades, equity)
-        return {"experiment": experiment, "result": result, "metrics": metrics}
+        return {"experiment": experiment, "result": result, "metrics": metrics,
+                "strategy_version": strategy_version}
 
     def gap_decisions(
         self, session: Session, experiment_id: UUID
@@ -295,6 +308,9 @@ class ExperimentResultReadService:
         trade_rows = source_trades[:250]
         trade_values: list[dict[str, object]] = []
         reference_values: list[dict[str, object]] = []
+        evidence_values: list[dict[str, object]] = []
+        landmark_values: list[dict[str, object]] = []
+        proposal_values: list[dict[str, object]] = []
         omitted_facts = 0
         for row in trade_rows:
             intent = self.results.intent(session, row)
@@ -338,13 +354,49 @@ class ExperimentResultReadService:
                     ),
                 }
             )
+            proposal_values.append(self._proposal_payload(intent, row))
+            rationale = getattr(intent, "rationale", None) if intent else None
+            if isinstance(rationale, dict):
+                persisted_evidence = rationale.get("evidence", ())
+                if isinstance(persisted_evidence, dict):
+                    evidence_values.append({
+                        "trade_sequence": row.sequence_number,
+                        "setup": persisted_evidence,
+                    })
+                elif isinstance(persisted_evidence, (list, tuple)):
+                    evidence_values.extend(
+                        {"trade_sequence": row.sequence_number, "setup": item}
+                        for item in persisted_evidence if isinstance(item, dict)
+                    )
+                persisted_landmarks = rationale.get("landmarks", ())
+                if isinstance(persisted_landmarks, (list, tuple)):
+                    for item in persisted_landmarks:
+                        if not isinstance(item, dict):
+                            continue
+                        marker = dict(item)
+                        marker["trade_sequence"] = row.sequence_number
+                        if "time" not in marker and "timestamp" in marker:
+                            marker["time"] = marker.pop("timestamp")
+                        landmark_values.append(marker)
             fact = self._rationale_facts(
-                getattr(intent, "rationale", None) if intent else None, row
+                rationale, row
             )
             if fact is None:
                 omitted_facts += 1
             else:
                 reference_values.append(fact)
+                if not isinstance(rationale, dict) or not rationale.get("evidence"):
+                    evidence_values.append({"trade_sequence": row.sequence_number, "setup": fact})
+                landmark_values.append({"kind": "entry", "trade_sequence": row.sequence_number,
+                                        "time": row.opened_at, "price": str(row.entry_price)})
+                if approved is not None:
+                    for kind, price in (("stop", approved.stop_price), ("target", approved.target_price)):
+                        if price is not None:
+                            landmark_values.append({"kind": kind, "trade_sequence": row.sequence_number,
+                                                    "time": row.opened_at, "price": str(price)})
+                if row.closed_at is not None and row.exit_price is not None:
+                    landmark_values.append({"kind": "exit", "trade_sequence": row.sequence_number,
+                                            "time": row.closed_at, "price": str(row.exit_price)})
 
         omitted_range = None
         if truncated:
@@ -419,12 +471,56 @@ class ExperimentResultReadService:
             diagnostics,
             provenance,
             gaps,
+            tuple(evidence_values),
+            tuple(landmark_values),
+            tuple(proposal_values),
+            tuple(reference_values),
         )
+
+    @staticmethod
+    def _proposal_payload(intent: object | None, trade: TradeModel) -> dict[str, object]:
+        """Expose the immutable proposal and its terminal read-side status."""
+        if intent is None:
+            return {"tradeSequence": trade.sequence_number, "proposalStatus": "INCOMPLETE"}
+        expiry = getattr(intent, "expiry_time", None)
+        return {
+            "tradeSequence": trade.sequence_number,
+            "entryPolicy": getattr(intent, "entry_policy", None),
+            "triggerPrice": _decimal(getattr(intent, "trigger_price", None)),
+            "triggerPriceBasis": getattr(intent, "trigger_price_basis", None),
+            "expiry": expiry,
+            "expiryBars": getattr(intent, "expiry_bars", None),
+            "proposalStatus": getattr(intent, "proposal_status", "UNKNOWN"),
+            "diagnostics": getattr(intent, "diagnostics", {}),
+        }
 
     @staticmethod
     def _rationale_facts(
         rationale: object, trade: TradeModel
     ) -> dict[str, object] | None:
+        if isinstance(rationale, dict) and isinstance(rationale.get("setup_facts"), dict):
+            setup = rationale["setup_facts"]
+            result: dict[str, object] = {"trade_sequence": trade.sequence_number}
+            try:
+                for stage in ("reference", "sweep", "confirmation"):
+                    candle = setup[stage]
+                    timestamp = datetime.fromisoformat(str(candle["timestamp"]).replace("Z", "+00:00"))
+                    if timestamp.tzinfo is None or timestamp.utcoffset() != UTC.utcoffset(timestamp):
+                        return None
+                    result[stage] = {
+                        "t": timestamp.astimezone(UTC),
+                        "open": str(Decimal(str(candle["open"]))),
+                        "high": str(Decimal(str(candle["high"]))),
+                        "low": str(Decimal(str(candle["low"]))),
+                        "close": str(Decimal(str(candle["close"]))),
+                    }
+                result["trendRelation"] = setup.get("trend_relation")
+                result["atr"] = str(Decimal(str(setup["atr"])))
+                result["stopPrice"] = str(Decimal(str(setup["stop_price"])))
+                result["triggerPrice"] = str(Decimal(str(setup["trigger_price"])))
+                return result
+            except (KeyError, TypeError, ValueError, ArithmeticError):
+                return None
         fields = rationale.get("fields") if isinstance(rationale, dict) else None
         items = fields.items() if isinstance(fields, dict) else fields
         if not isinstance(items, (list, tuple)) and not hasattr(items, "__iter__"):
@@ -501,6 +597,8 @@ class ExperimentResultReadService:
         fills = self.results.fills(session, tuple(order.id for order in orders))
         return {
             "summary": self._trade_summary(row),
+            "entryPolicy": self._proposal_payload(intent, row),
+            "setupFacts": self._rationale_facts(getattr(intent, "rationale", None), row),
             "financing_disclosure": (
                 experiment.simulation_config.get("financing_model", {}).get(
                     "disclosure"

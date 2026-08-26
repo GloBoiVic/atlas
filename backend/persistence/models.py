@@ -411,6 +411,14 @@ class TradeIntentModel(Base):
         CheckConstraint("action IN ('OPEN_LONG', 'OPEN_SHORT', 'CLOSE_POSITION', 'UPDATE_PROTECTION')", name="valid_action"),
         CheckConstraint("direction IS NULL OR direction IN ('LONG', 'SHORT')", name="valid_direction"),
         CheckConstraint("proposed_stop IS NULL OR (proposed_stop > 0 AND proposed_stop <> 'NaN'::numeric)", name="positive_stop"),
+        CheckConstraint("entry_policy IN ('IMMEDIATE','PRICE_TRIGGERED')", name="valid_entry_policy"),
+        CheckConstraint("(action IN ('OPEN_LONG','OPEN_SHORT') AND ((entry_policy = 'IMMEDIATE' AND trigger_price IS NULL AND trigger_price_basis IS NULL AND expiry_time IS NULL AND expiry_bars IS NULL) OR (entry_policy = 'PRICE_TRIGGERED' AND trigger_price IS NOT NULL AND trigger_price_basis IN ('ASK','BID') AND expiry_time > decision_frontier AND expiry_bars > 0))) OR (action NOT IN ('OPEN_LONG','OPEN_SHORT') AND entry_policy = 'IMMEDIATE' AND trigger_price IS NULL AND trigger_price_basis IS NULL AND expiry_time IS NULL AND expiry_bars IS NULL)", name="valid_action_entry_policy"),
+        CheckConstraint("trigger_price_basis IS NULL OR trigger_price_basis IN ('ASK','BID')", name="valid_trigger_price_basis"),
+        CheckConstraint("trigger_price IS NULL OR (trigger_price > 0 AND trigger_price <> 'NaN'::numeric)", name="valid_trigger_price"),
+        CheckConstraint("proposal_status IN ('PENDING','FILLED','EXPIRED','REJECTED')", name="valid_proposal_status"),
+        CheckConstraint("(entry_policy = 'IMMEDIATE' AND trigger_price IS NULL AND expiry_time IS NULL) OR (entry_policy = 'PRICE_TRIGGERED' AND trigger_price IS NOT NULL AND expiry_time IS NOT NULL)", name="entry_policy_shape"),
+        CheckConstraint("expiry_bars IS NULL OR expiry_bars > 0", name="positive_expiry_bars"),
+        CheckConstraint("expiry_time IS NULL OR expiry_time > decision_frontier", name="expiry_after_decision"),
         UniqueConstraint("experiment_id", "decision_frontier", name="uq_trade_intents_experiment_frontier"),
     )
     id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
@@ -423,7 +431,29 @@ class TradeIntentModel(Base):
     proposed_stop: Mapped[Decimal | None] = mapped_column(Numeric(20, 10), nullable=True)
     target_multiple: Mapped[Decimal | None] = mapped_column(Numeric(12, 10), nullable=True)
     rationale: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    entry_policy: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'IMMEDIATE'"))
+    trigger_price: Mapped[Decimal | None] = mapped_column(Numeric(20, 10), nullable=True)
+    trigger_price_basis: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    expiry_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expiry_bars: Mapped[int | None] = mapped_column(nullable=True)
+    proposal_status: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'PENDING'"))
+    diagnostics: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+
+
+class ExperimentProposalDiagnosticModel(Base):
+    __tablename__ = "experiment_proposal_diagnostics"
+    __table_args__ = (
+        PrimaryKeyConstraint("experiment_id", "sequence"),
+        CheckConstraint("sequence > 0 AND event_type IN ('FILLED','EXPIRED','REJECTED','EXECUTION_DATA_UNAVAILABLE')", name="valid_proposal_event"),
+        CheckConstraint("jsonb_typeof(details) = 'object'", name="proposal_details_object"),
+    )
+    experiment_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("experiments.id", ondelete="RESTRICT"), nullable=False)
+    sequence: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    trade_intent_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("trade_intents.id", ondelete="RESTRICT"), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
 
 
 class RiskDecisionModel(Base):
