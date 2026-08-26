@@ -8,7 +8,7 @@ callers which do not want to rely on an implementation's own validation.
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from backend.domain.market_data import InputError, Timeframe
+from backend.domain.market_data import InputError, Instrument, PriceComponent, Timeframe
 from backend.domain.strategy import (
     EvaluationError,
     ParameterSchema,
@@ -46,6 +46,10 @@ class StrategyDefinition:
     state_schema_version: int = 1
     source_files: tuple[str, ...] = ()
     implementation_key: str = ""
+    required_instrument: Instrument = Instrument.EUR_USD
+    required_resolution: Timeframe = Timeframe.M15
+    required_price_component: PriceComponent = PriceComponent.MID
+    completed_only: bool = True
 
     @property
     def warm_up_bars(self) -> int:
@@ -101,7 +105,9 @@ def validate_registration(registration: StrategyRegistration) -> None:
     keys = [item.key for item in definition.parameter_schema]
     if len(keys) != len(set(keys)):
         raise StrategyContractError("parameter_schema keys must be unique")
-    if definition.primary_timeframe is not Timeframe.M15:
+    if definition.primary_timeframe is not definition.required_resolution:
+        raise StrategyContractError("primary timeframe must match analytical resolution")
+    if definition.required_resolution is not Timeframe.M15:
         raise StrategyContractError("only 15m is supported")
     if (
         type(definition.context_timeframes) is not tuple
@@ -140,6 +146,14 @@ def validate_registration(registration: StrategyRegistration) -> None:
         )
     if len(set(definition.source_files)) != len(definition.source_files):
         raise StrategyContractError("source_files must not contain duplicates")
+    if type(definition.required_instrument) is not Instrument:
+        raise StrategyContractError("required_instrument must be an Instrument")
+    if type(definition.required_resolution) is not Timeframe:
+        raise StrategyContractError("required_resolution must be a Timeframe")
+    if type(definition.required_price_component) is not PriceComponent:
+        raise StrategyContractError("required_price_component must be a PriceComponent")
+    if type(definition.completed_only) is not bool or not definition.completed_only:
+        raise StrategyContractError("Strategies require completed-only analytical bars")
     implementation = registration.implementation
     if not callable(getattr(implementation, "evaluate", None)):
         raise StrategyContractError("implementation must implement Strategy")
@@ -185,12 +199,12 @@ def validate_context(
     if type(context) is not StrategyContext:
         raise StrategyContractError("context must be StrategyContext")
     validate_state(state, definition)
-    if context.instrument.value != "EUR/USD":
+    if context.instrument is not definition.required_instrument:
         raise StrategyContractError("only EUR/USD is supported")
     if any(
-        bar.timeframe is not definition.primary_timeframe
-        or bar.instrument.value != "EUR/USD"
-        or bar.price_component.value != "MID"
+        bar.timeframe is not definition.required_resolution
+        or bar.instrument is not definition.required_instrument
+        or bar.price_component is not definition.required_price_component
         for bar in context.bars
     ):
         raise StrategyContractError("strategy accepts only EUR/USD MID 15m bars")

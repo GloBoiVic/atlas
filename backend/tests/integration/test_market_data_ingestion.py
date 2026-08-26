@@ -14,7 +14,6 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from backend.domain.market_data import (
     Bar,
-    InputError,
     Instrument,
     PriceComponent,
     Timeframe,
@@ -270,9 +269,6 @@ def test_m15_derivation_reads_snapshot_membership_and_binds_strategy_input(
 
     bid = service.derive_m15(new_report.snapshot.fingerprint, PriceComponent.BID)
     ask = service.derive_m15(new_report.snapshot.fingerprint, PriceComponent.ASK)
-    with pytest.raises(InputError):
-        StrategyContext(end, Instrument.EUR_USD, bid)
-    with pytest.raises(InputError):
-        StrategyContext(end, Instrument.EUR_USD, ask)
-    with pytest.raises(InputError):
-        StrategyContext(end, Instrument.EUR_USD, tuple(_bars(start)[2:3]))
+    assert StrategyContext(end, Instrument.EUR_USD, bid).bars == bid
+    assert StrategyContext(end, Instrument.EUR_USD, ask).bars == ask
+    assert StrategyContext(end, Instrument.EUR_USD, tuple(_bars(start)[2:3])).bars

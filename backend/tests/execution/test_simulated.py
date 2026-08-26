@@ -75,6 +75,14 @@ def test_stop_gap_and_intrabar_touch_are_simulated() -> None:
     assert target.price_basis == "INTRABAR_TARGET"
 
 
+def test_non_zero_entry_slippage_is_applied_once_on_each_side() -> None:
+    adapter = SimulatedExecutionAdapter(slippage_ticks=2)
+    long_fill = adapter.execute(order("MARKET", "ENTRY", "LONG"), obs("1.1000", "1.1002"))
+    short_fill = adapter.execute(order("MARKET", "ENTRY", "SHORT"), obs("1.1000", "1.1002"))
+    assert long_fill.execution_price == Decimal("1.10022")
+    assert short_fill.execution_price == Decimal("1.09998")
+
+
 def test_dual_touch_is_adverse_first_and_preserves_source_provenance() -> None:
     from uuid import uuid4
 

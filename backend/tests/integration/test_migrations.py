@@ -51,6 +51,7 @@ def test_migration_cycle(migration_url: str) -> None:
             "experiment_accounts",
             "experiment_equity_points",
             "experiment_gap_decisions",
+            "experiment_proposal_diagnostics",
             "experiment_results",
             "experiments",
             "fills",
@@ -123,6 +124,21 @@ def test_migration_cycle(migration_url: str) -> None:
             "experiment_id", "sequence", "start_time", "end_time", "resolution",
             "price_component", "classification", "rule_version", "policy_version",
             "affected_state", "affected_event", "blocked", "details",
+        }
+        assert {column["name"] for column in inspector.get_columns("trade_intents")} >= {
+            "entry_policy", "trigger_price", "trigger_price_basis", "expiry_time",
+            "expiry_bars", "proposal_status", "diagnostics",
+        }
+        proposal_checks = " ".join(
+            constraint.get("sqltext", "")
+            for constraint in inspector.get_check_constraints("trade_intents")
+        )
+        assert "OPEN_LONG" in proposal_checks and "OPEN_SHORT" in proposal_checks
+        assert "ASK" in proposal_checks and "BID" in proposal_checks
+        assert "expiry_bars" in proposal_checks and "decision_frontier" in proposal_checks
+        assert {column["name"] for column in inspector.get_columns("experiment_proposal_diagnostics")} >= {
+            "experiment_id", "sequence", "trade_intent_id", "event_type",
+            "occurred_at", "details",
         }
         assert "ix_experiments_created_at_id_desc" in {
             index["name"] for index in inspector.get_indexes("experiments")

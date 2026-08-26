@@ -66,6 +66,9 @@ function chartApi() {
 const completed = (tradeCount: string) => ({
   id: 'experiment-1',
   status: 'COMPLETED',
+  strategy: {
+    displayName: 'EMA Sweep Confirmation Break v1',
+  },
   createdAt: '2024-01-03T00:00:00Z',
   tradingStart: '2024-01-01T00:00:00Z',
   tradingEnd: '2024-01-02T00:00:00Z',
@@ -158,9 +161,13 @@ describe('completed Experiment result states', () => {
     const { unmount } = render(<ExperimentStatusPage />);
 
     expect(await screen.findByText('No Trades')).toBeInTheDocument();
-    expect(screen.getByText('0.125')).toBeInTheDocument();
+    expect(
+      screen.getAllByText('EMA Sweep Confirmation Break v1').length,
+    ).toBeGreaterThan(0);
+    expect(screen.queryByText('EMA Sweep Engulfing')).not.toBeInTheDocument();
+    expect(screen.getByText('12.50%')).toBeInTheDocument();
     expect(screen.getByText('∞')).toBeInTheDocument();
-    expect(screen.getAllByText('Unavailable')).toHaveLength(3);
+    expect(screen.getAllByText('—')).toHaveLength(3);
     expect(screen.getAllByText('ZERO_TRADES')).toHaveLength(3);
     expect(screen.getByText(/FINANCING EXCLUDED/)).toBeInTheDocument();
     expect(screen.getByText(/Native M15 MID analysis/)).toBeInTheDocument();

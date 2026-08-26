@@ -14,7 +14,6 @@ from .market_data import (
     InputError,
     Instrument,
     PriceComponent,
-    Provider,
     Timeframe,
 )
 
@@ -58,10 +57,60 @@ class Phase(StrEnum):
     SEARCHING = "SEARCHING"
     REFERENCE_IDENTIFIED = "REFERENCE_IDENTIFIED"
     AWAITING_CONFIRMATION = "AWAITING_CONFIRMATION"
+    ARMED = "ARMED"
 
 
 class TargetMethodology(StrEnum):
     R_MULTIPLE = "R_MULTIPLE"
+
+
+class EntryPolicy(StrEnum):
+    IMMEDIATE = "IMMEDIATE"
+    PRICE_TRIGGERED = "PRICE_TRIGGERED"
+
+
+@dataclass(frozen=True, slots=True)
+class CandleFacts:
+    timestamp: datetime
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+
+    def __post_init__(self) -> None:
+        _utc(self.timestamp, "timestamp")
+        for name in ("open", "high", "low", "close"):
+            _dec(getattr(self, name), name)
+
+    def to_json(self) -> dict[str, str]:
+        return {"timestamp": self.timestamp.isoformat().replace("+00:00", "Z"), **{
+            name: str(getattr(self, name)) for name in ("open", "high", "low", "close")
+        }}
+
+
+@dataclass(frozen=True, slots=True)
+class SetupFacts:
+    reference: CandleFacts
+    sweep: CandleFacts
+    confirmation: CandleFacts
+    trend_relation: str
+    atr: Decimal
+    stop_price: Decimal
+    trigger_price: Decimal
+
+    def __post_init__(self) -> None:
+        if any(type(value) is not CandleFacts for value in (self.reference, self.sweep, self.confirmation)):
+            raise InputError("setup candle facts must be CandleFacts")
+        if type(self.trend_relation) is not str or not self.trend_relation:
+            raise InputError("trend_relation must be a non-empty string")
+        for name in ("atr", "stop_price", "trigger_price"):
+            _dec(getattr(self, name), name)
+
+    def to_json(self) -> dict[str, Any]:
+        return {"reference": self.reference.to_json(), "sweep": self.sweep.to_json(),
+                "confirmation": self.confirmation.to_json(), "trend_relation": self.trend_relation,
+                "atr": str(self.atr), "stop_price": str(self.stop_price),
+                "trigger_price": str(self.trigger_price)}
 
 
 def _utc(value: datetime, name: str) -> datetime:
@@ -180,18 +229,13 @@ class StrategyContext:
         if type(self.position) is not PositionState:
             raise InputError("position must be a PositionState")
         _utc(self.evaluation_time, "evaluation_time")
-        if self.instrument is not Instrument.EUR_USD:
-            raise InputError("only EUR/USD is supported")
         if type(self.exposure_allowed) is not bool:
             raise InputError("exposure_allowed must be bool")
         if any(
             bar.instrument is not self.instrument
-            or bar.provider is not Provider.OANDA
-            or bar.timeframe is not Timeframe.M15
-            or bar.price_component is not PriceComponent.MID
             for bar in self.bars
         ):
-            raise InputError("StrategyContext requires OANDA EUR/USD M15 MID bars")
+            raise InputError("StrategyContext bars must match its instrument")
         for previous, current in zip(self.bars, self.bars[1:], strict=False):
             if current.start_time <= previous.start_time:
                 raise InputError("bars must be strictly ordered and unique")
@@ -292,6 +336,12 @@ class StrategyDecision:
     decision_time: datetime | None = None
     stop: StopProposal | None = None
     target: TargetProposal | None = None
+    entry_policy: EntryPolicy = EntryPolicy.IMMEDIATE
+    trigger_price: Decimal | None = None
+    trigger_price_basis: PriceComponent | None = None
+    expiry_time: datetime | None = None
+    expiry_bars: int | None = None
+    setup_facts: SetupFacts | None = None
 
     def __post_init__(self) -> None:
         if type(self.action) is not Action:
@@ -304,6 +354,18 @@ class StrategyDecision:
             raise InputError("stop must be a StopProposal")
         if self.target is not None and type(self.target) is not TargetProposal:
             raise InputError("target must be a TargetProposal")
+        if type(self.entry_policy) is not EntryPolicy:
+            raise InputError("entry_policy must be an EntryPolicy")
+        if self.trigger_price is not None:
+            _dec(self.trigger_price, "trigger_price")
+        if self.trigger_price_basis is not None and type(self.trigger_price_basis) is not PriceComponent:
+            raise InputError("trigger_price_basis must be a PriceComponent")
+        if self.expiry_time is not None:
+            _utc(self.expiry_time, "expiry_time")
+        if self.expiry_bars is not None and (type(self.expiry_bars) is not int or self.expiry_bars <= 0):
+            raise InputError("expiry_bars must be a positive integer")
+        if self.setup_facts is not None and type(self.setup_facts) is not SetupFacts:
+            raise InputError("setup_facts must be SetupFacts")
         if self.decision_time is not None:
             _utc(self.decision_time, "decision_time")
         opening = self.action in (Action.OPEN_LONG, Action.OPEN_SHORT)
@@ -319,6 +381,18 @@ class StrategyDecision:
                 raise InputError(
                     "OPEN action, direction, and stop direction must match"
                 )
+            if self.entry_policy is EntryPolicy.IMMEDIATE and any(
+                value is not None for value in (self.trigger_price, self.trigger_price_basis, self.expiry_time, self.expiry_bars)
+            ):
+                raise InputError("immediate entries cannot contain trigger or expiry fields")
+            if self.entry_policy is EntryPolicy.PRICE_TRIGGERED:
+                if self.trigger_price is None or self.trigger_price_basis is None or self.expiry_time is None or self.expiry_bars is None:
+                    raise InputError("price-triggered entries require trigger and expiry fields")
+                expected_basis = PriceComponent.ASK if self.direction is Direction.LONG else PriceComponent.BID
+                if self.trigger_price_basis is not expected_basis:
+                    raise InputError("trigger price basis must match direction")
+                if self.expiry_time <= self.decision_time:
+                    raise InputError("expiry must be after decision time")
         elif (
             self.direction is not None
             or self.stop is not None
@@ -335,6 +409,12 @@ class StrategyDecision:
             else None,
             "stop": self.stop.to_json() if self.stop else None,
             "target": self.target.to_json() if self.target else None,
+            "entry_policy": self.entry_policy.value,
+            "trigger_price": str(self.trigger_price) if self.trigger_price is not None else None,
+            "trigger_price_basis": self.trigger_price_basis.value if self.trigger_price_basis else None,
+            "expiry_time": self.expiry_time.isoformat().replace("+00:00", "Z") if self.expiry_time else None,
+            "expiry_bars": self.expiry_bars,
+            "setup_facts": self.setup_facts.to_json() if self.setup_facts else None,
             "rationale": self.rationale.to_json(),
         }
 
@@ -349,12 +429,15 @@ class StrategyState:
     reference_time: datetime | None = None
     sweep_time: datetime | None = None
     window_bars: int = 0
+    watch_bars: int = 0
+    confirmation_time: datetime | None = None
+    trigger_price: Decimal | None = None
     last_evaluated_bar_end: datetime | None = None
 
     def __post_init__(self) -> None:
-        if type(self.schema_version) is not int or type(self.window_bars) is not int:
+        if type(self.schema_version) is not int or type(self.window_bars) is not int or type(self.watch_bars) is not int:
             raise StateError("schema_version and window_bars must be integers")
-        if self.schema_version != 1 or not 0 <= self.window_bars <= 5:
+        if self.schema_version != 1 or not 0 <= self.window_bars <= 5 or not 0 <= self.watch_bars <= 5:
             raise StateError("unsupported schema or window count")
         if type(self.phase) is not Phase:
             raise StateError("phase must be a Phase")
@@ -367,13 +450,18 @@ class StrategyState:
                     _dec(value, name)
                 except (TypeError, ValueError) as error:
                     raise StateError(str(error)) from error
-        for name in ("reference_time", "sweep_time", "last_evaluated_bar_end"):
+        for name in ("reference_time", "sweep_time", "confirmation_time", "last_evaluated_bar_end"):
             value = getattr(self, name)
             if value is not None:
                 try:
                     _utc(value, name)
                 except (TypeError, ValueError) as error:
                     raise StateError(str(error)) from error
+        if self.trigger_price is not None:
+            try:
+                _dec(self.trigger_price, "trigger_price")
+            except (TypeError, ValueError) as error:
+                raise StateError(str(error)) from error
         active = self.phase is not Phase.SEARCHING
         if active != (
             self.reference_high is not None
@@ -386,7 +474,8 @@ class StrategyState:
         if self.phase is Phase.SEARCHING and (
             self.direction is not None
             or self.sweep_time is not None
-            or self.window_bars
+            or self.window_bars or self.watch_bars
+            or self.confirmation_time is not None or self.trigger_price is not None
         ):
             raise StateError("searching state contains setup fields")
         if self.phase is Phase.REFERENCE_IDENTIFIED and self.sweep_time is not None:
@@ -395,6 +484,12 @@ class StrategyState:
             self.sweep_time is None or self.window_bars == 0
         ):
             raise StateError("awaiting confirmation requires a sweep")
+        if self.phase is Phase.ARMED and (
+            self.confirmation_time is None or self.trigger_price is None or self.watch_bars > 5
+        ):
+            raise StateError("armed state requires confirmation and trigger")
+        if self.phase is not Phase.ARMED and (self.confirmation_time is not None or self.trigger_price is not None or self.watch_bars):
+            raise StateError("watch fields require armed state")
 
     @classmethod
     def from_json(cls, value: Mapping[str, Any]) -> "StrategyState":
@@ -407,6 +502,9 @@ class StrategyState:
             "reference_time",
             "sweep_time",
             "window_bars",
+            "watch_bars",
+            "confirmation_time",
+            "trigger_price",
             "last_evaluated_bar_end",
         }
         if type(value) is not dict:
@@ -456,6 +554,9 @@ class StrategyState:
                 reference_time=timestamp("reference_time"),
                 sweep_time=timestamp("sweep_time"),
                 window_bars=payload["window_bars"],
+                watch_bars=payload["watch_bars"],
+                confirmation_time=timestamp("confirmation_time"),
+                trigger_price=decimal("trigger_price"),
                 last_evaluated_bar_end=timestamp("last_evaluated_bar_end"),
             )
         except StateError:
@@ -480,6 +581,9 @@ class StrategyState:
             "reference_time": stamp(self.reference_time),
             "sweep_time": stamp(self.sweep_time),
             "window_bars": self.window_bars,
+            "watch_bars": self.watch_bars,
+            "confirmation_time": stamp(self.confirmation_time),
+            "trigger_price": str(self.trigger_price) if self.trigger_price is not None else None,
             "last_evaluated_bar_end": stamp(self.last_evaluated_bar_end),
         }
 

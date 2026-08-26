@@ -668,6 +668,33 @@ export interface components {
       diagnostics: components['schemas']['PriceAnalysisDiagnosticsResponse'];
       provenance?: { [key: string]: unknown };
       gaps?: { [key: string]: unknown }[];
+      evidence?: components['schemas']['PriceAnalysisEvidenceResponse'][];
+      landmarks?: components['schemas']['PriceAnalysisLandmarkResponse'][];
+      proposalDiagnostics?: components['schemas']['ProposalStatusResponse'][];
+      setupFacts?: { [key: string]: unknown }[];
+    };
+    PriceAnalysisEvidenceResponse: {
+      tradeSequence: number;
+      setup: { [key: string]: unknown };
+    };
+    PriceAnalysisLandmarkResponse: {
+      kind: string;
+      tradeSequence: number;
+      time: string;
+      high?: string | null;
+      low?: string | null;
+      price?: string | null;
+      basis?: string | null;
+    };
+    ProposalStatusResponse: {
+      tradeSequence: number;
+      entryPolicy?: string | null;
+      triggerPrice?: string | null;
+      triggerPriceBasis?: string | null;
+      expiry?: string | null;
+      expiryBars?: number | null;
+      proposalStatus: string;
+      diagnostics: { [key: string]: unknown };
     };
     PriceAnalysisTradeResponse: {
       sequence: number;

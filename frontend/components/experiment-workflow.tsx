@@ -52,6 +52,14 @@ const text = (value: unknown, fallback = '—') =>
   typeof value === 'string' || typeof value === 'number'
     ? String(value)
     : fallback;
+const strategyIdentity = (data: unknown) => {
+  const strategy = object(object(data).strategy);
+  const version = object(object(data).strategyVersion);
+  return text(
+    strategy.displayName ?? version.displayName ?? strategy.name,
+    'StrategyVersion',
+  );
+};
 const statusOf = (value: unknown): Status =>
   value === 'RUNNING' || value === 'COMPLETED' || value === 'FAILED'
     ? value
@@ -101,6 +109,27 @@ const metric = (value: unknown) => {
   return data.state === 'VALUE' ? text(data.value) : '—';
 };
 const metricState = (value: unknown) => object(value);
+const priceLabel = (value: unknown) => {
+  if (value === null || value === undefined || value === '') return '—';
+  const number = Number(value);
+  return Number.isFinite(number) ? number.toFixed(5) : '—';
+};
+const moneyLabel = (value: unknown) => {
+  if (value === null || value === undefined || value === '') return '—';
+  const number = Number(value);
+  if (!Number.isFinite(number)) return '—';
+  return `${number >= 0 ? '+' : '-'}$${Math.abs(number).toFixed(2)}`;
+};
+const rLabel = (value: unknown) => {
+  if (value === null || value === undefined || value === '') return '—';
+  const number = Number(value);
+  return Number.isFinite(number) ? `${number.toFixed(2)}x` : '—';
+};
+const percentLabel = (value: unknown) => {
+  if (value === null || value === undefined || value === '') return '—';
+  const number = Number(value);
+  return Number.isFinite(number) ? `${(number * 100).toFixed(2)}%` : '—';
+};
 const errorMessage = (error: unknown) =>
   typeof error === 'string'
     ? error
@@ -258,7 +287,7 @@ function MetricCard({
 }: {
   label: string;
   value: unknown;
-  format?: 'number' | 'percent' | 'money';
+  format?: 'number' | 'percent' | 'money' | 'r';
 }) {
   const data = metricState(value);
   const shown =
@@ -266,13 +295,17 @@ function MetricCard({
       ? text(data.value)
       : data.state === 'INFINITE'
         ? '∞'
-        : 'Unavailable';
+        : '—';
   const formatted =
-    format === 'money' && shown !== 'Unavailable' && shown !== '∞'
-      ? `$${shown}`
-      : format === 'percent' && shown !== 'Unavailable' && shown !== '∞'
-        ? `${shown}`
-        : shown;
+    shown === '—' || shown === '∞'
+      ? shown
+      : format === 'money'
+        ? moneyLabel(data.value)
+        : format === 'percent'
+          ? percentLabel(data.value)
+          : format === 'r'
+            ? rLabel(data.value)
+            : shown;
   return (
     <div className="border-t border-slate-200 pt-3">
       <dt className="text-xs font-medium text-slate-500">{label}</dt>
@@ -402,7 +435,7 @@ function StateDisclosure({ data }: { data: Json }) {
       <dl className="mt-4 grid gap-x-6 gap-y-4 sm:grid-cols-2">
         <div>
           <dt className="text-slate-500">StrategyVersion</dt>
-          <dd className="font-medium">EMA Sweep Engulfing</dd>
+          <dd className="font-medium">{strategyIdentity(data)}</dd>
         </div>
         <div>
           <dt className="text-slate-500">Instrument / account</dt>
@@ -627,16 +660,16 @@ function EquityResults({ id, data }: { id: string; data: Json }) {
                         {dateLabel(trade.closed_at)}
                       </td>
                       <td className="px-4 py-3 tabular-nums">
-                        {text(trade.entry_price)}
+                        {priceLabel(trade.entry_price)}
                       </td>
                       <td className="px-4 py-3 tabular-nums">
-                        {text(trade.exit_price)}
+                        {priceLabel(trade.exit_price)}
                       </td>
                       <td className="px-4 py-3 tabular-nums">
-                        ${text(trade.net_pnl)}
+                        {moneyLabel(trade.net_pnl)}
                       </td>
                       <td className="px-4 py-3 tabular-nums">
-                        {text(trade.r_multiple)}
+                        {rLabel(trade.r_multiple)}
                       </td>
                       <td className="px-4 py-3">
                         {trade.ambiguous
@@ -743,7 +776,34 @@ function PriceAnalysisChart({ id }: { id: string }) {
               <i className="mr-1 inline-block size-2 rounded-full bg-violet-600" />
               Strategy facts
             </span>
+            <span>
+              <i className="mr-1 inline-block size-2 rounded-full bg-amber-600" />
+              Trigger
+            </span>
           </div>
+          {Array.isArray(analysis.landmarks) &&
+            analysis.landmarks.length > 0 && (
+              <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+                <h3 className="text-sm font-medium">Trade landmarks</h3>
+                <ul className="mt-2 grid gap-2 text-xs text-slate-600 sm:grid-cols-2">
+                  {analysis.landmarks.map((raw, index) => {
+                    const landmark = object(raw);
+                    return (
+                      <li key={`${text(landmark.kind, 'landmark')}-${index}`}>
+                        <span className="font-medium text-slate-800">
+                          {text(landmark.kind, 'Landmark')}
+                        </span>{' '}
+                        · {dateLabel(landmark.time, timeZone)} ·{' '}
+                        {priceLabel(landmark.price)}
+                        {landmark.trade_sequence
+                          ? ` · Trade ${text(landmark.trade_sequence)}`
+                          : ''}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
           {truncated && (
             <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
               <strong>Chart truncated.</strong> {omittedDescription} This view
@@ -816,6 +876,10 @@ function PriceAnalysisCanvas({
           timeScale: {
             tickMarkFormatter: (time: number) =>
               formatChartTick(time, timeZone),
+          },
+          rightPriceScale: {
+            autoScale: true,
+            scaleMargins: { top: 0.12, bottom: 0.12 },
           },
         });
         const candles = instance.addSeries(CandlestickSeries, {
@@ -930,6 +994,41 @@ function PriceAnalysisCanvas({
               });
           });
         });
+        const landmarkColors: Record<string, string> = {
+          reference: '#7c3aed',
+          sweep: '#8b5cf6',
+          confirmation: '#6d28d9',
+          entry: '#15803d',
+          stop: '#b91c1c',
+          target: '#15803d',
+          exit: '#b91c1c',
+          trigger: '#d97706',
+        };
+        (Array.isArray(analysis.landmarks) ? analysis.landmarks : []).forEach(
+          (raw) => {
+            const landmark = object(raw);
+            const time = toTime(landmark.time ?? landmark.timestamp);
+            const price = Number(landmark.price);
+            const kind = text(landmark.kind, 'landmark').toLowerCase();
+            if (time !== null && Number.isFinite(price)) {
+              markerItems.push({
+                time,
+                position:
+                  kind === 'entry' || kind === 'trigger'
+                    ? 'belowBar'
+                    : 'aboveBar',
+                color: landmarkColors[kind] ?? '#64748b',
+                shape:
+                  kind === 'entry'
+                    ? 'arrowUp'
+                    : kind === 'exit'
+                      ? 'arrowDown'
+                      : 'circle',
+                text: `${text(landmark.kind, 'Landmark')} · ${priceLabel(price)}`,
+              });
+            }
+          },
+        );
         createSeriesMarkers(
           candles,
           markerItems.sort((a, b) => Number(a.time) - Number(b.time)),
@@ -1183,7 +1282,7 @@ export function ExperimentsList() {
                         </Link>
                       </td>
                       <td className="px-4 py-4 text-slate-600">
-                        EMA Sweep Engulfing
+                        {strategyIdentity(item)}
                       </td>
                       <td className="px-4 py-4 text-slate-600">
                         {dateLabel(item.tradingStart, timeZone)}
@@ -1732,7 +1831,7 @@ export function ExperimentForm() {
                       >
                         {text(
                           item.displayName,
-                          `${text(item.name, 'EMA Sweep Engulfing')} · v${text(item.version)}`,
+                          `${text(item.name, 'StrategyVersion')} · v${text(item.version)}`,
                         )}
                         {item.executionAvailable === false
                           ? ' · unavailable'
@@ -2568,7 +2667,7 @@ export function ExperimentStatusPage() {
             <dt className="text-xs font-medium text-slate-500">
               StrategyVersion
             </dt>
-            <dd className="mt-1 text-sm">EMA Sweep Engulfing</dd>
+            <dd className="mt-1 text-sm">{strategyIdentity(data)}</dd>
           </div>
           <div className="border-t border-slate-200 pt-3">
             <dt className="text-xs font-medium text-slate-500">
@@ -2824,6 +2923,7 @@ export function TradeDetailPage() {
     );
   const summary = object(data.summary);
   const chart = object(data.chart);
+  const entryPolicy = object(data.entryPolicy);
   const omitted = object(chart.omitted_range);
   const hasOmitted = Object.keys(omitted).length > 0;
   const ambiguous = summary.ambiguous === true;
@@ -2847,7 +2947,7 @@ export function TradeDetailPage() {
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
               <p className="text-sm text-slate-500">
-                EUR/USD · EMA Sweep Engulfing · OANDA Practice
+                EUR/USD · {strategyIdentity(data)} · OANDA Practice
               </p>
               <h1 className="mt-1 text-3xl font-semibold tracking-tight">
                 Trade {text(summary.sequence_number)}
@@ -2872,11 +2972,13 @@ export function TradeDetailPage() {
           <MetricCard
             label="R multiple"
             value={{ state: 'VALUE', value: text(summary.r_multiple) }}
+            format="r"
           />
           <div>
             <dt className="text-xs text-slate-500">Entry / exit</dt>
             <dd className="mt-1 tabular-nums">
-              {text(summary.entry_price)} → {text(summary.exit_price)}
+              {priceLabel(summary.entry_price)} →{' '}
+              {priceLabel(summary.exit_price)}
             </dd>
           </div>
           <div>
@@ -2886,7 +2988,7 @@ export function TradeDetailPage() {
           <div>
             <dt className="text-xs text-slate-500">Initial stop / target</dt>
             <dd className="mt-1 tabular-nums">
-              {text(data.initial_stop)} / {text(data.target)}
+              {priceLabel(data.initial_stop)} / {priceLabel(data.target)}
             </dd>
           </div>
           <div>
@@ -2904,6 +3006,33 @@ export function TradeDetailPage() {
             </dd>
           </div>
         </dl>
+        {data.entryPolicy || data.proposalStatus || data.setupFacts ? (
+          <section className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <h2 className="font-medium">Setup and proposal evidence</h2>
+            <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+              <div>
+                <dt className="text-xs text-slate-500">Entry policy</dt>
+                <dd className="font-medium">
+                  {text(entryPolicy.entryPolicy, '—')}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs text-slate-500">Trigger</dt>
+                <dd className="tabular-nums">
+                  {priceLabel(entryPolicy.triggerPrice)}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs text-slate-500">Proposal status</dt>
+                <dd>{text(entryPolicy.proposalStatus)}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-slate-500">Expiry</dt>
+                <dd>{dateLabel(entryPolicy.expiry, timeZone)}</dd>
+              </div>
+            </dl>
+          </section>
+        ) : null}
         <section>
           <h2 className="text-lg font-semibold">Trade context</h2>
           <p className="mt-1 text-sm text-slate-600">

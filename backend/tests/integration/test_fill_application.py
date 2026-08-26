@@ -110,7 +110,11 @@ def _seed(session: Session) -> tuple[ExperimentModel, OrderModel]:
         experiment_id=experiment.id, strategy_version_id=version.id,
         venue_instrument_id=venue.id, decision_frontier=now,
         action="OPEN_LONG", direction="LONG", proposed_stop=Decimal("1.09"),
-        target_multiple=Decimal("2"), rationale={},
+        target_multiple=Decimal("2"), rationale={
+            "setup_facts": {"reference": {"timestamp": now.isoformat().replace("+00:00", "Z"), "close": "1.11"}},
+            "evidence": {"setup_facts": {"reference": {"close": "1.11"}}},
+            "landmarks": [{"kind": "reference", "timestamp": now.isoformat().replace("+00:00", "Z"), "price": "1.11"}],
+        },
     )
     session.add(intent)
     session.flush()
@@ -131,6 +135,15 @@ def _seed(session: Session) -> tuple[ExperimentModel, OrderModel]:
     session.add(order)
     session.flush()
     return experiment, order
+
+
+def test_trade_intent_structured_setup_facts_survive_retrieval(session: Session) -> None:
+    experiment, _ = _seed(session)
+    intent = session.scalar(select(TradeIntentModel).where(TradeIntentModel.experiment_id == experiment.id))
+    assert intent is not None
+    assert intent.rationale["setup_facts"]["reference"]["close"] == "1.11"
+    assert intent.rationale["evidence"]["setup_facts"]["reference"]["close"] == "1.11"
+    assert intent.rationale["landmarks"][0]["kind"] == "reference"
 
 
 def test_entry_fill_is_the_only_exposure_transition(session: Session) -> None:

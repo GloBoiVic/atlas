@@ -10,7 +10,7 @@ import hashlib
 import json
 import re
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from enum import StrEnum
@@ -28,6 +28,7 @@ from backend.domain.market_data import (
 )
 from backend.domain.strategy import (
     Action,
+    EntryPolicy,
     PositionState,
     StrategyContext,
     StrategyParameters,
@@ -47,6 +48,7 @@ from backend.persistence.models import (
     ExperimentAccountModel,
     ExperimentEquityPointModel,
     ExperimentGapDecisionModel,
+    ExperimentProposalDiagnosticModel,
     ExperimentModel,
     FillModel,
     InstrumentModel,
@@ -462,11 +464,42 @@ class ExperimentRunner:
                         tuple(history), PositionState.FLAT, False), params, state).next_state
             risk_config = RiskConfig(_decimal(experiment.risk_per_trade, "risk_per_trade"))
             commission = _decimal(experiment.simulation_config.get("commission_model", {}).get("amount", "0"), "commission")
-            observation_by_start = {item.start_time: item for item in observations}
             observation_index = 0
+            pending = None
+
+            def consume(observation):
+                nonlocal pending
+                if pending is not None:
+                    intent_row, pending_frame, pending_decision = pending
+                    if observation.start_time > pending_decision.decision_time and observation.start_time < pending_decision.expiry_time:
+                        executable = _observation_from_m1(observation)
+                        direction = pending_decision.direction
+                        assert direction is not None and pending_decision.trigger_price is not None
+                        reached = ((executable.ask_open > pending_decision.trigger_price) or
+                                   (executable.ask_high is not None and executable.ask_high >= pending_decision.trigger_price)) if direction.value == "LONG" else ((executable.bid_open < pending_decision.trigger_price) or
+                                   (executable.bid_low is not None and executable.bid_low <= pending_decision.trigger_price))
+                        if reached:
+                            # Preserve the original observation and provenance while
+                            # presenting the selected executable trigger/open to the
+                            # existing adapter. Slippage is applied exactly once there.
+                            price = (executable.ask_open if direction.value == "LONG" and executable.ask_open > pending_decision.trigger_price else
+                                     executable.bid_open if direction.value == "SHORT" and executable.bid_open < pending_decision.trigger_price else pending_decision.trigger_price)
+                            if direction.value == "LONG":
+                                executable = replace(executable, ask_open=price)
+                            else:
+                                executable = replace(executable, bid_open=price)
+                            filled = self._attempt_entry(session, experiment, version.id, pending_frame, pending_decision, account, position, observation, risk_config, commission, intent_row=intent_row, execution_observation=executable)
+                            pending = None
+                            if filled:
+                                return
+                    if observation.start_time >= pending_decision.expiry_time:
+                        self._proposal_diagnostic(session, experiment, intent_row, "EXPIRED", observation.start_time, {"expiry_time": pending_decision.expiry_time.isoformat().replace("+00:00", "Z"), "reason": "NO_TRIGGER"})
+                        pending = None
+                self._apply_protection(session, experiment, position, observation, commission)
+
             for frame in decisions:
                 while observation_index < len(observations) and observations[observation_index].start_time < frame.frontier:
-                    self._apply_protection(session, experiment, position, observations[observation_index], commission)
+                    consume(observations[observation_index])
                     observation_index += 1
                 # Every native frontier is evaluated exactly once, regardless
                 # of sparse execution availability.
@@ -475,21 +508,26 @@ class ExperimentRunner:
                     tuple(history), self._position_state(position.state), True), params, state)
                 state = evaluation.next_state
                 if evaluation.decision.action in (Action.OPEN_LONG, Action.OPEN_SHORT):
-                    observation = clock.entry_observation(frame.frontier)
-                    if observation is None:
-                        self._record_execution_gap(session, experiment, frame.frontier)
+                    decision = evaluation.decision
+                    intent_row = self._create_intent(session, experiment, version.id, frame, decision)
+                    if decision.entry_policy is EntryPolicy.IMMEDIATE:
+                        observation = next((item for item in observations if item.start_time > frame.frontier), None)
+                        if observation is None:
+                            self._record_execution_gap(session, experiment, frame.frontier)
+                            self._proposal_diagnostic(session, experiment, intent_row, "EXECUTION_DATA_UNAVAILABLE", frame.frontier, {})
+                        else:
+                            self._attempt_entry(session, experiment, version.id, frame, decision, account, position, observation, risk_config, commission, intent_row=intent_row)
+                            self._apply_protection(session, experiment, position, observation, commission)
+                            observation_index = max(observation_index, observations.index(observation) + 1)
                     else:
-                        self._attempt_entry(session, experiment, version.id, frame, evaluation.decision, account, position,
-                            observation, risk_config, commission)
-                        self._apply_protection(session, experiment, position, observation, commission)
-                        observation_index = max(observation_index, observations.index(observation) + 1)
-                elif frame.frontier in observation_by_start:
-                    observation = observation_by_start[frame.frontier]
-                    self._apply_protection(session, experiment, position, observation, commission)
-                    observation_index = max(observation_index, observations.index(observation) + 1)
+                        pending = (intent_row, frame, decision)
             while observation_index < len(observations):
-                self._apply_protection(session, experiment, position, observations[observation_index], commission)
+                consume(observations[observation_index])
                 observation_index += 1
+            if pending is not None:
+                intent_row, _, decision = pending
+                self._proposal_diagnostic(session, experiment, intent_row, "EXPIRED", experiment.trading_end, {"expiry_time": decision.expiry_time.isoformat().replace("+00:00", "Z"), "reason": "NO_TRIGGER"})
+                pending = None
             if position.state != "FLAT":
                 terminal = terminal_protection_observation(
                     observations, position.opened_at, experiment.trading_end
@@ -840,21 +878,40 @@ class ExperimentRunner:
         ):
             raise ValueError("invalid risk config")
 
-    def _attempt_entry(self, session, experiment, version_id, frame, decision, account, position, observation, risk_config, commission):
+    def _create_intent(self, session, experiment, version_id, frame, decision):
         assert decision.direction is not None and decision.stop is not None and decision.target is not None
-        intent = self.trading.create_intent(
+        setup_facts = decision.setup_facts.to_json() if decision.setup_facts is not None else None
+        evidence = {"setup_facts": setup_facts} if setup_facts is not None else {}
+        landmarks = []
+        if decision.setup_facts is not None:
+            for name in ("reference", "sweep", "confirmation"):
+                candle = getattr(decision.setup_facts, name)
+                landmarks.append({"kind": name, "timestamp": candle.to_json()["timestamp"], "price": candle.to_json()["close"]})
+        return self.trading.create_intent(
             session, experiment_id=experiment.id, strategy_version_id=version_id,
             venue_instrument_id=experiment.venue_instrument_id, decision_frontier=frame.frontier,
             action=decision.action.value, direction=decision.direction.value, proposed_stop=decision.stop.price,
-            target_multiple=decision.target.multiple, rationale={**decision.rationale.to_json(), "model_version": MODEL_VERSION, "source_m1_ids": _source_ids(frame)},
+            target_multiple=decision.target.multiple, rationale={**decision.rationale.to_json(), "model_version": MODEL_VERSION, "source_m15_id": str(frame.decision_bar.start_time), "source_m1_ids": _source_ids(frame), "setup_facts": setup_facts, "evidence": evidence, "landmarks": landmarks},
+            entry_policy=decision.entry_policy.value, trigger_price=decision.trigger_price,
+            trigger_price_basis=decision.trigger_price_basis.value if decision.trigger_price_basis else None,
+            expiry_time=decision.expiry_time, expiry_bars=decision.expiry_bars,
         )
+
+    def _proposal_diagnostic(self, session, experiment, intent, event, occurred_at, details):
+        sequence = session.scalar(select(ExperimentProposalDiagnosticModel.sequence).where(ExperimentProposalDiagnosticModel.experiment_id == experiment.id).order_by(ExperimentProposalDiagnosticModel.sequence.desc()).limit(1)) or 0
+        self.trading.create_proposal_diagnostic(session, experiment_id=experiment.id, sequence=sequence + 1, trade_intent_id=intent.id, event_type=event, occurred_at=occurred_at, details={"event": event, **details})
+
+    def _attempt_entry(self, session, experiment, version_id, frame, decision, account, position, observation, risk_config, commission, *, intent_row=None, execution_observation=None):
+        assert decision.direction is not None and decision.stop is not None and decision.target is not None
+        intent = intent_row or self._create_intent(session, experiment, version_id, frame, decision)
         account_state = AccountState(account.base_currency, account.equity)
         intent_data = TradeIntent(decision.action, decision.direction, decision.stop.price, decision.target)
         preflight = self.risk.evaluate_pre_flight(intent_data, experiment_status=experiment.status, position=position.state, account=account_state, config=risk_config, instrument=frame.decision_bar.instrument)
         self._persist_risk(session, intent.id, preflight, frame.frontier)
         if not preflight.approved:
+            self._proposal_diagnostic(session, experiment, intent, "REJECTED", frame.frontier, {"phase": "PRE_FLIGHT", "reason": preflight.rejection.value if preflight.rejection else "UNKNOWN"})
             return
-        obs = _observation_from_m1(observation)
+        obs = execution_observation or _observation_from_m1(observation)
         # Risk must size from the same adverse-slipped entry that the adapter
         # will fill, while retaining raw BID/ASK as the executable provenance.
         slipped_quote = ExecutableQuote(
@@ -862,19 +919,30 @@ class ExperimentRunner:
             obs.ask_open + self.execution.slippage if decision.direction.value == "LONG" else obs.ask_open,
         )
         submission = self.risk.evaluate_pre_submission(intent_data, experiment_status=experiment.status, position=position.state, account=account_state, config=risk_config, instrument=frame.decision_bar.instrument, quote=slipped_quote)
-        submission_row = self._persist_risk(session, intent.id, submission, observation.start_time, obs)
+        observation_time = observation.start_time if hasattr(observation, "start_time") else observation.observed_at
+        submission_row = self._persist_risk(session, intent.id, submission, observation_time, obs)
         if not submission.approved:
+            self._proposal_diagnostic(session, experiment, intent, "REJECTED", observation.start_time, {"phase": "PRE_SUBMISSION", "reason": submission.rejection.value if submission.rejection else "UNKNOWN"})
             return
         assert submission.quantity is not None and submission.target_price is not None
         risk_decision_id = submission_row.id
         entry = self.trading.create_order(session, experiment_id=experiment.id, trade_intent_id=intent.id, risk_decision_id=risk_decision_id, order_type="MARKET", purpose="ENTRY", direction=decision.direction.value, quantity=submission.quantity, client_correlation_id=f"{experiment.id}:trade:{self._next_trade_sequence(session, experiment.id)}:entry")
         fill = self.execution.execute(Order(entry.id, "MARKET", "ENTRY", decision.direction.value, submission.quantity), obs)
         apply_fill(session, FillModel(order_id=fill.order_id, sequence_number=1, quantity=fill.quantity, execution_price=fill.execution_price, executed_at=fill.executed_at, fee=commission * fill.quantity, source_market_bar_id=fill.source_market_bar_id, price_basis=fill.price_basis, executable_reference_price=fill.executable_reference_price, slippage_per_unit=fill.slippage_per_unit, slippage_cost=fill.slippage_cost))
+        # Resolve protection from the Fill, never from a second slippage pass or
+        # the pre-fill quote.  The pre-submission quote is deliberately the
+        # adapter's predicted executable price; the equality check makes any
+        # adapter/runner slippage drift a hard failure.
+        if fill.execution_price != submission.entry_price:
+            raise ValueError("simulated fill diverged from pre-submission executable price")
+        actual_target = decision.target.resolve(fill.execution_price, submission.stop_price, decision.direction)
         stop = self.trading.create_order(session, experiment_id=experiment.id, trade_intent_id=intent.id, risk_decision_id=risk_decision_id, order_type="STOP", purpose="STOP_LOSS", direction=decision.direction.value, quantity=submission.quantity, requested_price=submission.stop_price, parent_entry_order_id=entry.id, client_correlation_id=f"{entry.id}:stop")
-        target = self.trading.create_order(session, experiment_id=experiment.id, trade_intent_id=intent.id, risk_decision_id=risk_decision_id, order_type="LIMIT", purpose="TAKE_PROFIT", direction=decision.direction.value, quantity=submission.quantity, requested_price=submission.target_price, parent_entry_order_id=entry.id, client_correlation_id=f"{entry.id}:target")
-        self._submit_order(session, stop, observation.start_time)
-        self._submit_order(session, target, observation.start_time)
+        target = self.trading.create_order(session, experiment_id=experiment.id, trade_intent_id=intent.id, risk_decision_id=risk_decision_id, order_type="LIMIT", purpose="TAKE_PROFIT", direction=decision.direction.value, quantity=submission.quantity, requested_price=actual_target, parent_entry_order_id=entry.id, client_correlation_id=f"{entry.id}:target")
+        self._submit_order(session, stop, observation_time)
+        self._submit_order(session, target, observation_time)
         self._apply_pair(session, experiment, position, stop, target, observation, commission)
+        self._proposal_diagnostic(session, experiment, intent, "FILLED", fill.executed_at, {"price_basis": fill.price_basis})
+        return True
 
     def _submit_order(self, session, order, timestamp):
         order.current_status = "SUBMITTED"

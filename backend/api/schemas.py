@@ -136,6 +136,36 @@ class PriceAnalysisFactResponse(StrictModel):
     reference: dict[str, str]
     sweep: dict[str, str]
     confirmation: dict[str, str]
+    trend_relation: str | None = None
+    atr: str | None = None
+    stop_price: str | None = None
+    trigger_price: str | None = None
+
+
+class PriceAnalysisEvidenceResponse(StrictModel):
+    trade_sequence: int
+    setup: dict[str, Any]
+
+
+class PriceAnalysisLandmarkResponse(StrictModel):
+    kind: str
+    trade_sequence: int
+    time: str
+    high: str | None = None
+    low: str | None = None
+    price: str | None = None
+    basis: str | None = None
+
+
+class ProposalStatusResponse(StrictModel):
+    trade_sequence: int
+    entry_policy: str | None = None
+    trigger_price: str | None = None
+    trigger_price_basis: str | None = None
+    expiry: str | None = None
+    expiry_bars: int | None = None
+    proposal_status: str
+    diagnostics: dict[str, Any] = Field(default_factory=dict)
 
 
 class PriceAnalysisDiagnosticsResponse(StrictModel):
@@ -161,6 +191,10 @@ class PriceAnalysisResponse(StrictModel):
     diagnostics: PriceAnalysisDiagnosticsResponse
     provenance: dict[str, Any] = Field(default_factory=dict)
     gaps: list[dict[str, Any]] = Field(default_factory=list)
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
+    landmarks: list[PriceAnalysisLandmarkResponse] = Field(default_factory=list)
+    proposal_diagnostics: list[ProposalStatusResponse] = Field(default_factory=list)
+    setup_facts: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class HistoricalDataLoadRequest(StrictModel):

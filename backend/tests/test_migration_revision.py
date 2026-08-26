@@ -10,4 +10,4 @@ def test_alembic_revision_ids_fit_default_version_column() -> None:
     scripts = ScriptDirectory.from_config(config)
 
     assert all(len(script.revision) <= 32 for script in scripts.walk_revisions())
-    assert scripts.get_heads() == ["0013_result_quality_degraded"]
+    assert scripts.get_heads() == ["0008_proposal_constraints"]

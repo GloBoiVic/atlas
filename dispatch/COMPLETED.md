@@ -126,3 +126,12 @@ review artifact in `dispatch/`. Prior dispatch artifacts remain untouched in `di
 - **Branch/workstream:** `recovery/historical-simulation-spine` @ `1a1474d`; workstream `dispatch/workstreams/recovery-historical-simulation-spine/` preserved (`PLAN.md` `TASK-01…06` `VALIDATION.md`); stashes preserved (`stash@{0}` pre-recovery dirty, `stash@{1}` dark-first).
 - **State:** Recovery fixes staged for merge to `main`; dark-mode `feature/dark-first-v2-frontend-adoption` deferred to next commit on same branch.
 
+<!-- completion-id: strategy-experiment-workstation -->
+## Strategy Experiment Workstation — completion record
+
+- **Date/status:** 2026-08-25 — terminal closure approved; final independent R1 review **PASS** with no remaining Important or Critical findings.
+- **Outcome:** EMA Sweep Confirmation Break v1, generic Strategy/Experiment proposal and analytical contracts, price-triggered runner/persistence, auditable result landmarks, and Experiment workstation delivered. PAPER/LIVE behavior remains deferred.
+- **Validation:** Full suite **316 passed, 1 skipped, 4 warnings**; targeted backend/web tests, typecheck, lint, migrations, and clean disposable database gates passed. The six former failures were correctly classified as stale obsolete-Strategy registration expectations and stale database integration expectations after the approved catalog/clean-schema changes; no obsolete behavior was restored. The one skip is the credentialed external OANDA test.
+- **Real OANDA/browser evidence:** Current OANDA Practice EUR/USD one-month flow completed as Experiment `2ff310d8-f462-4df8-a0e4-275a7d99a0a1`: Confirmation Break v1, immutable snapshot, M1 MID/BID/ASK with native M15, 10 Trades, `DETERMINED`, 960 disclosed gaps, `/price-analysis` HTTP 200. Local Host MCP result and Trade 1/2 pages showed current Strategy identity, persisted landmarks/charts, accessibility evidence, and empty console/failed-network diagnostics. No secrets recorded.
+- **Deferred:** PAPER and LIVE lifecycle behavior; dedicated Playwright E2E remains a non-gating reproducibility follow-up because its hard-coded port was occupied.
+- **Memory-save receipt:** `Memory saved to memory.md.` on 2026-08-25 after explicit user confirmation; secret-safe update only, no secrets recorded.

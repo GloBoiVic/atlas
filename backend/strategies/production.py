@@ -7,8 +7,7 @@ uses the resulting immutable registry and never performs filesystem discovery.
 from pathlib import Path
 
 from .contract import StrategyRegistration
-from .ema_sweep_engulfing import EmaSweepEngulfingStrategy
-from .ema_sweep_engulfing_v2 import EmaSweepEngulfingV2Strategy
+from .ema_sweep_confirmation_break import EmaSweepConfirmationBreakStrategy
 from .registry import StrategyRegistry
 
 
@@ -17,13 +16,8 @@ def create_production_strategy_registry(root: Path | None = None) -> StrategyReg
     registry = StrategyRegistry()
     registry.register(
         StrategyRegistration(
-            EmaSweepEngulfingStrategy.definition, EmaSweepEngulfingStrategy()
-        ),
-        repository_root,
-    )
-    registry.register(
-        StrategyRegistration(
-            EmaSweepEngulfingV2Strategy.definition, EmaSweepEngulfingV2Strategy()
+            EmaSweepConfirmationBreakStrategy.definition,
+            EmaSweepConfirmationBreakStrategy(),
         ),
         repository_root,
     )

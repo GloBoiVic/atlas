@@ -131,7 +131,7 @@ def _failure(row: ExperimentModel) -> dict[str, Any] | None:
 
 def _detail(
     row: ExperimentModel, metrics: Any = None, result: Any = None,
-    gap_decisions: Any = (),
+    gap_decisions: Any = (), strategy_version: Any = None,
 ) -> dict[str, Any]:
     result_payload = _json(result)
     result_quality = getattr(result, "result_quality", None)
@@ -152,6 +152,16 @@ def _detail(
         "tradingStart": _utc(row.trading_start),
         "tradingEnd": _utc(row.trading_end),
         "strategyVersionId": str(row.strategy_version_id),
+        "strategy": (
+            None if strategy_version is None else {
+                "key": strategy_version.strategy.strategy_key,
+                "name": strategy_version.strategy.name,
+                "version": strategy_version.version_number,
+                "displayName": f"{strategy_version.strategy.name} v{strategy_version.version_number}",
+                "implementationKey": strategy_version.implementation_key,
+                "sourceFingerprint": strategy_version.source_fingerprint,
+            }
+        ),
         "datasetSnapshotId": str(row.dataset_snapshot_id),
         "startingCapital": str(row.starting_capital),
         "riskPerTrade": str(row.risk_per_trade),
@@ -248,8 +258,6 @@ def create_experiment_router(
     def options(db: Session = Depends(session)) -> dict[str, Any]:
         versions = []
         for row in strategy_repo.list_all_versions(db):
-            if not row.implementation_key.endswith(".v2"):
-                continue
             try:
                 configuration.registry.get(
                     row.strategy.strategy_key,
@@ -261,6 +269,11 @@ def create_experiment_router(
             except StrategyVersionUnavailableError:
                 execution_available = False
                 unavailable_reason = "No exact local implementation is registered for this StrategyVersion."
+            # Configuration options are executable catalog entries, not a
+            # version-suffix allowlist.  This keeps the API aligned with the
+            # exact immutable StrategyVersion provenance in the registry.
+            if not execution_available:
+                continue
             versions.append(
                 {
                     "id": str(row.id),
@@ -273,7 +286,7 @@ def create_experiment_router(
                     "sourceFingerprint": row.source_fingerprint,
                     "parameterSchema": row.parameter_schema,
                     "requiredHistoricalContextBars": row.required_historical_context_bars,
-                    "architecture": "V2",
+                    "architecture": "HISTORICAL_EXECUTION",
                     "executionAvailable": execution_available,
                     "unavailableReason": unavailable_reason,
                 }
@@ -422,6 +435,7 @@ def create_experiment_router(
                     _metrics_payload(composed["metrics"]),
                     composed["result"],
                     results.gap_decisions(db, row.id),
+                    composed.get("strategy_version"),
                 )
             )
         return {"items": items, "nextCursor": next_cursor}
@@ -464,7 +478,7 @@ def create_experiment_router(
             ) from exc
         return _detail(
             row, _metrics_payload(composed["metrics"]), composed["result"],
-            results.gap_decisions(db, row.id),
+            results.gap_decisions(db, row.id), composed.get("strategy_version"),
         )
 
     @router.post("/{experiment_id}/run")

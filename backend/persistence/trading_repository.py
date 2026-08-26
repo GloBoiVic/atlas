@@ -14,6 +14,7 @@ from .models import (
     OrderModel,
     RiskDecisionModel,
     TradeIntentModel,
+    ExperimentProposalDiagnosticModel,
 )
 
 
@@ -30,6 +31,10 @@ class TradingRepository:
         venue_instrument_id: UUID, decision_frontier: datetime, action: str,
         direction: str | None, proposed_stop: Decimal | None,
         target_multiple: Decimal | None, rationale: Mapping[str, object],
+        entry_policy: str = "IMMEDIATE", trigger_price: Decimal | None = None,
+        trigger_price_basis: str | None = None, expiry_time: datetime | None = None,
+        expiry_bars: int | None = None, proposal_status: str = "PENDING",
+        diagnostics: Mapping[str, object] | None = None,
         intent_id: UUID | None = None,
     ) -> TradeIntentModel:
         row = TradeIntentModel(
@@ -39,6 +44,10 @@ class TradingRepository:
             decision_frontier=decision_frontier, action=action,
             direction=direction, proposed_stop=proposed_stop,
             target_multiple=target_multiple, rationale=dict(rationale),
+            entry_policy=entry_policy, trigger_price=trigger_price,
+            trigger_price_basis=trigger_price_basis, expiry_time=expiry_time,
+            expiry_bars=expiry_bars, proposal_status=proposal_status,
+            diagnostics=dict(diagnostics or {}),
         )
         session.add(row)
         session.flush()
@@ -48,6 +57,12 @@ class TradingRepository:
         self, session: Session, **values: object
     ) -> RiskDecisionModel:
         row = RiskDecisionModel(**values)  # type: ignore[arg-type]
+        session.add(row)
+        session.flush()
+        return row
+
+    def create_proposal_diagnostic(self, session: Session, **values: object) -> ExperimentProposalDiagnosticModel:
+        row = ExperimentProposalDiagnosticModel(**values)  # type: ignore[arg-type]
         session.add(row)
         session.flush()
         return row

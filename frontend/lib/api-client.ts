@@ -2,6 +2,17 @@ import type { components, operations } from './api.generated';
 
 const API_PREFIX = '/atlas-api';
 
+export type ExperimentPayload = Record<string, unknown> & {
+  id?: string;
+  status?: string;
+};
+export type TradeDetailPayload = Record<string, unknown> & {
+  summary?: Record<string, unknown>;
+  chart?: Record<string, unknown>;
+  landmarks?: Record<string, unknown>[];
+  evidence?: Record<string, unknown>[];
+};
+
 export class ApiUnavailableError extends Error {
   constructor(message = 'Atlas API is unavailable.') {
     super(message);
@@ -152,7 +163,8 @@ export const atlasApi = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     }),
-  getExperiment: (id: string) => request<unknown>(`/api/v1/experiments/${id}`),
+  getExperiment: (id: string) =>
+    request<ExperimentPayload>(`/api/v1/experiments/${id}`),
   runExperiment: (id: string) =>
     request<unknown>(`/api/v1/experiments/${id}/run`, { method: 'POST' }, 8000),
   getEquity: (id: string) =>
@@ -166,7 +178,7 @@ export const atlasApi = {
       `/api/v1/experiments/${id}/trades?limit=250&afterSequence=${afterSequence}`,
     ),
   getTrade: (id: string, sequence: number) =>
-    request<unknown>(`/api/v1/experiments/${id}/trades/${sequence}`),
+    request<TradeDetailPayload>(`/api/v1/experiments/${id}/trades/${sequence}`),
   historicalCapability: () =>
     request<unknown>('/api/v1/historical-data/capability'),
   activeHistoricalLoad: () =>

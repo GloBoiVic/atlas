@@ -190,9 +190,9 @@ def test_bar_rejects_invalid_values_timing_and_volume(
         Bar(**values)  # type: ignore[arg-type]
 
 
-def test_context_rejects_wrong_market_data_dimensions() -> None:
+def test_context_accepts_market_data_dimensions_for_contract_validation() -> None:
     start = datetime(2026, 1, 1, 10, 0, tzinfo=UTC)
-    invalid = (
+    bars = (
         Bar(
             Instrument.EUR_USD,
             Timeframe.M1,
@@ -216,9 +216,8 @@ def test_context_rejects_wrong_market_data_dimensions() -> None:
             Decimal("1.10"),
         ),
     )
-    for candle in invalid:
-        with pytest.raises(InputError):
-            StrategyContext(candle.end_time, Instrument.EUR_USD, (candle,))
+    for candle in bars:
+        StrategyContext(candle.end_time, Instrument.EUR_USD, (candle,))
 
 
 def test_context_rejects_duplicate_or_future_bars() -> None:
