@@ -41,6 +41,18 @@ def test_max_drawdown_percent_uses_peak_before_the_trough() -> None:
     assert metrics.max_drawdown_percent.value == Decimal(20) / Decimal(110)
 
 
+def test_drawdown_amount_and_percent_share_the_maximum_peak_to_trough_event() -> None:
+    metrics = calculate_metrics(
+        [trade("5"), trade("-3")],
+        equity("100", "200", "150", "210", "180"),
+        starting_equity=Decimal("100"),
+    )
+
+    assert metrics.trade_count == 2
+    assert metrics.max_drawdown_amount.value == Decimal("50")
+    assert metrics.max_drawdown_percent.value == Decimal("0.25")
+
+
 def test_sharpe_uses_final_equity_point_per_utc_day() -> None:
     points = (
         SimpleNamespace(
@@ -67,6 +79,16 @@ def test_sharpe_uses_final_equity_point_per_utc_day() -> None:
     ).sqrt() / Decimal(2).sqrt()
     expected = mean / sample_deviation * Decimal(252).sqrt()
     assert abs(metrics.sharpe_ratio.value - expected) < Decimal("1e-24")
+
+
+def test_metrics_replay_is_deterministic_when_equity_rows_arrive_out_of_order() -> None:
+    points = equity("100", "110", "90", "120")
+    ordered = calculate_metrics([], points, starting_equity=Decimal("100"))
+    replayed = calculate_metrics(
+        [], tuple(reversed(points)), starting_equity=Decimal("100")
+    )
+
+    assert replayed == ordered
 
 
 def test_sharpe_reports_insufficient_and_zero_variance_states() -> None:

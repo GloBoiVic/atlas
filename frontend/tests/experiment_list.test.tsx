@@ -71,8 +71,8 @@ describe('Experiment list metric cells', () => {
     const table = await screen.findByRole('table');
     const rows = screen.getAllByRole('row');
 
-    expect(table).toHaveTextContent('0.125');
-    expect(rows[1]).toHaveTextContent('0.125');
+    expect(table).toHaveTextContent('12.50%');
+    expect(rows[1]).toHaveTextContent('12.50%');
     expect(rows[2]).toHaveTextContent('—');
   });
 });

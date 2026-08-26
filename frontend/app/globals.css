@@ -1,29 +1,30 @@
 @import 'tailwindcss';
 
 :root {
-  --atlas-color-background: #07111f;
-  --atlas-color-surface: #0d1b2b;
-  --atlas-color-surface-hover: #14263a;
-  --atlas-color-surface-selected: #102c48;
-  --atlas-color-border: #34465a;
-  --atlas-color-control-border: #526880;
-  --atlas-color-foreground: #f1f5f9;
-  --atlas-color-foreground-muted: #9eacc0;
-  --atlas-color-foreground-disabled: #75859a;
-  --atlas-color-primary: #38a7ff;
-  --atlas-color-primary-hover: #63b8ff;
-  --atlas-color-primary-foreground: #03111f;
-  --atlas-color-positive: #34d399;
-  --atlas-color-positive-foreground: #03150f;
-  --atlas-color-negative: #ff6673;
-  --atlas-color-negative-foreground: #1b0508;
+  --atlas-color-background: #090a0c;
+  --atlas-color-surface: #111315;
+  --atlas-color-surface-hover: #17191c;
+  --atlas-color-surface-selected: #1d2024;
+  --atlas-color-border: #2a2e34;
+  --atlas-color-control-border: #3b424b;
+  --atlas-color-foreground: #f4f4f5;
+  --atlas-color-foreground-muted: #a1a1aa;
+  --atlas-color-foreground-disabled: #71717a;
+  --atlas-color-primary: #4da3ff;
+  --atlas-color-primary-hover: #75b8ff;
+  --atlas-color-primary-foreground: #07111f;
+  --atlas-color-positive: #4ade80;
+  --atlas-color-positive-foreground: #06150b;
+  --atlas-color-negative: #f87171;
+  --atlas-color-negative-foreground: #1c0707;
   --atlas-color-warning: #fbbf24;
   --atlas-color-warning-foreground: #1a1000;
-  --atlas-color-focus-ring: #7dd3fc;
-  --atlas-color-primary-muted: #132f49;
-  --atlas-color-positive-muted: #12353a;
-  --atlas-color-negative-muted: #2f2635;
-  --atlas-color-warning-muted: #2e322a;
+  --atlas-color-focus-ring: #75b8ff;
+  --atlas-color-primary-muted: #132333;
+  --atlas-color-positive-muted: #10281a;
+  --atlas-color-negative-muted: #2b1719;
+  --atlas-color-warning-muted: #2b2412;
+  --atlas-color-sweep: #a78bfa;
 }
 
 @theme inline {
@@ -50,6 +51,7 @@
   --color-atlas-positive-muted: var(--atlas-color-positive-muted);
   --color-atlas-negative-muted: var(--atlas-color-negative-muted);
   --color-atlas-warning-muted: var(--atlas-color-warning-muted);
+  --color-atlas-sweep: var(--atlas-color-sweep);
 }
 
 html {
@@ -60,10 +62,29 @@ body {
   margin: 0;
   background: var(--atlas-color-background);
   color: var(--atlas-color-foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+
+.font-mono {
+  font-family: var(--font-geist-mono), ui-monospace, SFMono-Regular, monospace;
+  font-variant-numeric: tabular-nums;
 }
 
 @layer components {
+  @keyframes atlas-progress-indeterminate {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(300%);
+    }
+  }
+
+  .atlas-progress-indeterminate {
+    animation: atlas-progress-indeterminate 1.6s ease-in-out infinite;
+  }
+
   .nav-link {
     display: inline-flex;
     min-height: 40px;
@@ -256,29 +277,74 @@ body {
 /* Compatibility layer for the earlier light utility classes.  The Atlas
    workstation is dark-first; keeping these aliases here prevents older
    workflow screens from reintroducing white cards and navigation chrome. */
-.bg-white { background-color: var(--atlas-color-surface) !important; }
-.bg-slate-50 { background-color: var(--atlas-color-surface-hover) !important; }
-.bg-slate-100 { background-color: var(--atlas-color-surface-selected) !important; }
-.bg-slate-900 { background-color: var(--atlas-color-primary) !important; }
-.text-white { color: var(--atlas-color-primary-foreground) !important; }
-.text-slate-950, .text-slate-900 { color: var(--atlas-color-foreground) !important; }
-.text-slate-700, .text-slate-600, .text-slate-500, .text-slate-400 {
-  color: var(--atlas-color-foreground-muted) !important;
+.bg-white {
+  background-color: var(--atlas-color-surface) !important;
 }
-.border-slate-100, .border-slate-200, .border-slate-300 {
-  border-color: var(--atlas-color-border) !important;
-}
-.hover\:bg-slate-50:hover, .hover\:bg-slate-100:hover {
+.bg-slate-50 {
   background-color: var(--atlas-color-surface-hover) !important;
 }
-.hover\:bg-slate-700:hover { background-color: var(--atlas-color-primary-hover) !important; }
-.hover\:text-slate-950:hover { color: var(--atlas-color-foreground) !important; }
-.border-red-200 { border-color: var(--atlas-color-negative) !important; }
-.bg-red-50 { background-color: var(--atlas-color-negative-muted) !important; }
-.text-red-800, .text-red-900 { color: var(--atlas-color-negative) !important; }
-.border-emerald-200 { border-color: var(--atlas-color-positive) !important; }
-.bg-emerald-50, .bg-emerald-100 { background-color: var(--atlas-color-positive-muted) !important; }
-.text-emerald-800 { color: var(--atlas-color-positive) !important; }
-.border-amber-200 { border-color: var(--atlas-color-warning) !important; }
-.bg-amber-50, .bg-amber-100 { background-color: var(--atlas-color-warning-muted) !important; }
-.text-amber-800, .text-amber-900 { color: var(--atlas-color-warning) !important; }
+.bg-slate-100 {
+  background-color: var(--atlas-color-surface-selected) !important;
+}
+.bg-slate-900 {
+  background-color: var(--atlas-color-primary) !important;
+}
+.text-white {
+  color: var(--atlas-color-primary-foreground) !important;
+}
+.text-slate-950,
+.text-slate-900 {
+  color: var(--atlas-color-foreground) !important;
+}
+.text-slate-700,
+.text-slate-600,
+.text-slate-500,
+.text-slate-400 {
+  color: var(--atlas-color-foreground-muted) !important;
+}
+.border-slate-100,
+.border-slate-200,
+.border-slate-300 {
+  border-color: var(--atlas-color-border) !important;
+}
+.hover\:bg-slate-50:hover,
+.hover\:bg-slate-100:hover {
+  background-color: var(--atlas-color-surface-hover) !important;
+}
+.hover\:bg-slate-700:hover {
+  background-color: var(--atlas-color-primary-hover) !important;
+}
+.hover\:text-slate-950:hover {
+  color: var(--atlas-color-foreground) !important;
+}
+.border-red-200 {
+  border-color: var(--atlas-color-negative) !important;
+}
+.bg-red-50 {
+  background-color: var(--atlas-color-negative-muted) !important;
+}
+.text-red-800,
+.text-red-900 {
+  color: var(--atlas-color-negative) !important;
+}
+.border-emerald-200 {
+  border-color: var(--atlas-color-positive) !important;
+}
+.bg-emerald-50,
+.bg-emerald-100 {
+  background-color: var(--atlas-color-positive-muted) !important;
+}
+.text-emerald-800 {
+  color: var(--atlas-color-positive) !important;
+}
+.border-amber-200 {
+  border-color: var(--atlas-color-warning) !important;
+}
+.bg-amber-50,
+.bg-amber-100 {
+  background-color: var(--atlas-color-warning-muted) !important;
+}
+.text-amber-800,
+.text-amber-900 {
+  color: var(--atlas-color-warning) !important;
+}

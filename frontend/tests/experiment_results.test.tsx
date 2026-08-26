@@ -180,7 +180,10 @@ describe('completed Experiment result states', () => {
     expect(
       await screen.findByText('No trades were generated in this period.'),
     ).toBeInTheDocument();
-    await waitFor(() => expect(mocks.createChart).toHaveBeenCalledTimes(2));
+    // Completed results render the equity curve, drawdown, and the progressive
+    // price-analysis chart. Keep the assertion aligned with the intended V2 UI,
+    // rather than the former monolith's two-chart structure.
+    await waitFor(() => expect(mocks.createChart).toHaveBeenCalledTimes(3));
     const priceChartOptions = mocks.createChart.mock.calls.find(
       ([, options]) => options?.timeScale?.tickMarkFormatter,
     )?.[1];
@@ -281,7 +284,7 @@ describe('terminal and persistent result states', () => {
     render(<ExperimentStatusPage />);
 
     expect(
-      await screen.findByText(/Atlas is running the deterministic simulation/),
+      await screen.findByText(/Running deterministic simulation/),
     ).toBeInTheDocument();
     expect(screen.getByText('Running')).toBeInTheDocument();
     expect(screen.queryByText('Equity curve')).not.toBeInTheDocument();
@@ -337,7 +340,7 @@ describe('focused Trade detail', () => {
     render(<TradeDetailPage />);
 
     expect(
-      await screen.findByRole('heading', { name: 'Trade 1' }),
+      await screen.findByRole('heading', { name: /Trade 1 · long/i }),
     ).toBeInTheDocument();
     expect(
       screen.getByText(/Ambiguous intrabar resolution/),

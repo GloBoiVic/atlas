@@ -48,8 +48,8 @@ from backend.persistence.models import (
     ExperimentAccountModel,
     ExperimentEquityPointModel,
     ExperimentGapDecisionModel,
-    ExperimentProposalDiagnosticModel,
     ExperimentModel,
+    ExperimentProposalDiagnosticModel,
     FillModel,
     InstrumentModel,
     MarketBarModel,
@@ -453,6 +453,8 @@ class ExperimentRunner:
             position = session.scalar(select(PositionModel).where(PositionModel.experiment_id == experiment.id))
             if account is None or position is None:
                 raise ValueError("experiment financial projections are missing")
+            # V2 policy: initial account boundary, then each eligible M1 close.
+            self._sample_equity(session, experiment, account, position, None, 0)
             params, state, history = _parameters(experiment.parameter_snapshot), StrategyState(), []
             frames = tuple(clock.frames())
             observations = tuple(clock.observations())
@@ -496,6 +498,8 @@ class ExperimentRunner:
                         self._proposal_diagnostic(session, experiment, intent_row, "EXPIRED", observation.start_time, {"expiry_time": pending_decision.expiry_time.isoformat().replace("+00:00", "Z"), "reason": "NO_TRIGGER"})
                         pending = None
                 self._apply_protection(session, experiment, position, observation, commission)
+                if not (observation is observations[-1] and position.state != "FLAT"):
+                    self._sample_equity(session, experiment, account, position, observation, None)
 
             for frame in decisions:
                 while observation_index < len(observations) and observations[observation_index].start_time < frame.frontier:
@@ -518,6 +522,8 @@ class ExperimentRunner:
                         else:
                             self._attempt_entry(session, experiment, version.id, frame, decision, account, position, observation, risk_config, commission, intent_row=intent_row)
                             self._apply_protection(session, experiment, position, observation, commission)
+                            if not (observation is observations[-1] and position.state != "FLAT"):
+                                self._sample_equity(session, experiment, account, position, observation, None)
                             observation_index = max(observation_index, observations.index(observation) + 1)
                     else:
                         pending = (intent_row, frame, decision)
@@ -536,6 +542,7 @@ class ExperimentRunner:
                     raise ExperimentFailureError(ExperimentFailure(FailureCategory.MARKET_DATA,
                         "EXECUTION_DATA_UNAVAILABLE", "Historical protection outcome is unknowable"))
                 self._close_at_end(session, experiment, position, terminal, commission)
+                self._sample_equity(session, experiment, account, position, terminal, None)
             self._complete_v2(session, experiment, account)
             return ExperimentRunResult(experiment.id, "COMPLETED", bool(session.scalar(select(TradeModel.id).where(TradeModel.experiment_id == experiment.id))))
         except ExperimentFailureError as error:
@@ -575,8 +582,6 @@ class ExperimentRunner:
         return SnapshotBar(bar, SnapshotBarSourceIdentity(row.id, fingerprint, row.source_request_id, row.retrieved_at))
 
     def _complete_v2(self, session, experiment, account):
-        position = session.scalar(select(PositionModel).where(PositionModel.experiment_id == experiment.id))
-        self._sample_equity(session, experiment, account, position, None, 0)
         gaps = session.scalars(select(DatasetSnapshotGapModel).where(
             DatasetSnapshotGapModel.dataset_snapshot_id == experiment.dataset_snapshot_id
         ).order_by(DatasetSnapshotGapModel.sequence)).all()

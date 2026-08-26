@@ -1,6 +1,6 @@
 # Memory — Atlas
 
-Last updated: 2026-08-25 — Strategy Experiment Workstation
+Last updated: 2026-08-26 — Authoritative Experiment identity contract
 
 ## What was built
 
@@ -48,6 +48,7 @@ Last updated: 2026-08-25 — Strategy Experiment Workstation
 - **Phase 6 verification:** terminal premium R1 review PASS (0 Critical / 0 Important / 0 Minor). Tester `VALIDATION.md` originally blocked on B1–B3 (stale generated client, `experimentId`/`experiment_id` query mismatch, `/experiments/compare` Suspense build regression); user-approved narrow remediation in `TASK-07` (B1–B3) and `TASK-08` (review I1/M1) resolved all three. Final: backend `not external` **235 passed / 1 deselected**; integration `test_api_experiments.py` **5 passed**; `npm run test:web` **12 passed**; lint/typecheck/build passed (`/experiments/compare` generated as a static route); OpenAPI freshness byte-identical; Ruff + `git diff --check` clean. Env-only: R1 review shell lacked `ATLAS_TEST_DATABASE_URL` (its 12 integration setup errors were env, not app failures); `atlas_test` `public` schema/table ownership was transferred to role `atlas` (provisioning, no prod DB touched); `format:check:web` only flags pre-existing `tests/e2e/.fixtures.json` drift.
 - **Atlas V2 design-context verification:** independent validation PASS and terminal R1 review PASS, with no Critical or Important findings. All ten mockup paths appear in the canonical inventory and validation matrix; dark-first visual evidence was corroborated programmatically where a specialist lacked image input. The stale `context/design/screenshot/atlas-screens.PNG` reference is gone and the file remains absent.
 - **Strategy Experiment Workstation verification:** final full suite passed (**316 passed, 1 skipped, 4 warnings**); targeted backend, web tests, typecheck, lint, migration, real OANDA durable flow, API price analysis, and Local Host MCP browser/result/Trade inspections passed. The six former failures were stale obsolete-Strategy/database expectations, resolved without restoring obsolete behavior. The sole skip was the credentialed external OANDA test.
+- **Authoritative Experiment identity contract:** FastAPI now exposes immutable Experiment identity assembled from StrategyVersion, DatasetSnapshot, VenueInstrument, Instrument, and Experiment period facts. StrategyVersion read metadata exposes structured market requirements/methodology; Next.js Strategy, Experiment, and Trade surfaces render returned identity, with Trade using its owning Experiment. No new persistence or frontend identity inference was added. The Experiments UI was decomposed into responsibility-owned modules, refreshed with local Geist typography and neutral Atlas tokens, and validated with frontend/backend focused suites plus Local Host identity checks.
 
 ## Eureka moments
 
@@ -80,6 +81,7 @@ Last updated: 2026-08-25 — Strategy Experiment Workstation
 
 - Whether and when to address Phase 3 OBS-1/OBS-3, Phase 4 findings C/D, Phase 5 Minors 1-4, Product Vision Alignment Minors 1-2, and the Phase 6 env-only notes; none blocks the completed slices.
 - Whether to address O1 (`allowedDevOrigins`) and O3 (`httpx2`/StarletteDeprecationWarning) in a later session — both explicitly non-blocking.
+- The identity-contract workstream is complete; future work should treat FastAPI identity as authoritative and preserve the no-hardcoded-market-identity rule.
 - `context/index.md` has never been created; decide with the human whether one is wanted.
 
 ---

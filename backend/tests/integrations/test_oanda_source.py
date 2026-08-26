@@ -142,6 +142,19 @@ def test_paginates_at_4000_minutes_and_filters_boundaries() -> None:
     assert len(result.bars) == 4001 * 3
 
 
+def test_native_m15_uses_sixty_thousand_minute_windows() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"candles": []})
+
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    source(handler).fetch_native_m15(start, start + timedelta(minutes=60_001))
+    assert len(requests) == 2
+    assert requests[0].url.params["to"] == "2026-02-11T16:00:00Z"
+
+
 def test_incomplete_is_reported_and_conflicting_duplicate_fails() -> None:
     def incomplete_handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(

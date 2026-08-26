@@ -76,8 +76,10 @@ describe('Phase 6 strategy and comparison views', () => {
       await screen.findByText('EMA Sweep Engulfing v2'),
     ).toBeInTheDocument();
     expect(screen.getByText('Expiry window')).toBeInTheDocument();
-    expect(screen.getByText(/Expiry window · 5 bars/)).toBeInTheDocument();
-    expect(screen.getByText('fingerprint')).toBeInTheDocument();
+    expect(screen.getByText('Strategy settings')).toBeInTheDocument();
+    expect(
+      screen.getByText(/StrategyVersion fingerprint: fingerprint/),
+    ).toBeInTheDocument();
   });
 
   it('keeps comparison order and puts warnings before canonical metrics', async () => {

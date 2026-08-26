@@ -24,6 +24,17 @@ type Version = {
   lastUsedAt: string | null;
   executionAvailable: boolean;
   unavailableReason: string | null;
+  marketRequirements?: {
+    instrument?: string | null;
+    resolution?: string | null;
+    priceComponent?: string | null;
+    requiredHistoricalContextBars?: number | null;
+    completedOnly?: boolean | null;
+  };
+  methodology?: {
+    summary?: string | null;
+    capabilities?: string[];
+  };
 };
 const date = (v: string | null) => formatInstant(v);
 
@@ -218,41 +229,36 @@ export function StrategyDetailPage() {
                     </div>
                     <div>
                       <dt className="text-atlas-foreground-muted">
-                        Timeframe / required context
+                        Market requirements
                       </dt>
                       <dd className="font-medium">
-                        {v.timeframe} · {v.requiredHistoricalContextBars}{' '}
-                        context bars
+                        {v.marketRequirements?.instrument ??
+                          'Instrument unavailable'}{' '}
+                        · {v.marketRequirements?.resolution ?? v.timeframe} ·{' '}
+                        {v.marketRequirements?.priceComponent ??
+                          'Price basis unavailable'}
+                      </dd>
+                      <dd className="text-xs text-atlas-foreground-muted">
+                        {v.marketRequirements?.requiredHistoricalContextBars ??
+                          v.requiredHistoricalContextBars}{' '}
+                        required historical bars
                       </dd>
                     </div>
                     <div>
                       <dt className="text-atlas-foreground-muted">
-                        Fixed methodology
+                        Methodology
                       </dt>
-                      <dd className="font-medium">Expiry window · 5 bars</dd>
+                      <dd className="font-medium">
+                        {v.methodology?.summary ?? 'Methodology unavailable'}
+                      </dd>
                     </div>
                     <div>
                       <dt className="text-atlas-foreground-muted">Last used</dt>
                       <dd className="font-medium">{date(v.lastUsedAt)}</dd>
                     </div>
                   </dl>
-                  <div className="mt-5 border-t border-atlas-border pt-4">
-                    <p className="text-xs font-medium uppercase tracking-wide text-atlas-foreground-muted">
-                      Provenance
-                    </p>
-                    <p className="mt-1 break-all font-mono text-xs text-atlas-foreground-muted">
-                      {v.sourceFingerprint}
-                    </p>
-                    {v.gitSha && (
-                      <p className="mt-1 text-xs text-atlas-foreground-muted">
-                        Git SHA: {v.gitSha}
-                      </p>
-                    )}
-                  </div>
                   <div className="mt-5">
-                    <p className="text-xs font-medium uppercase tracking-wide text-atlas-foreground-muted">
-                      Parameter schema
-                    </p>
+                    <p className="text-sm font-medium">Strategy settings</p>
                     <ul className="mt-2 grid gap-2 text-sm sm:grid-cols-2">
                       {v.parameterSchema.map((p) => (
                         <li
@@ -263,13 +269,30 @@ export function StrategyDetailPage() {
                             {String(p.label ?? p.key)}
                           </span>
                           <span className="ml-2 text-atlas-foreground-muted">
-                            {String(p.type)} · {String(p.min)}–{String(p.max)}
-                            {Number(p.min) === Number(p.max) ? ' · fixed' : ''}
+                            default {String(p.default ?? '—')}
                           </span>
                         </li>
                       ))}
                     </ul>
                   </div>
+                  <details className="mt-5 border-t border-atlas-border pt-4">
+                    <summary className="cursor-pointer text-sm font-medium">
+                      Technical details
+                    </summary>
+                    <div className="mt-3 space-y-2">
+                      <p className="break-all font-mono text-xs text-atlas-foreground-muted">
+                        StrategyVersion fingerprint: {v.sourceFingerprint}
+                      </p>
+                      {v.gitSha && (
+                        <p className="font-mono text-xs text-atlas-foreground-muted">
+                          Git SHA: {v.gitSha}
+                        </p>
+                      )}
+                      <p className="text-xs text-atlas-foreground-muted">
+                        Immutable parameter schema retained for reproducibility.
+                      </p>
+                    </div>
+                  </details>
                   {!v.executionAvailable && (
                     <p className="mt-4 rounded-md border border-atlas-warning bg-atlas-warning-muted p-3 text-sm text-atlas-warning">
                       Retained for provenance; new Experiments are blocked.{' '}

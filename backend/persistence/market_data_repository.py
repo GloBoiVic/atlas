@@ -593,47 +593,55 @@ class DatasetSnapshotRepository:
         # one unit of work. This retains ORM validation and database triggers,
         # while avoiding one flush/identity operation per member on month-long
         # snapshots.
-        session.add_all(
-            [
-                DatasetSnapshotAnalyticalBarModel(
-                    dataset_snapshot_id=row.id,
-                    sequence=sequence,
-                    start_time=bar.start_time,
-                    end_time=bar.end_time,
-                    open_price=bar.open,
-                    high_price=bar.high,
-                    low_price=bar.low,
-                    close_price=bar.close,
-                    volume=bar.volume,
-                    complete=True,
-                    content_fingerprint=bar_content_fingerprint(bar),
-                    retrieved_at=snapshot.created_at,
-                )
+        # Use Core executemany for the immutable membership tables.  The prior
+        # ORM add_all path materialized tens of thousands of individual ORM
+        # objects and made a month-long load spend most of its time in the
+        # post-persistence snapshot phase.  Explicit values retain the same
+        # database checks/triggers and make the operation one bounded unit.
+        analytical_rows = [
+                {
+                    "dataset_snapshot_id": row.id,
+                    "sequence": sequence,
+                    "start_time": bar.start_time,
+                    "end_time": bar.end_time,
+                    "open_price": bar.open,
+                    "high_price": bar.high,
+                    "low_price": bar.low,
+                    "close_price": bar.close,
+                    "volume": bar.volume,
+                    "complete": True,
+                    "content_fingerprint": bar_content_fingerprint(bar),
+                    "retrieved_at": snapshot.created_at,
+                }
                 for sequence, bar in enumerate(analytical, 1)
             ]
-        )
-        session.add_all(
-            [
-                DatasetSnapshotExecutionObservationModel(
-                    dataset_snapshot_id=row.id,
-                    sequence=sequence,
-                    market_bar_id=market_bar.id,
-                    price_component=bar.price_component.value,
-                    start_time=bar.start_time,
-                    end_time=bar.end_time,
-                    observation_fingerprint=bar_content_fingerprint(bar),
-                )
+        if analytical_rows:
+            session.execute(
+                insert(DatasetSnapshotAnalyticalBarModel.__table__), analytical_rows
+            )
+        execution_rows = [
+                {
+                    "dataset_snapshot_id": row.id,
+                    "sequence": sequence,
+                    "market_bar_id": market_bar.id,
+                    "price_component": bar.price_component.value,
+                    "start_time": bar.start_time,
+                    "end_time": bar.end_time,
+                    "observation_fingerprint": bar_content_fingerprint(bar),
+                }
                 for sequence, (market_bar, bar) in enumerate(execution, 1)
             ]
-        )
-        session.add_all(
-            [
-                DatasetSnapshotGapModel(
-                    dataset_snapshot_id=row.id, sequence=sequence, **gap
-                )
+        if execution_rows:
+            session.execute(
+                insert(DatasetSnapshotExecutionObservationModel.__table__),
+                execution_rows,
+            )
+        gap_rows = [
+                {"dataset_snapshot_id": row.id, "sequence": sequence, **gap}
                 for sequence, gap in enumerate(gaps, 1)
             ]
-        )
+        if gap_rows:
+            session.execute(insert(DatasetSnapshotGapModel.__table__), gap_rows)
         session.flush()
         return snapshot
 
@@ -643,6 +651,38 @@ class DatasetSnapshotRepository:
             for item in self.ordered_members_with_sources(
                 session, snapshot_id, None, None
             )
+        )
+
+    def v2_analytical_members(
+        self, session: Session, snapshot_id: UUID
+    ) -> tuple[Bar, ...]:
+        """Read the immutable native-M15 membership of a V2 snapshot."""
+        snapshot = session.get(DatasetSnapshotModel, snapshot_id)
+        if snapshot is None:
+            raise ValueError("dataset snapshot does not exist")
+        venue, _instrument = self._snapshot_venue_rows(session, snapshot)
+        rows = session.scalars(
+            select(DatasetSnapshotAnalyticalBarModel)
+            .where(
+                DatasetSnapshotAnalyticalBarModel.dataset_snapshot_id == snapshot_id
+            )
+            .order_by(DatasetSnapshotAnalyticalBarModel.sequence)
+        ).all()
+        return tuple(
+            Bar(
+                venue.instrument,
+                venue.provider,
+                Timeframe.M15,
+                PriceComponent.MID,
+                _database_utc(row.start_time),
+                _database_utc(row.end_time),
+                row.open_price,
+                row.high_price,
+                row.low_price,
+                row.close_price,
+                volume=row.volume,
+            )
+            for row in rows
         )
 
     def ordered_members_with_sources(

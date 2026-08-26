@@ -282,6 +282,8 @@ class StrategyVersionHistoryResponse(StrictModel):
     last_used_at: datetime | None
     execution_available: bool
     unavailable_reason: str | None
+    market_requirements: dict[str, Any]
+    methodology: dict[str, Any]
 
 
 class StrategyDetailResponse(StrictModel):
@@ -292,6 +294,55 @@ class StrategyDetailResponse(StrictModel):
     experiment_count: int
     last_experiment_at: datetime | None
     versions: list[StrategyVersionHistoryResponse]
+
+
+class ExperimentIdentityStrategyVersion(StrictModel):
+    id: UUID | None
+    display_name: str | None
+    key: str | None
+    version: int | None
+
+
+class ExperimentIdentityInstrument(StrictModel):
+    code: str | None
+    base_currency: str | None
+    quote_currency: str | None
+
+
+class ExperimentIdentityAnalytical(StrictModel):
+    resolution: str | None
+    price_component: str | None
+
+
+class ExperimentIdentityProvider(StrictModel):
+    name: str | None
+    symbol: str | None
+
+
+class ExperimentIdentityPeriod(StrictModel):
+    start: str
+    end: str
+
+
+class ExperimentIdentity(StrictModel):
+    strategy_version: ExperimentIdentityStrategyVersion | None
+    instrument: ExperimentIdentityInstrument | None
+    analytical: ExperimentIdentityAnalytical
+    provider: ExperimentIdentityProvider | None
+    trading_period: ExperimentIdentityPeriod
+
+
+class ExperimentReadResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    identity: ExperimentIdentity
+
+
+class ExperimentListResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    items: list[ExperimentReadResponse]
+    next_cursor: str | None = None
 
 
 class ComparisonWarningResponse(StrictModel):

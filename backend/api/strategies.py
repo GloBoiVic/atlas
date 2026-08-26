@@ -44,6 +44,13 @@ def _availability(registry: StrategyRegistry, row: Any) -> tuple[bool, str | Non
 
 def _version(registry: StrategyRegistry, row: Any, usage: Any) -> dict[str, Any]:
     available, reason = _availability(registry, row)
+    definition = None
+    if available:
+        definition = registry.get(
+            row.strategy.strategy_key,
+            implementation_key=row.implementation_key,
+            source_fingerprint=row.source_fingerprint,
+        ).definition
     return {
         "id": row.id,
         "displayName": f"{row.strategy.name} v{row.version_number}",
@@ -63,6 +70,17 @@ def _version(registry: StrategyRegistry, row: Any, usage: Any) -> dict[str, Any]
         "lastUsedAt": _utc(usage.last_used_at),
         "executionAvailable": available,
         "unavailableReason": reason,
+        "marketRequirements": {
+            "instrument": definition.required_instrument.value if definition else None,
+            "resolution": definition.required_resolution.value if definition else row.primary_timeframe,
+            "priceComponent": definition.required_price_component.value if definition else None,
+            "requiredHistoricalContextBars": row.required_historical_context_bars,
+            "completedOnly": definition.completed_only if definition else None,
+        },
+        "methodology": {
+            "summary": definition.description if definition else row.strategy.description,
+            "capabilities": list(definition.capabilities) if definition else row.capabilities,
+        },
     }
 
 

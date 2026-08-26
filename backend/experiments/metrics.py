@@ -63,10 +63,21 @@ def _daily_returns(
     if starting_equity <= 0:
         return []
     last_by_date: dict[date, tuple[datetime, int, Decimal]] = {}
-    for index, point in enumerate(equity):
+    ordered = sorted(
+        enumerate(equity),
+        key=lambda item: (
+            item[1].observed_at,
+            getattr(item[1], "sequence_number", item[0]),
+        ),
+    )
+    for index, point in ordered:
         observed_at = point.observed_at
         key = _utc_date(observed_at)
-        candidate = (observed_at, index, _decimal(point.equity))
+        candidate = (
+            observed_at,
+            getattr(point, "sequence_number", index),
+            _decimal(point.equity),
+        )
         if key not in last_by_date or candidate[:2] > last_by_date[key][:2]:
             last_by_date[key] = candidate
     values = [
@@ -94,7 +105,17 @@ def calculate_metrics(
     """
     starting = _decimal(starting_equity)
     points = tuple(equity_points)
-    equities = [_decimal(point.equity) for point in points]
+    ordered_points = tuple(
+        point
+        for _, point in sorted(
+            enumerate(points),
+            key=lambda item: (
+                item[1].observed_at,
+                getattr(item[1], "sequence_number", item[0]),
+            ),
+        )
+    )
+    equities = [_decimal(point.equity) for point in ordered_points]
     if equities and starting > 0:
         net_return = _value(equities[-1] / starting - Decimal("1"), "ratio")
     else:
@@ -108,8 +129,10 @@ def calculate_metrics(
         if peak > 0:
             drawdown = peak - value
             drawdown_percent = drawdown / peak
-            max_drawdown = max(max_drawdown, drawdown)
-            max_drawdown_percent = max(max_drawdown_percent, drawdown_percent)
+            # Amount and percentage describe the same peak-to-trough event.
+            if drawdown > max_drawdown:
+                max_drawdown = drawdown
+                max_drawdown_percent = drawdown_percent
 
     completed = tuple(trade for trade in trades if trade.status == "COMPLETED")
     trade_count = len(completed)
@@ -132,7 +155,7 @@ def calculate_metrics(
         )
         expectancy = _value(sum(net_pnls, Decimal("0")) / trade_count, "USD")
 
-    returns = _daily_returns(points, starting)
+    returns = _daily_returns(ordered_points, starting)
     if len(returns) < 2:
         sharpe = _unavailable("ratio", "INSUFFICIENT_DAILY_RETURNS")
     else:

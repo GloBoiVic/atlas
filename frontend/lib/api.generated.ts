@@ -809,6 +809,14 @@ export interface components {
       executionAvailable: boolean;
       /** Unavailablereason */
       unavailableReason: string | null;
+      /** Market requirements */
+      marketRequirements: {
+        [key: string]: unknown;
+      };
+      /** Trader-readable methodology */
+      methodology: {
+        [key: string]: unknown;
+      };
     };
     /** ValidationError */
     ValidationError: {

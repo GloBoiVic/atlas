@@ -8,6 +8,7 @@ only coordinates canonical bars, coverage, and immutable snapshots.
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
@@ -587,7 +588,13 @@ class MarketDataService:
         finally:
             session.close()
 
-    def load_v2(self, start: datetime, end: datetime):
+    def load_v2(
+        self,
+        start: datetime,
+        end: datetime,
+        *,
+        progress: Callable[[IngestionReport], None] | None = None,
+    ):
         """Acquire both native products, then atomically create a V2 snapshot."""
         native = getattr(self._source, "fetch_native_m15", None)
         execution = getattr(self._source, "fetch_execution_m1", None)
@@ -597,8 +604,100 @@ class MarketDataService:
         execution_result = execution(start, end)
         if native_result.incomplete or execution_result.incomplete:
             raise ValueError("provider returned incomplete historical observations")
-        self._apply(self._mapping_id(), execution_result)
+        applied = self._apply(self._mapping_id(), execution_result)
+        if progress:
+            # Native M15 is immutable snapshot membership; execution M1 is the
+            # durable database commit. Report that commit only after it lands.
+            progress(
+                SimpleNamespace(
+                    fetched_ranges=((start, end),),
+                    committed_ranges=((start, end),),
+                    inserted=applied.inserted,
+                    reactivated=applied.reactivated,
+                    unchanged=applied.unchanged,
+                    incomplete_minutes=(),
+                    coverage=self._coverage(start, end),
+                )
+            )
         return self.create_snapshot_v2(start, end, analytical=native_result.bars)
+
+    def load_v2_incremental(
+        self,
+        start: datetime,
+        end: datetime,
+        *,
+        previous_snapshot_id: UUID,
+        previous_start: datetime,
+        progress: Callable[[IngestionReport], None] | None = None,
+    ):
+        """Extend a V2 snapshot without reacquiring its covered prefix.
+
+        Native M15 is only available through snapshot membership, while execution
+        observations are durable canonical M1 rows.  They are therefore planned
+        independently and combined into a new snapshot; the old snapshot is
+        never edited.
+        """
+        if not (start < previous_start <= end):
+            raise ValueError("incremental load must add a positive prefix")
+        native = getattr(self._source, "fetch_native_m15", None)
+        execution = getattr(self._source, "fetch_execution_m1", None)
+        if native is None or execution is None:
+            raise ValueError("source does not support Alternative A acquisition")
+        native_result = native(start, previous_start)
+        if native_result.incomplete:
+            raise ValueError("provider returned incomplete native observations")
+
+        mapping_id = self._mapping_id()
+        session = self._session_factory()
+        try:
+            with session.begin():
+                execution_ranges = _coalesce_expected_ranges(
+                    self._repository.missing_ranges(
+                        session,
+                        mapping_id,
+                        start,
+                        end,
+                        (PriceComponent.BID, PriceComponent.ASK),
+                    )
+                )
+                prior_analytical = self._snapshots.v2_analytical_members(
+                    session, previous_snapshot_id
+                )
+        finally:
+            session.close()
+
+        fetched: list[tuple[datetime, datetime]] = []
+        committed: list[tuple[datetime, datetime]] = []
+        counts = [0, 0, 0]
+        for range_start, range_end in execution_ranges:
+            fetched.append((range_start, range_end))
+            result = execution(range_start, range_end)
+            if result.incomplete:
+                raise ValueError("provider returned incomplete execution observations")
+            applied = self._apply(mapping_id, result)
+            counts[0] += applied.inserted
+            counts[1] += applied.reactivated
+            counts[2] += applied.unchanged
+            committed.append((range_start, range_end))
+            if progress:
+                progress(
+                    SimpleNamespace(
+                        fetched_ranges=tuple(fetched),
+                        committed_ranges=tuple(committed),
+                        inserted=counts[0],
+                        reactivated=counts[1],
+                        unchanged=counts[2],
+                        incomplete_minutes=(),
+                        coverage=self._coverage(start, end),
+                    )
+                )
+        analytical = tuple(
+            sorted(
+                (*native_result.bars, *prior_analytical),
+                key=lambda bar: bar.start_time,
+            )
+        )
+        return self.create_snapshot_v2(start, end, analytical=analytical)
 
     def derive_m15(
         self, snapshot_fingerprint: str, component: PriceComponent

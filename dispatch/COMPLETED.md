@@ -135,3 +135,12 @@ review artifact in `dispatch/`. Prior dispatch artifacts remain untouched in `di
 - **Real OANDA/browser evidence:** Current OANDA Practice EUR/USD one-month flow completed as Experiment `2ff310d8-f462-4df8-a0e4-275a7d99a0a1`: Confirmation Break v1, immutable snapshot, M1 MID/BID/ASK with native M15, 10 Trades, `DETERMINED`, 960 disclosed gaps, `/price-analysis` HTTP 200. Local Host MCP result and Trade 1/2 pages showed current Strategy identity, persisted landmarks/charts, accessibility evidence, and empty console/failed-network diagnostics. No secrets recorded.
 - **Deferred:** PAPER and LIVE lifecycle behavior; dedicated Playwright E2E remains a non-gating reproducibility follow-up because its hard-coded port was occupied.
 - **Memory-save receipt:** `Memory saved to memory.md.` on 2026-08-25 after explicit user confirmation; secret-safe update only, no secrets recorded.
+
+<!-- completion-id: experiment-identity-contract -->
+## Experiments frontend, workstation refresh, and authoritative identity contract — completion record
+
+- **Date/status:** 2026-08-26 — terminal R1 PASS.
+- **Scope:** Responsibility-based Experiments frontend rebuild, neutral Atlas workstation refresh, local Geist typography, chart token resolution, trader-facing Strategy/Experiment/Trade presentation, and typed FastAPI identity assembled from immutable Experiment, DatasetSnapshot, VenueInstrument, Instrument, and StrategyVersion facts. No new persistence or PAPER/LIVE behavior.
+- **Validation:** Canonical receipt `dispatch/workstreams/experiment-correctness-load-ui-audit/TASK-19-rebuild.md` records frontend 23-test suite, typecheck, lint, build, backend Experiment API integration 9 passed, Strategy integration 8 passed, and Local Host Strategy/Experiment/Trade identity checks.
+- **Review:** `dispatch/workstreams/experiment-correctness-load-ui-audit/REVIEW.md` — R1 PASS; no Critical or Important findings.
+- **Memory-save receipt:** `memory.md` successfully updated on 2026-08-26 after user approval; no secrets.

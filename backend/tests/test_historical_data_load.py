@@ -395,3 +395,41 @@ def test_v2_warmup_extends_on_actual_native_count_with_session_closures() -> Non
 
     assert starts == [UTC_START, UTC_START - timedelta(hours=25)]
     assert row.status == "COMPLETED"
+
+
+def test_v2_warmup_extension_uses_missing_only_union_seam() -> None:
+    events: list[tuple[str, int]] = []
+    row = SimpleNamespace(
+        id=uuid4(), status="PENDING", load_start=UTC_START,
+        load_end=UTC_START + timedelta(minutes=15),
+        trading_start=UTC_START, trading_end=UTC_START + timedelta(minutes=15),
+        strategy_version_id=uuid4(),
+    )
+    repository = FakeRepository(row)
+    first = SimpleNamespace(
+        id=uuid4(), snapshot_schema="ATLAS_HISTORICAL_SIMULATION_SNAPSHOT_V2",
+        integrity_summary={"warmup_count": 99},
+    )
+    extended = SimpleNamespace(
+        id=uuid4(), snapshot_schema="ATLAS_HISTORICAL_SIMULATION_SNAPSHOT_V2",
+        integrity_summary={"warmup_count": 100},
+    )
+
+    def load_v2(*_args, **_kwargs):
+        events.append(("full", 1))
+        return SimpleNamespace(snapshot=first)
+
+    def incremental(*_args, **_kwargs):
+        events.append(("prefix", 1))
+        return SimpleNamespace(snapshot=extended)
+
+    coordinator = HistoricalDataLoadCoordinator(
+        lambda: FakeSession(),
+        SimpleNamespace(load_v2=load_v2, load_v2_incremental=incremental),
+        SimpleNamespace(), FakeRegistry(), repository=repository,
+        strategies=FakeStrategies(),
+    )
+    coordinator.run(row.id)
+
+    assert events == [("full", 1), ("prefix", 1)]
+    assert row.status == "COMPLETED"

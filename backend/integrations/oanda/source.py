@@ -25,7 +25,8 @@ from backend.domain.market_data import (
 )
 
 OANDA_PRACTICE_BASE_URL = "https://api-fxpractice.oanda.com"
-_MAX_INTERVALS = 4_000
+_M1_WINDOW_MINUTES = 4_000
+_M15_WINDOW_MINUTES = 60_000
 _MAX_ATTEMPTS = 3
 _RETRY_AFTER_CAP_SECONDS = 30.0
 _BACKOFF_SECONDS = (0.25, 0.5)
@@ -98,10 +99,12 @@ def _rfc3339(value: datetime) -> str:
     return value.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
-def _windows(start: datetime, end: datetime) -> Iterator[tuple[datetime, datetime]]:
+def _windows(
+    start: datetime, end: datetime, *, window_minutes: int
+) -> Iterator[tuple[datetime, datetime]]:
     cursor = start
     while cursor < end:
-        window_end = min(cursor + timedelta(minutes=_MAX_INTERVALS), end)
+        window_end = min(cursor + timedelta(minutes=window_minutes), end)
         yield cursor, window_end
         cursor = window_end
 
@@ -282,7 +285,14 @@ class OandaHistoricalBarSource:
             trust_env=False,
         )
         try:
-            for window_start, window_end in _windows(start, end):
+            window_minutes = (
+                _M15_WINDOW_MINUTES
+                if timeframe is Timeframe.M15
+                else _M1_WINDOW_MINUTES
+            )
+            for window_start, window_end in _windows(
+                start, end, window_minutes=window_minutes
+            ):
                 candles, diagnostic = self._request(
                     client,
                     window_start,

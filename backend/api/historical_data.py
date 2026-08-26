@@ -69,7 +69,8 @@ def _payload(
             "inserted": row.inserted,
             "reactivated": row.reactivated,
             "unchanged": row.unchanged,
-            "incompleteMinuteCount": row.incomplete_minute_count,
+        "incompleteMinuteCount": row.incomplete_minute_count,
+        **(row.coverage_summary or {}).get("progress", {}),
         },
         "coverage": row.coverage_summary,
         "snapshot": {

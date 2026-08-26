@@ -31,7 +31,12 @@ from backend.experiments.lifecycle import (
 from backend.experiments.results import ExperimentResultReadService, ResultReadError
 from backend.market_data.coverage import diagnostic_payloads
 from backend.persistence.database import session_scope
-from backend.persistence.models import ExperimentModel
+from backend.persistence.models import (
+    DatasetSnapshotModel,
+    ExperimentModel,
+    InstrumentModel,
+    VenueInstrumentModel,
+)
 from backend.persistence.result_repository import ExperimentResultRepository
 from backend.persistence.strategy_repository import StrategyRepository
 from backend.strategies.registry import StrategyVersionUnavailableError
@@ -40,6 +45,8 @@ from .schemas import (
     ExperimentComparisonResponse,
     ExperimentConfigurationOptionsResponse,
     ExperimentCreateRequest,
+    ExperimentListResponse,
+    ExperimentReadResponse,
     PeriodRequest,
     PriceAnalysisResponse,
 )
@@ -129,9 +136,61 @@ def _failure(row: ExperimentModel) -> dict[str, Any] | None:
     }
 
 
+def _identity(
+    db: Session, row: ExperimentModel, strategy_version: Any = None
+) -> dict[str, Any]:
+    """Expose immutable Experiment identity assembled from persisted facts."""
+    snapshot = db.get(DatasetSnapshotModel, row.dataset_snapshot_id)
+    venue = (
+        db.get(VenueInstrumentModel, snapshot.venue_instrument_id)
+        if snapshot is not None
+        else None
+    )
+    instrument = (
+        db.get(InstrumentModel, venue.instrument_id) if venue is not None else None
+    )
+    components = snapshot.components if snapshot is not None else []
+    strategy = (
+        None
+        if strategy_version is None
+        else {
+            "id": str(strategy_version.id),
+            "displayName": f"{strategy_version.strategy.name} v{strategy_version.version_number}",
+            "key": strategy_version.strategy.strategy_key,
+            "version": strategy_version.version_number,
+        }
+    )
+    return {
+        "strategyVersion": strategy,
+        "instrument": (
+            None
+            if instrument is None
+            else {
+                "code": instrument.code,
+                "baseCurrency": instrument.base_currency,
+                "quoteCurrency": instrument.quote_currency,
+            }
+        ),
+        "analytical": {
+            "resolution": snapshot.base_resolution if snapshot is not None else None,
+            "priceComponent": components[0] if components else None,
+        },
+        "provider": (
+            None
+            if venue is None
+            else {"name": venue.provider, "symbol": venue.provider_symbol}
+        ),
+        "tradingPeriod": {
+            "start": _utc(row.trading_start),
+            "end": _utc(row.trading_end),
+        },
+    }
+
+
 def _detail(
     row: ExperimentModel, metrics: Any = None, result: Any = None,
     gap_decisions: Any = (), strategy_version: Any = None,
+    identity: Any = None,
 ) -> dict[str, Any]:
     result_payload = _json(result)
     result_quality = getattr(result, "result_quality", None)
@@ -162,6 +221,7 @@ def _detail(
                 "sourceFingerprint": strategy_version.source_fingerprint,
             }
         ),
+        "identity": identity or {},
         "datasetSnapshotId": str(row.dataset_snapshot_id),
         "startingCapital": str(row.starting_capital),
         "riskPerTrade": str(row.risk_per_trade),
@@ -386,7 +446,7 @@ def create_experiment_router(
             "diagnosticCount": len(diagnostics),
         }
 
-    @router.post("", status_code=status.HTTP_201_CREATED)
+    @router.post("", status_code=status.HTTP_201_CREATED, response_model=ExperimentReadResponse)
     def create(
         request: ExperimentCreateRequest, db: Session = Depends(session)
     ) -> dict[str, Any]:
@@ -408,9 +468,10 @@ def create_experiment_router(
             code = exc.code
             http_status = 409 if code == "COVERAGE_INVALID" else 422
             raise _error(code, str(exc), http_status=http_status) from exc
-        return _detail(row)
+        strategy_version = strategy_repo.get_version(db, row.strategy_version_id)
+        return _detail(row, strategy_version=strategy_version, identity=_identity(db, row, strategy_version))
 
-    @router.get("")
+    @router.get("", response_model=ExperimentListResponse)
     def listing(
         limit: int = Query(50, ge=1, le=100),
         cursor: str | None = None,
@@ -436,6 +497,7 @@ def create_experiment_router(
                     composed["result"],
                     results.gap_decisions(db, row.id),
                     composed.get("strategy_version"),
+                    _identity(db, row, composed.get("strategy_version")),
                 )
             )
         return {"items": items, "nextCursor": next_cursor}
@@ -467,7 +529,7 @@ def create_experiment_router(
             difference["values"] = dict(difference["values"])
         return payload
 
-    @router.get("/{experiment_id}")
+    @router.get("/{experiment_id}", response_model=ExperimentReadResponse)
     def detail(experiment_id: UUID, db: Session = Depends(session)) -> dict[str, Any]:
         row = get_row(experiment_id, db)
         try:
@@ -479,6 +541,7 @@ def create_experiment_router(
         return _detail(
             row, _metrics_payload(composed["metrics"]), composed["result"],
             results.gap_decisions(db, row.id), composed.get("strategy_version"),
+            _identity(db, row, composed.get("strategy_version")),
         )
 
     @router.post("/{experiment_id}/run")

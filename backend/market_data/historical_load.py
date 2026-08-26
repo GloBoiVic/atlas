@@ -142,9 +142,12 @@ class HistoricalDataLoadCoordinator:
                 "STRATEGY_VERSION_UNAVAILABLE",
                 "StrategyVersion is not executable on this server.",
             ) from exc
-        # 25 hours is only the first provider request. Semantic context is
-        # established later from completed, policy-eligible M15 results.
-        load_start = trading_start - INITIAL_ESTIMATE
+        requirement = requirement_for_version(version)
+        # Plan the actual semantic prefix up front.  The old 25-hour estimate
+        # was both non-deterministic and guaranteed a needless warm-up retry.
+        load_start = trading_start - timedelta(
+            minutes=15 * requirement.required_historical_context_bars
+        )
         load_end = trading_end
         if load_end - load_start > timedelta(days=90):
             raise HistoricalDataLoadError(
@@ -175,7 +178,17 @@ class HistoricalDataLoadCoordinator:
             load_start = row.load_start
             windows = 0
             while True:
-                snapshot_report = self.ingestion.load_v2(load_start, row.load_end)
+                try:
+                    snapshot_report = self.ingestion.load_v2(
+                        load_start, row.load_end,
+                        progress=lambda report: self._progress(request_id, report),
+                    )
+                except TypeError as error:
+                    # Keep the narrow seam usable by pre-V2 test doubles; real
+                    # ingestion implementations all accept the callback.
+                    if "progress" not in str(error):
+                        raise
+                    snapshot_report = self.ingestion.load_v2(load_start, row.load_end)
                 snapshot = snapshot_report.snapshot
                 if snapshot is None:
                     self._fail(
@@ -208,7 +221,36 @@ class HistoricalDataLoadCoordinator:
                         "available within the bounded warm-up horizon.",
                     )
                     return
-                load_start = plan.load_start
+                new_load_start = plan.load_start
+                incremental = getattr(self.ingestion, "load_v2_incremental", None)
+                if incremental is not None:
+                    try:
+                        snapshot_report = incremental(
+                            new_load_start,
+                            row.load_end,
+                            previous_snapshot_id=snapshot.id,
+                            previous_start=load_start,
+                            progress=lambda report: self._progress(request_id, report),
+                        )
+                        snapshot = snapshot_report.snapshot
+                        windows += 1
+                        eligible = self._v2_warmup_count(
+                            snapshot.id, row.trading_start, snapshot_report
+                        )
+                        plan = _warmup_plan(
+                            row.trading_start,
+                            row.trading_end,
+                            new_load_start,
+                            eligible,
+                            windows,
+                            required_context,
+                        )
+                        if plan.outcome == "READY":
+                            break
+                    except TypeError as error:
+                        if "previous_snapshot_id" not in str(error):
+                            raise
+                load_start = new_load_start
             if eligible < required_context:
                 self._fail(
                     request_id,

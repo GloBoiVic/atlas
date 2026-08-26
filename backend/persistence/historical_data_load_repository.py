@@ -90,6 +90,10 @@ class HistoricalDataLoadRepository:
         unchanged=0,
         incomplete_minutes=(),
         coverage_summary=None,
+        phase="Fetching M1 execution data",
+        completed_units=None,
+        total_units=None,
+        unit="database_commit",
     ) -> bool:
         row = session.scalar(
             select(HistoricalDataLoadRequestModel)
@@ -102,8 +106,24 @@ class HistoricalDataLoadRepository:
         row.committed_ranges = _ranges(committed_ranges)
         row.inserted, row.reactivated, row.unchanged = inserted, reactivated, unchanged
         row.incomplete_minute_count = len(incomplete_minutes)
-        if coverage_summary is not None:
-            row.coverage_summary = coverage_summary
+        previous_progress = (row.coverage_summary or {}).get("progress", {})
+        if completed_units is None:
+            completed_units = len(committed_ranges)
+        if previous_progress.get("completed_units") is not None:
+            completed_units = max(completed_units, previous_progress["completed_units"])
+        progress = {
+            "phase": phase,
+            "completed_units": completed_units,
+            "total_units": total_units,
+            "unit": unit,
+            "fetched_range_count": len(fetched_ranges),
+            "committed_range_count": len(committed_ranges),
+        }
+        # Keep additive progress durable without introducing a second lifecycle
+        # table.  Final coverage retains these facts for auditability.
+        summary = dict(coverage_summary or row.coverage_summary or {})
+        summary["progress"] = progress
+        row.coverage_summary = summary
         row.updated_at = _now()
         session.flush()
         return True
