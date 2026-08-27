@@ -1,6 +1,6 @@
 # Foundation Freeze 03 — Historical Data Foundation
 
-Status: `VALIDATION PASS / REVIEW IN PROGRESS`
+Status: `READY FOR MERGE APPROVAL`
 Classification: `Critical`
 Workstream: `foundation-freeze-03-historical-data-foundation`
 Branch: `solo/foundation-freeze-03-historical-data-foundation`
@@ -159,4 +159,4 @@ and `frontend/.env.local` are intentionally untouched. T015 is complete with con
 fresh validation proved live snapshot/repeat semantics but found stale suite assertions
 and guarded teardown. T016 reconciled those assertions and teardown; fresh validation
 now passes the full backend suite and confirms genuine full-year sparse
-snapshot/repeat evidence with zero repeat provider calls. Review must rerun.
+snapshot/repeat evidence with zero repeat provider calls. Await explicit merge approval.
