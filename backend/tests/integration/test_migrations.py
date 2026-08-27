@@ -69,6 +69,7 @@ def test_migration_cycle(migration_url: str) -> None:
             "experiment_results",
             "experiments",
             "fills",
+            "historical_acquisition_windows",
             "historical_data_load_requests",
             "instruments",
             "market_bars",
@@ -166,6 +167,12 @@ def test_migration_cycle(migration_url: str) -> None:
             index["name"] for index in inspector.get_indexes("experiments")
         }
         command.check(config)
+        # This migration-cycle fixture creates disposable snapshot state solely
+        # to exercise the V2 membership guards.  TRUNCATE is the established
+        # test-database teardown path: it bypasses row DML triggers without
+        # changing or weakening the immutable-facts protections in the schema.
+        with engine.begin() as connection:
+            connection.execute(text("TRUNCATE TABLE dataset_snapshots CASCADE"))
         command.downgrade(config, "0006_phase_4_persistence")
         legacy_columns = {
             column["name"] for column in inspect(engine).get_columns("experiment_results")

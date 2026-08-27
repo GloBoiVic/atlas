@@ -308,6 +308,26 @@ class DatasetSnapshotGapModel(Base):
     blocked: Mapped[bool] = mapped_column(nullable=False)
 
 
+class HistoricalAcquisitionWindowModel(Base):
+    """Durable provider coverage, independent of returned observations."""
+    __tablename__ = "historical_acquisition_windows"
+    __table_args__ = (
+        PrimaryKeyConstraint("venue_instrument_id", "resolution", "components", "start_time", "end_time"),
+        CheckConstraint("resolution IN ('M1','M15')", name="acquisition_resolution"),
+        CheckConstraint("outcome IN ('SUCCESS_EMPTY_OR_SPARSE','PROVIDER_FAILURE','UNKNOWN_OUTCOME')", name="acquisition_outcome"),
+        CheckConstraint("end_time > start_time", name="acquisition_range"),
+    )
+    venue_instrument_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("venue_instruments.id", ondelete="RESTRICT"), nullable=False)
+    resolution: Mapped[str] = mapped_column(String(3), nullable=False)
+    components: Mapped[str] = mapped_column(String(20), nullable=False)
+    start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    end_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(30), nullable=False)
+    request_identity: Mapped[str] = mapped_column(String(64), nullable=False)
+    returned_count: Mapped[int] = mapped_column(nullable=False, server_default=text("0"))
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+
+
 class HistoricalDataLoadRequestModel(Base):
     __tablename__ = "historical_data_load_requests"
     __table_args__ = (

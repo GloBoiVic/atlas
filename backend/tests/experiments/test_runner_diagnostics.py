@@ -278,11 +278,11 @@ def test_quality_distinguishes_material_and_non_material_gaps() -> None:
     assert result_quality_for_gaps((material,), (), start, end) == "DEGRADED"
 
 
-def test_internal_native_analytical_frontier_is_explicitly_missing() -> None:
+def test_closed_native_analytical_frontier_is_not_missing() -> None:
     start = datetime(2026, 1, 1, tzinfo=UTC)
     assert missing_analytical_frontiers(
         {start, start + timedelta(minutes=30)}, start, start + timedelta(minutes=45)
-    ) == (start + timedelta(minutes=15),)
+    ) == ()
 
 
 def test_weekend_session_closure_is_not_an_analytical_frontier_gap() -> None:

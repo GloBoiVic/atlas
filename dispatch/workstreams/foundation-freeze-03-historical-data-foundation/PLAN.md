@@ -1,6 +1,6 @@
 # Foundation Freeze 03 — Historical Data Foundation
 
-Status: `VALIDATION BLOCKED BY PROVIDER DATA`
+Status: `VALIDATION PASS / REVIEW IN PROGRESS`
 Classification: `Critical`
 Workstream: `foundation-freeze-03-historical-data-foundation`
 Branch: `solo/foundation-freeze-03-historical-data-foundation`
@@ -87,7 +87,18 @@ persisted partial M15 coverage before the execution window ended. Resume from du
 progress and complete full-year/repeat evidence without weakening coverage. T012
 classified holiday closures but left 1,293 scattered expected-session gaps; T013 is
 opened to diagnose acquisition boundaries/provider sparsity and finish or precisely
-block the live evidence.
+block the live evidence. Developer clarified that successful provider-window acquisition
+is distinct from sparse observation continuity: sparse M1 BID/ASK windows must be
+reusable without fabricating minutes, while native M15 analytical completeness remains
+strict. T014 architecture remediation must classify the 1,293 gaps by product, closure,
+constituent, and window outcome before implementation. ARCHITECTURE.md now freezes the
+sparse-acquisition correction; T014 implemented acquisition coverage versus
+observation continuity, but full-year snapshot materialization timed out. T015 is
+opened to bound snapshot membership/fingerprint operations without changing semantics,
+then complete live evidence. T015 bounded snapshot membership batches and added
+performance coverage but could not run live evidence in its worker environment. T015 is
+complete with concerns; fresh validation must use root `.env` and the authorized
+disposable database.
 local PostgreSQL database/schema; discard stale local Experiment/result data, preserve
 immutable-facts protections, migrate from a clean state through head, and rerun the
 genuine full-calendar-year OANDA load plus covered repeat evidence. PostgreSQL and real
@@ -129,6 +140,12 @@ OANDA are available and must be validated without exposing secrets.
   provider gaps, then complete full-year/repeat evidence without fabrication.
 - `T013-oanda-gap-diagnosis`: diagnose scattered expected-session gaps and complete or
   precisely document full-year/repeat evidence.
+- `T014-sparse-acquisition-semantics`: implement acquisition-coverage versus
+  observation-continuity semantics and required V2 tests, then rerun live evidence.
+- `T015-sparse-snapshot-performance`: bound sparse snapshot materialization and complete
+  full-year snapshot/repeat evidence without changing semantics.
+- `T016-suite-reconciliation`: reconcile stale migration/frontier assertions and safe
+  disposable migration teardown, then rerun the full suite.
 
 Dependency order: T001 and T002 may proceed independently after approval; T003 depends
 on both; T004 depends on T001–T003; T005 follows the implementation and is the final
@@ -138,6 +155,8 @@ BUILD task. Each task must finish with a receipt in its task file.
 
 Developer approval received and GIT START completed. CodeGraph was queried after each
 BUILD slice and reported no stale-index banner; unrelated untracked `.codegraph/`
-and `frontend/.env.local` are intentionally untouched. T013 is complete and documents
-genuine provider sparsity across the requested year; final validation/review must
-preserve the blocked live-evidence gate without fabrication.
+and `frontend/.env.local` are intentionally untouched. T015 is complete with concerns;
+fresh validation proved live snapshot/repeat semantics but found stale suite assertions
+and guarded teardown. T016 reconciled those assertions and teardown; fresh validation
+now passes the full backend suite and confirms genuine full-year sparse
+snapshot/repeat evidence with zero repeat provider calls. Review must rerun.

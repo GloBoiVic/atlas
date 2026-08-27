@@ -1,6 +1,6 @@
 # Foundation Freeze 03 — Authoritative V2 Historical-Data Contract
 
-Status: `FROZEN — developer approved`
+Status: `FROZEN — developer approved (T014 sparse-acquisition correction)`
 
 ## 1. Authority and scope
 
@@ -15,8 +15,13 @@ serve an Experiment with two different products:
   are the executable sides used by the simulation after a decision frontier.
 
 The products, required ranges, missing ranges, provider calls, validation, and
-progress are planned independently. A request is successful only when both products
-are valid for their respective requirements. The older feature text saying “M1 base,
+progress are planned independently. **Acquisition coverage is not observation
+continuity.** Acquisition coverage means a bounded provider window was successfully
+requested, its result was durably classified (including a valid zero-candle result),
+and it is reusable without re-querying. Observation continuity describes observations
+actually returned inside that window. M1 may be sparse; Atlas never fills, carries
+forward, or otherwise fabricates observations. A request is successful only when both
+products are valid for their respective requirements. The older feature text saying “M1 base,
 derive M15” is superseded for V2; it remains historical documentation, not a contract.
 
 ## 2. Request contract and range semantics
@@ -45,7 +50,12 @@ membership; it never fabricates context to satisfy the count.
 
 For each product, local coverage is inspected by its exact provider, resolution, and
 component key. Only missing expected session-open intervals are sent to OANDA; a fully
-covered product causes zero OANDA requests. Existing valid observations are reused.
+acquired product causes zero OANDA requests. A successful M1 BID/ASK window may
+contain zero or sparse returned minutes and is still acquired data; repeat requests
+must not re-query it merely because continuity is sparse. Existing valid observations
+and successful-window classifications are reused. Provider failure, timeout,
+malformed response, or unknown outcome is not successful acquisition and remains
+retryable/blocking according to the failure rules below.
 The planner must produce a deterministic, sorted, coalesced list of disjoint windows
 and may contain any number of bounded provider chunks. Missing coverage spans and
 provider request chunks are distinct: large plans are processed in bounded batches
@@ -72,10 +82,41 @@ later, corrections must create immutable/versioned content. Financial values use
 Decimal/NUMERIC.
 
 No forward-fill, interpolation, synthetic candle, constant spread, or M1→M15
-replacement is allowed. An unexpected missing constituent or provider closure is
-reported explicitly. Expected Forex closure is not a fabricated observation. Native
-M15 alignment must be on UTC quarter-hour boundaries; M1 alignment must be on UTC
-minute boundaries.
+replacement is allowed. BID and ASK are independent required constituents: neither
+side may be fabricated when the other is absent. Expected Forex closure is not an
+acquisition failure and is not a fabricated observation. Native M15 MID remains
+strict: every required completed analytical bar and warm-up/context bar must be
+present and complete; unexpected M15 gaps are analytical validation failures. M1
+BID/ASK is different: sparse open-session observations are valid acquired execution
+data when their containing provider window succeeded. An absent, incomplete, or
+missing-constituent M1 observation is explicit; execution must not invent a price.
+Native M15 alignment must be on UTC quarter-hour boundaries; M1 alignment must be on
+UTC minute boundaries.
+
+### T013 gap classification (2025 calendar-year diagnosis)
+
+The 1,293 gaps are classified against the unchanged V2 session policy and canonical
+rows, not treated as a reason to weaken analytical coverage:
+
+| Dimension | Classification | Count / evidence |
+| --- | --- | --- |
+| Product | native M15 MID | 0 gaps reported by recomputed T013 coverage; M15 remains strict |
+| Product | native M1 BID/ASK | 1,293 expected-session minute gaps, in 927 scattered runs |
+| Session | expected closure | 0; T013 found no closure anomalies |
+| Session | open-session absence | 1,293; includes 1,076 minutes in the post-rollover 17:00 local hour |
+| M1 shape | fully absent minute (neither BID nor ASK row) | 1,293 by the canonical gap definition |
+| M1 shape | missing BID or ASK constituent only | 0 observed; remains a separately reported anomaly |
+| Window outcome | provider failure/unknown | 0 in the sampled diagnosis (38 runs: HTTP 200, one attempt, zero target candles) |
+| Window outcome | successful sparse/zero response | confirmed for those 38 sampled runs |
+| Window outcome | not yet individually classified | 889 of the 927 runs; not silently counted as success or failure |
+
+Widened six-target samples returned surrounding candles but no target candle, including
+with `price=MBA`, supporting provider sparsity rather than boundary omission or
+BID/ASK-only normalization. These counts are diagnostic facts, not permission to
+label an uninspected timeout successful. Every window must persist
+`SUCCESS_EMPTY_OR_SPARSE`, `PROVIDER_FAILURE`, or `UNKNOWN_OUTCOME` (and its returned
+observations), so the complete gap report is reproducible by product, closure,
+constituent shape, and outcome.
 
 ## 4. Durable progress and resume
 
@@ -91,9 +132,12 @@ then a short transaction records that window's durable progress. Progress may la
 observation commit by one boundary; coverage, never progress JSON alone, decides
 whether the request is complete.
 
-On retry/resume, recompute local coverage and plan only remaining missing windows for
-each product. Never reissue a completed window merely because progress was stale, and
-never infer completion from a partial transaction. A process interruption leaves the
+On retry/resume, recompute local coverage and plan only remaining unacquired windows
+for each product. Never reissue a successfully acquired M1 window merely because it
+has sparse or zero observations, and never reissue a completed window merely because
+progress was stale. Reissue only a provider-failed/unknown window or an explicitly
+authorized correction operation, and never infer completion from a partial transaction.
+A process interruption leaves the
 request inspectable and resumable by an explicit coordinator action; it must not claim
 success or create a second active request. If the implementation retains startup
 failure of abandoned rows, that is incompatible with V2 resume and must be replaced
@@ -120,21 +164,30 @@ A completed V2 request creates an immutable DatasetSnapshot describing the exact
 analytical native-M15-MID membership and execution native-M1-BID/ASK membership,
 coverage bounds, warm-up requirement, UTC alignment, provider contracts, integrity
 diagnostics, and source/content fingerprint. Snapshot membership is an explicit
-immutable view; later provider corrections do not mutate it.
+immutable view; later provider corrections do not mutate it. Execution membership is
+the exact ordered set of returned complete BID/ASK observations, including sparse
+intervals; acquisition-window records are separate metadata and do not imply missing
+M1 rows exist.
 
-The fingerprint is a deterministic hash of canonical snapshot metadata plus sorted
-membership identities and content fingerprints. Same inputs and same persisted
+The fingerprint is a deterministic hash of canonical snapshot metadata, sorted
+successful acquisition-window identities/outcomes, and sorted exact membership
+identities/content fingerprints. Same inputs and same persisted
 observations produce the same fingerprint and reusable snapshot identity. Any
-correction, membership change, contract/version change, or relevant metadata change
+correction, sparse-membership change, acquisition-outcome change, contract/version
+change, or relevant metadata change
 produces a new fingerprint. A completed Experiment retains its original snapshot and
 can never silently see corrected data.
 
-Experiment validation must require a V2 snapshot whose analytical and execution
-products both cover the requested range and whose warm-up is present. Strategy sees
-only completed analytical M15 MID bars through the no-lookahead frontier. Execution
-simulation sees only completed BID/ASK observations at or after the decision frontier;
-the bar consumed to make a decision cannot also be used as post-decision execution
-data.
+Experiment validation must require a V2 snapshot whose required analytical native M15
+MID bars and warm-up/context are complete for the requested range. It validates the
+exact sparse M1 membership and successful acquisition records, but never requires a
+fabricated continuous M1 calendar. Strategy sees only completed analytical M15 MID
+bars through the no-lookahead frontier. Execution simulation sees only exact
+completed BID/ASK observations at or after the decision frontier; the consumed
+decision bar cannot also be post-decision execution data. An absent execution
+observation records explicit unavailable-data/no-fill behavior; an unexpected M15
+gap, missing BID/ASK constituent, or provider failure/unknown outcome blocks
+validation.
 
 ## 6. Stale-path and compatibility decisions
 
@@ -166,9 +219,14 @@ calls.
 **Invalid:** M15 is absent but M1 is present, so Atlas aggregates M1 to “fill” M15.
 V2 rejects the request; it does not fabricate analytical history.
 
-**Invalid:** BID is present but ASK is absent for an execution minute, or a returned
-candle is incomplete. The relevant product is incomplete and Experiment creation is
-blocked.
+**Valid:** A successful M1 BID/ASK provider window returns no candle at an open-session
+minute. The window is durably acquired and is not re-requested; exact sparse snapshot
+membership preserves the absence, and execution cannot fill from that minute.
+
+**Invalid:** BID is present but ASK is absent for an execution minute, a returned
+candle is incomplete, or the window outcome is timeout/unknown. The relevant fact is
+explicit and Experiment validation blocks when the execution contract requires it;
+no spread or price is invented.
 
 **Boundary:** `[10:00, 10:15)` includes the 10:00 native M15 candle and excludes
 10:15; a decision at 10:15 cannot consume an execution observation before 10:15.
@@ -190,16 +248,22 @@ Implementation must provide deterministic tests for:
 * OANDA native M15 MID and native M1 BID/ASK request parameters, pagination/window
   limits, completed filtering, UTC normalization, malformed/conflicting responses,
   and redacted failure facts;
-* missing-only behavior, zero provider calls when fully covered, duplicate and
+  * successful empty/sparse M1 windows are reusable with zero repeat calls; failed or
+    unknown windows are retryable/blocking and never mistaken for successful empties;
+  * missing-only behavior, zero provider calls when fully acquired, duplicate and
   out-of-order idempotency, Decimal preservation, expected closure classification,
   unexpected gaps, incomplete product rejection, and explicit no-fabrication;
 * per-window atomic persistence/progress, progress lag tolerance, interruption,
   resume-from-remaining-coverage, no duplicate active request, terminal failure, and
   unknown-outcome blocking;
-* immutable snapshot membership, fingerprint stability/change, native provenance,
-  V1 exclusion, Experiment coverage validation, warm-up no-exposure, no-lookahead,
+  * immutable exact sparse-M1 membership, acquisition-window metadata, fingerprint
+    stability/change for membership and window outcomes, native provenance, V1
+    exclusion, Experiment coverage validation, warm-up no-exposure, no-lookahead,
   and post-decision BID/ASK execution semantics;
-* migration compatibility: old snapshots/Experiments remain readable and immutable,
+  * the T013 1,293-gap fixture/report classified by M15/M1, closure/open-session,
+    fully-absent versus missing-constituent, and successful versus failed/unknown
+    window outcome;
+  * migration compatibility: old snapshots/Experiments remain readable and immutable,
   metadata-deficient rows cannot masquerade as V2, and stale paths cannot create new
   V2 snapshots.
 

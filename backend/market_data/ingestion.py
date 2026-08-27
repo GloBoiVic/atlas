@@ -527,7 +527,7 @@ class MarketDataService:
                 }
                 if len(execution_keys) != len(execution):
                     raise ValueError("V2 execution membership contains duplicates")
-                if not coverage.valid:
+                if not coverage.execution_valid:
                     return SnapshotReport(
                         start,
                         end,
@@ -589,6 +589,20 @@ class MarketDataService:
                     "execution_contract": NATIVE_M1_EXECUTION_CONTRACT_V1,
                     "gap_policy": GAP_POLICY_V1,
                 }
+                acquired_method = getattr(self._repository, "acquired_windows", None)
+                acquired_windows = () if acquired_method is None else acquired_method(
+                    session, mapping_id, Timeframe.M1,
+                    (PriceComponent.BID, PriceComponent.ASK), start, end
+                )
+                metadata["successful_execution_windows"] = [
+                    {
+                        "start": window.start_time.isoformat(),
+                        "end": window.end_time.isoformat(),
+                        "outcome": window.outcome,
+                        "request_identity": window.request_identity,
+                    }
+                    for window in acquired_windows
+                ]
                 fingerprint = dataset_fingerprint_v2(
                     metadata=metadata,
                     analytical_members=analytical_members,
@@ -602,6 +616,8 @@ class MarketDataService:
                     "execution_count": len(execution),
                     "gap_count": len(gaps),
                     "analytical_contract": NATIVE_M15_CONTRACT_V1,
+                    "execution_observation_continuity": "SPARSE_ALLOWED",
+                    "successful_execution_window_count": len(acquired_windows),
                 }
                 snapshot = DatasetSnapshot(
                     uuid4(),
@@ -668,13 +684,24 @@ class MarketDataService:
             session = self._session_factory()
             try:
                 with session.begin():
-                    return _coalesce_expected_ranges(
+                    missing = _coalesce_expected_ranges(
                         self._repository.missing_ranges(
                             session, mapping_id, start, end, components, resolution
                         ),
                         step=timedelta(
                             minutes=15 if resolution is Timeframe.M15 else 1
                         ),
+                    )
+                    acquired_method = getattr(self._repository, "acquired_windows", None)
+                    if acquired_method is None:
+                        return missing
+                    acquired = acquired_method(session, mapping_id, resolution, components, start, end)
+                    # A successful provider window covers acquisition, not
+                    # observation continuity.  Remove it from the request plan
+                    # even when it returned zero or sparse candles.
+                    return tuple(
+                        (left, right) for left, right in missing
+                        if not any(window.start_time <= left and window.end_time >= right for window in acquired)
                     )
             finally:
                 session.close()
@@ -686,12 +713,33 @@ class MarketDataService:
         def acquire(product, fetch, ranges):
             for window in ranges:
                 # No database transaction is held during this provider call.
-                result = fetch(*window)
-                if result.incomplete:
-                    raise ValueError(
-                        "provider returned incomplete historical observations"
-                    )
-                applied = self._apply(mapping_id, result)
+                try:
+                    result = fetch(*window)
+                    if result.incomplete:
+                        raise ValueError("provider returned incomplete historical observations")
+                    applied = self._apply(mapping_id, result)
+                except Exception:
+                    recorder = getattr(self._repository, "record_acquisition_window", None)
+                    if recorder is not None:
+                        session = self._session_factory()
+                        try:
+                            with session.begin():
+                                recorder(session, mapping_id, Timeframe.M15 if product == "analytical" else Timeframe.M1,
+                                         (PriceComponent.MID,) if product == "analytical" else (PriceComponent.BID, PriceComponent.ASK),
+                                         window[0], window[1], "PROVIDER_FAILURE")
+                        finally:
+                            session.close()
+                    raise
+                recorder = getattr(self._repository, "record_acquisition_window", None)
+                if recorder is not None:
+                    session = self._session_factory()
+                    try:
+                        with session.begin():
+                            recorder(session, mapping_id, Timeframe.M15 if product == "analytical" else Timeframe.M1,
+                                     (PriceComponent.MID,) if product == "analytical" else (PriceComponent.BID, PriceComponent.ASK),
+                                     window[0], window[1], "SUCCESS_EMPTY_OR_SPARSE", len(result.bars))
+                    finally:
+                        session.close()
                 all_fetched.append(window)
                 all_committed.append(window)
                 totals[0] += applied.inserted

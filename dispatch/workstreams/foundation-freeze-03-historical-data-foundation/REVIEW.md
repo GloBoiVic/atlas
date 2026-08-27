@@ -1,69 +1,61 @@
 # Review
 
-Status: `PASS WITH BLOCKED ENVIRONMENT EVIDENCE`
+Status: `PASS`
 Role: `REVIEW`
 Workstream: `foundation-freeze-03-historical-data-foundation`
 Branch: `solo/foundation-freeze-03-historical-data-foundation`
 
 ## Verdict
 
-**PASS.** No unresolved `IMPORTANT` or `CRITICAL` findings remain. The prior
-review findings are resolved by T006 and its regressions. PostgreSQL and
-credentialed OANDA gates remain explicitly open; they are not treated as hidden
-passes.
+**PASS.** No unresolved `IMPORTANT` or `CRITICAL` findings remain.
 
-## Findings
+## Evidence
 
-None unresolved.
+- Reviewed the user correction, frozen `ARCHITECTURE.md`, `PLAN.md`, latest
+  `VALIDATION.md`, and all T001–T016 receipts.
+- CodeGraph was queried first; current acquisition, coverage, ingestion,
+  repository, model, migration, fingerprint, Experiment-validation, test, and
+  benchmark sources were inspected.
+- Native M15 strictness is preserved: the genuine snapshot contains **24,605
+  native M15/MID** members and no M1-derived analytical membership. Validation
+  recomputed **0 M15 gaps**; M1 remains sparse with **1,293** explicit missing
+  minutes.
+- Acquisition coverage is distinct from continuity: **927** M1 BID+ASK windows
+  are durably recorded as `SUCCESS_EMPTY_OR_SPARSE`; exact sparse execution
+  membership contains **740,226** rows (**370,113 BID + 370,113 ASK**), with no
+  fabrication or forward-fill.
+- Full-year evidence is genuine and exact for
+  `[2025-01-01T00:00:00Z, 2026-01-01T00:00:00Z)`: snapshot
+  `8bc3149e-94bc-49b6-a5d2-3f409cf87088`, fingerprint
+  `b0f7c522b390af988a3a33169fc853871a282d4c93804c452f018a4078491c90`.
+  An unchanged repeat made **0 M15 and 0 M1 OANDA calls** and returned the same
+  snapshot ID and fingerprint.
+- Alembic current/heads are `0018_acquisition_windows`; `alembic check` passed.
+  Full backend suite: **354 passed, 1 skipped, 4 warnings**. Focused
+  reconciliation/migration/frontier suite: **27 passed**. `git diff --check`
+  passed.
+- No credentials or provider response bodies were exposed. The only untracked
+  items are the pre-existing `.codegraph/` index and non-secret
+  `frontend/.env.local`; neither is part of the workstream diff.
 
-## Prior-finding confirmation
+## Git/state review
 
-- `_warmup_plan` has no request-window, elapsed-time, or 90-day ceiling. It
-  extends by deterministic bounded increments until the observed completed
-  native M15 count satisfies the StrategyVersion requirement; malformed and
-  invariant inputs remain rejected. The historical `0008` constraint text is
-  preserved as migration history, while `0016_load_progress` removes its
-  effective current constraint.
-- `HistoricalDataLoadCoordinator.prepare()` no longer invokes the legacy shared
-  `plan_missing` planner. V2 acquisition plans native M15/MID and M1/BID+ASK
-  independently in `load_v2`.
-- Historical-data capability and status payloads now publish separate native
-  analytical `M15/MID` and execution `M1/BID+ASK` products.
+Repository root and CWD are `/Users/vike/Desktop/atlas`; branch is the requested
+branch. No branch switch or history mutation was performed. The tracked diff is
+confined to Freeze 03 implementation, migrations, tests, and workstream state;
+`REVIEW.md` is the only file changed by this role.
 
-## Evidence reviewed
+## Remaining non-blocking concerns
 
-- Reviewed the user request, PLAN, frozen ARCHITECTURE, VALIDATION, and complete
-  T001–T006 receipts.
-- Queried CodeGraph first, then inspected current coordinator, ingestion,
-  coverage, OANDA, persistence, snapshot/Experiment, API metadata, migration,
-  regression, and benchmark sources.
-- Branch/root verified: `/Users/vike/Desktop/atlas` on
-  `solo/foundation-freeze-03-historical-data-foundation`; HEAD is the recorded
-  base commit `38b869b`. No branch switch or history mutation was performed.
-- Independent focused suite: **58 passed, 1 skipped**.
-- Changed-scope Ruff, `python -m compileall -q backend`, and `git diff --check`:
-  **passed**.
-- Alembic offline upgrade generation: **passed**, 69,775 bytes; head is
-  `0016_load_progress` and emits the intended drop of
-  `ck_historical_data_load_requests_load_maximum`.
-- Executed the benchmark harness successfully. It exercises the actual V2
-  planner/provider/persistence/coverage/snapshot/fingerprint seams, reports
-  independent M15/M1 calls and timings, has zero provider calls for the repeat
-  covered scenario, and records resumed calls. Its one-year scenarios are
-  honestly disclosed as bounded representative fixtures, not full-year or
-  credentialed-provider measurements.
-- Current tracked diff is confined to the Freeze 03 implementation, tests,
-  migrations, and `dispatch/ACTIVE.md`; expected workstream artifacts and the
-  benchmark/regression files are present. Untracked `.codegraph/` and
-  `frontend/.env.local` remain untouched as documented and are not attributed
-  to this workstream.
+- Four non-functional pytest warnings remain (Starlette/httpx deprecation and
+  three unregistered `price_analysis` marks).
+- Fixture “one-year” benchmark timings remain representative fixture evidence;
+  the genuine credentialed full-year evidence above supplies the acceptance
+  proof for acquisition, snapshot, and repeat reuse.
 
-## Remaining documented gates
-
-- PostgreSQL-backed migration execution, immutable triggers, repository
-  transactions, resume behavior, and Experiment integration are **BLOCKED**:
-  `ATLAS_TEST_DATABASE_URL` is unset and Docker is unavailable. Offline SQL is
-  script-generation evidence only, not database execution evidence.
-- Credentialed OANDA Practice fresh month/year/repeat evidence is **BLOCKED**:
-  credentials are absent. Fixture timings were not substituted for real-provider
-  evidence.
+ROLE: REVIEW
+STATUS: PASS
+ARTIFACT: `dispatch/workstreams/foundation-freeze-03-historical-data-foundation/REVIEW.md`
+FILES CHANGED: `dispatch/workstreams/foundation-freeze-03-historical-data-foundation/REVIEW.md`
+CHECKS / EVIDENCE: Fresh artifact/source/diff/status review; exact full-year snapshot and fingerprint; native M15 and sparse M1 membership; 927 successful acquisition windows; zero-call repeat; Alembic head/check; 354-pass full suite; diff check
+FINDINGS / CONCERNS: No unresolved important or critical findings; four non-functional pytest warnings and representative fixture benchmark scope

@@ -25,4 +25,22 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    raise RuntimeError("cannot downgrade while V2-policy snapshots may exist")
+    # Refuse only when a durable snapshot would become invalid under the V1
+    # policy.  Migration-cycle fixtures can safely clear their disposable
+    # snapshot state before downgrade; immutable snapshot DML guards remain
+    # installed throughout that teardown.
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1
+                FROM dataset_snapshots
+                WHERE session_policy = 'OANDA_FX_NY_V2'
+            ) THEN
+                RAISE EXCEPTION
+                    'cannot downgrade while V2-policy snapshots exist';
+            END IF;
+        END $$
+        """
+    )

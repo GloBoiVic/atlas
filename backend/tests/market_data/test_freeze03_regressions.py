@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
+# ruff: noqa: E501
 import pytest
 
 from backend.domain.market_data import (
@@ -162,6 +163,30 @@ def test_v2_incomplete_provider_observation_fails_closed(monkeypatch) -> None:
     with pytest.raises(ValueError, match="incomplete"):
         service.load_v2(START, START + timedelta(minutes=15))
     assert [call[0] for call in source.calls] == ["m15"]
+
+
+def test_successful_empty_window_is_acquisition_coverage_not_continuity(monkeypatch) -> None:
+    source = NativeSource()
+    source._result = lambda product, start, end: (  # type: ignore[method-assign]
+        source.calls.append((product, start, end)) or FetchResult((), (), FetchDiagnostics(()))
+    )
+    class WindowRepository(PlannedRepository):
+        def __init__(self):
+            self.windows = set()
+        def record_acquisition_window(self, _session, _mapping, resolution, components, start, end, outcome, returned_count=0):
+            self.windows.add((resolution, start, end, outcome))
+        def acquired_windows(self, _session, _mapping, resolution, components, start, end):
+            return tuple(SimpleNamespace(start_time=s, end_time=e, outcome=o, request_identity="x")
+                         for r, s, e, o in self.windows if r is resolution)
+    repo = WindowRepository()
+    service = MarketDataService(lambda: Session(), source, repository=repo)
+    monkeypatch.setattr(service, "_mapping_id", lambda: "mapping")
+    monkeypatch.setattr(service, "_apply", lambda *_args: SimpleNamespace(inserted=0, reactivated=0, unchanged=0))
+    monkeypatch.setattr(service, "create_snapshot_v2", lambda *args, **kwargs: "snapshot")
+    service.load_v2(START, START + timedelta(minutes=15))
+    first_calls = len(source.calls)
+    service.load_v2(START, START + timedelta(minutes=15))
+    assert len(source.calls) == first_calls
 
 
 def test_benchmark_harness_reports_all_required_recovery_scenarios() -> None:

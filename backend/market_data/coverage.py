@@ -45,6 +45,13 @@ class CoverageReport:
             and not self.interval_diagnostics
         )
 
+    @property
+    def execution_valid(self) -> bool:
+        """Sparse execution is valid; a one-sided minute is not."""
+        return not self.closure_anomalies and not self.unexpected_observations and all(
+            len(item.components) != 1 for item in self.missing
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class ProductCoveragePlan:

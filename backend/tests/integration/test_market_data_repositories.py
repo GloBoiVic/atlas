@@ -33,6 +33,7 @@ from backend.persistence.database import configure_utc_session_timezone
 from backend.persistence.market_data_repository import (
     BarBatchItem,
     BarBatchResult,
+    _SNAPSHOT_MEMBERSHIP_BATCH_SIZE,
     DatasetSnapshotRepository,
     MarketDataRepository,
 )
@@ -281,6 +282,11 @@ def test_missing_ranges_and_snapshot_membership_are_immutable_boundary(
 def test_v2_bulk_memberships_persist_representative_large_batch(
     repository_session: tuple[Session, Engine],
 ) -> None:
+    # Regression guard for the full-year sparse execution shape: bounded
+    # payloads must stay well below the live 740k-row membership while not
+    # regressing to the former ~740 round trips.
+    assert _SNAPSHOT_MEMBERSHIP_BATCH_SIZE == 10_000
+    assert (740_226 + _SNAPSHOT_MEMBERSHIP_BATCH_SIZE - 1) // _SNAPSHOT_MEMBERSHIP_BATCH_SIZE == 75
     session, _ = repository_session
     _mapping(session)
     start = datetime(2026, 1, 5, 10, tzinfo=UTC)
@@ -297,8 +303,9 @@ def test_v2_bulk_memberships_persist_representative_large_batch(
             Decimal("1.1005"),
         )
         # Full-year native M15 acquisition produces tens of thousands of
-        # analytical rows.  This crosses the bounded persistence batch size
-        # and guards against regressing to one oversized executemany payload.
+        # analytical rows. This crosses the bounded persistence batch size and
+        # guards against regressing to one oversized executemany payload while
+        # keeping the fixture deterministic and representative of chunking.
         for index in range(1_201)
     )
     end = start + timedelta(minutes=15 * len(analytical))

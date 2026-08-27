@@ -37,6 +37,7 @@ from .models import (
     DatasetSnapshotExecutionObservationModel,
     DatasetSnapshotGapModel,
     DatasetSnapshotModel,
+    HistoricalAcquisitionWindowModel,
     InstrumentModel,
     MarketBarModel,
     VenueInstrumentModel,
@@ -44,7 +45,11 @@ from .models import (
 
 PERSISTED_M1_RESOLUTION = "M1"
 PERSISTED_M15_RESOLUTION = "M15"
-_SNAPSHOT_MEMBERSHIP_BATCH_SIZE = 1_000
+# Keep executemany payloads bounded while avoiding hundreds of round trips for
+# the full-year sparse execution product (740k+ observations in the live
+# fixture).  This is deliberately a payload bound, not a transaction boundary:
+# snapshot creation remains one immutable atomic transaction.
+_SNAPSHOT_MEMBERSHIP_BATCH_SIZE = 10_000
 
 
 def _encode_m1_resolution(timeframe: Timeframe) -> str:
@@ -287,6 +292,25 @@ class MarketDataRepository:
                     ranges.append(BarRange(cursor, cursor + step, missing))
             cursor += step
         return tuple(ranges)
+
+    def acquired_windows(self, session, venue_instrument_id, resolution, components, start, end):
+        key = ",".join(sorted(c.value for c in components))
+        return tuple(session.scalars(select(HistoricalAcquisitionWindowModel).where(
+            HistoricalAcquisitionWindowModel.venue_instrument_id == venue_instrument_id,
+            HistoricalAcquisitionWindowModel.resolution == _encode_resolution(resolution),
+            HistoricalAcquisitionWindowModel.components == key,
+            HistoricalAcquisitionWindowModel.outcome == "SUCCESS_EMPTY_OR_SPARSE",
+            HistoricalAcquisitionWindowModel.start_time >= start,
+            HistoricalAcquisitionWindowModel.end_time <= end,
+        ).order_by(HistoricalAcquisitionWindowModel.start_time)).all())
+
+    def record_acquisition_window(self, session, venue_instrument_id, resolution, components, start, end, outcome, returned_count=0):
+        key = ",".join(sorted(c.value for c in components))
+        identity = sha256(f"{venue_instrument_id}|{_encode_resolution(resolution)}|{key}|{start.isoformat()}|{end.isoformat()}".encode()).hexdigest()
+        session.merge(HistoricalAcquisitionWindowModel(
+            venue_instrument_id=venue_instrument_id, resolution=_encode_resolution(resolution), components=key,
+            start_time=start, end_time=end, outcome=outcome, request_identity=identity, returned_count=returned_count,
+        ))
 
     def apply_bar_batch(
         self,
