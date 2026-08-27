@@ -144,3 +144,12 @@ review artifact in `dispatch/`. Prior dispatch artifacts remain untouched in `di
 - **Validation:** Canonical receipt `dispatch/workstreams/experiment-correctness-load-ui-audit/TASK-19-rebuild.md` records frontend 23-test suite, typecheck, lint, build, backend Experiment API integration 9 passed, Strategy integration 8 passed, and Local Host Strategy/Experiment/Trade identity checks.
 - **Review:** `dispatch/workstreams/experiment-correctness-load-ui-audit/REVIEW.md` — R1 PASS; no Critical or Important findings.
 - **Memory-save receipt:** `memory.md` successfully updated on 2026-08-26 after user approval; no secrets.
+
+<!-- completion-id: foundation-freeze-01-reference-strategy -->
+## Foundation Freeze 01 — Reference Strategy Correctness — completion record
+
+- **Date/status:** 2026-08-26 — implementation, validation, and review PASS; merged to `main`.
+- **Commit:** `58d932a Freeze reference strategy semantics` (fast-forward from `main`).
+- **Scope:** Corrected authoritative EMA Sweep Confirmation Break v2 semantics, immediate strict confirmation, Strategy-owned W1–W5 pending window, ATR14 stop timing, schema/evidence versioning, nullable non-authoritative expiry, runner handoff, persistence constraints, and public regression coverage.
+- **Validation:** PostgreSQL `atlas_test` migrated to head; full backend suite `322 passed, 1 skipped, 4 warnings`; targeted tests, compileall, Ruff, and diff checks passed.
+- **Review:** `dispatch/workstreams/foundation-freeze-01-reference-strategy/REVIEW.md` — PASS; no blockers.
