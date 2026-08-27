@@ -17,6 +17,7 @@ from enum import StrEnum
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from backend.domain.market_data import (
@@ -75,10 +76,17 @@ from backend.risk.service import (
     TradeIntent,
 )
 from backend.strategies.contract import evaluate_strategy
+from backend.strategies.contract import StrategyContractError, StrategyEvaluationError
+from backend.domain.strategy import StateError, VersionError
+from backend.execution.contract import ExecutionInputError, ExecutionRejected
 from backend.strategies.registry import StrategyRegistry
 
 from .clock import ClockFrame, ClockPhase, M1Observation, SimulationClock
-from .metric_contract import PHASE5_METRIC_SCHEMA_VERSION, PHASE5_RESULT_SCHEMA_VERSION
+from .metric_contract import (
+    RESULT_METRIC_SCHEMA_VERSION,
+    PHASE5_RESULT_SCHEMA_VERSION,
+    SHARPE_METHODOLOGY,
+)
 from .metrics import calculate_metrics
 
 
@@ -106,8 +114,8 @@ def terminal_protection_observation(observations, entry_time, trading_end):
     )
 
 
-def result_quality_for_gaps(gaps, gap_decisions, trading_start, trading_end):
-    """Only material blocked gaps degrade an otherwise determined result."""
+def result_quality_for_gaps(gaps, gap_decisions, trading_start, trading_end, *, ambiguous=False):
+    """Classify persisted uncertainty, with data uncertainty taking priority."""
 
     def material(item):
         return (
@@ -116,11 +124,11 @@ def result_quality_for_gaps(gaps, gap_decisions, trading_start, trading_end):
             and item.start_time < trading_end
         )
 
-    return (
-        "DEGRADED"
-        if any(material(item) for item in (*gaps, *gap_decisions))
-        else "DETERMINED"
-    )
+    if any(material(item) for item in (*gaps, *gap_decisions)):
+        return "DEGRADED"
+    if ambiguous:
+        return "CONSERVATIVE_AMBIGUITY_RESOLVED"
+    return "DETERMINED"
 
 
 @dataclass(frozen=True, slots=True)
@@ -797,21 +805,38 @@ class ExperimentRunner:
                 error.failure.code,
                 error.failure.detail,
             )
-        except LookupError:
+        except (StrategyContractError, StrategyEvaluationError, StateError, VersionError) as error:
             return self._fail(
                 session,
                 experiment,
                 FailureCategory.STRATEGY,
                 "STRATEGY_VERSION_UNAVAILABLE",
+                _safe_failure_detail(error, "Strategy evaluation failed"),
+            )
+        except (ExecutionInputError, ExecutionRejected) as error:
+            return self._fail(
+                session, experiment, FailureCategory.EXECUTION,
+                "EXECUTION_REJECTED", _safe_failure_detail(error, "Execution failed"),
+            )
+        except LookupError:
+            return self._fail(
+                session, experiment, FailureCategory.STRATEGY,
+                "STRATEGY_VERSION_UNAVAILABLE",
                 "Verified StrategyVersion implementation unavailable",
             )
-        except ValueError:
+        except SQLAlchemyError:
+            return self._fail(
+                session, experiment, FailureCategory.PERSISTENCE,
+                "PERSISTENCE_FAILURE", "Experiment persistence failed",
+            )
+        except ValueError as error:
+            category, code = classify_runner_value_error(error)
             return self._fail(
                 session,
                 experiment,
-                FailureCategory.MARKET_DATA,
-                "INVALID_INPUT",
-                "Experiment could not be run",
+                category,
+                code,
+                _safe_failure_detail(error, "Experiment could not be run"),
             )
         except Exception:
             return self._fail(
@@ -928,10 +953,23 @@ class ExperimentRunner:
                 ExperimentGapDecisionModel.experiment_id == experiment.id
             )
         ).all()
+        ambiguous = bool(
+            session.scalar(
+                select(TradeModel.id)
+                .where(
+                    TradeModel.experiment_id == experiment.id,
+                    TradeModel.intrabar_ambiguous.is_(True),
+                )
+            )
+        )
         quality = {
             "schema": "ATLAS_RESULT_QUALITY_V1",
             "value": result_quality_for_gaps(
-                gaps, decisions, experiment.trading_start, experiment.trading_end
+                gaps,
+                decisions,
+                experiment.trading_start,
+                experiment.trading_end,
+                ambiguous=ambiguous,
             ),
         }
         self._complete_phase4(session, experiment, account, result_quality=quality)
@@ -1934,7 +1972,12 @@ class ExperimentRunner:
         max_dd_pct = metrics.max_drawdown_percent.value or Decimal("0")
         if set_stage is not None:
             set_stage(Phase4DiagnosticStage.SEMANTIC_PAYLOAD)
-        payload = self._semantic_payload(session, experiment, trades, equity)
+        payload = self._semantic_payload(
+            session, experiment, trades, equity,
+            metric_schema=RESULT_METRIC_SCHEMA_VERSION,
+            sharpe_methodology=SHARPE_METHODOLOGY,
+            result_quality=result_quality,
+        )
         fingerprint = hashlib.sha256(
             json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
@@ -1963,15 +2006,13 @@ class ExperimentRunner:
             win_rate=metrics.win_rate.value,
             expectancy_net_pnl=metrics.expectancy_net_pnl.value,
             metric_states={
-                name: getattr(metrics, name).state
+                name: getattr(metrics, name).as_dict()
                 for name in (
-                    "sharpe_ratio",
-                    "profit_factor",
-                    "win_rate",
-                    "expectancy_net_pnl",
+                    "net_return", "max_drawdown_amount", "max_drawdown_percent",
+                    "sharpe_ratio", "profit_factor", "win_rate", "expectancy_net_pnl",
                 )
             },
-            metric_schema_version=PHASE5_METRIC_SCHEMA_VERSION,
+            metric_schema_version=RESULT_METRIC_SCHEMA_VERSION,
             result_quality=result_quality,
         )
         if set_stage is not None:
@@ -1979,7 +2020,8 @@ class ExperimentRunner:
         self.experiments.mark_completed(session, experiment.id, datetime.now(UTC))
 
     @staticmethod
-    def _semantic_payload(session, experiment, trades, equity):
+    def _semantic_payload(session, experiment, trades, equity, *, metric_schema,
+                          sharpe_methodology, result_quality):
         def dec(value):
             return None if value is None else str(value)
 
@@ -2028,6 +2070,9 @@ class ExperimentRunner:
             "parameters": experiment.parameter_snapshot,
             "risk_config": experiment.risk_config,
             "simulation": experiment.simulation_config,
+            "metric_schema": metric_schema,
+            "sharpe_methodology": sharpe_methodology,
+            "result_quality": result_quality,
             "intents": [
                 [
                     i.decision_frontier.isoformat(),
@@ -2310,6 +2355,25 @@ class ExperimentRunner:
 class ExperimentFailureError(Exception):
     def __init__(self, failure: ExperimentFailure):
         self.failure = failure
+
+
+def _safe_failure_detail(error: BaseException, fallback: str) -> str:
+    detail = " ".join(str(error).split())[:500]
+    return detail or fallback
+
+
+def classify_runner_value_error(error: ValueError) -> tuple[FailureCategory, str]:
+    """Classify known simulation invariant failures without a framework."""
+    text = str(error).lower()
+    invariant_terms = (
+        "fill ", "trade ", "position", "financial projections",
+        "fill sequence", "direction", "cannot receive another fill",
+    )
+    if any(term in text for term in invariant_terms):
+        return FailureCategory.VALIDATION, "ACCOUNTING_INVARIANT"
+    if any(word in text for word in ("snapshot", "market", "quote", "history", "observation")):
+        return FailureCategory.MARKET_DATA, "MARKET_DATA_INVALID"
+    return FailureCategory.VALIDATION, "INVALID_INPUT"
 
 
 __all__ = [

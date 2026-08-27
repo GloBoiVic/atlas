@@ -60,6 +60,25 @@ class GatedRunner:
                     "Strategy evaluation failed",
                 ),
             )
+        ExperimentRepository().create_result(
+            session,
+            experiment_id=experiment_id,
+            result_schema_version="TEST_RESULT_V1",
+            trade_count=0,
+            ambiguous_trade_count=0,
+            gross_pnl=0,
+            commission_cost=0,
+            financing_cost=0,
+            modeled_net_pnl=0,
+            ending_balance=10000,
+            ending_equity=10000,
+            net_return=0,
+            max_drawdown_amount=0,
+            max_drawdown_percent=0,
+            financing_disclosure="EXCLUDED",
+            completed_market_time=datetime.now(UTC),
+            output_fingerprint="0" * 64,
+        )
         ExperimentRepository().mark_completed(session, experiment_id, datetime.now(UTC))
         return ExperimentRunResult(experiment_id, "COMPLETED", False)
 

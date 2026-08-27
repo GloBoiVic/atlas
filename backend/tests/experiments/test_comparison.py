@@ -106,10 +106,44 @@ class ResultService:
         return {"result": result, "metrics": metrics}
 
 
+class PersistedResultService(ResultService):
+    def detail(self, _session, identifier):
+        _, _, result, _metrics = self.fixtures[identifier]
+        return {
+            "result": result,
+            "metrics": {
+                "netReturn": {"state": "VALUE", "value": "0.25", "unit": "ratio", "reason": None},
+                "maxDrawdownAmount": {"state": "VALUE", "value": "-5", "unit": "USD", "reason": None},
+                "maxDrawdownPercent": {"state": "VALUE", "value": "0.05", "unit": "ratio", "reason": None},
+                "sharpe": {"state": "UNAVAILABLE", "value": None, "unit": "ratio", "reason": "ZERO_VARIANCE"},
+                "profitFactor": {"state": "INFINITE", "value": None, "unit": "ratio", "reason": "NO_LOSSES"},
+                "winRate": {"state": "VALUE", "value": "1", "unit": "ratio", "reason": None},
+                "expectancy": {"state": "VALUE", "value": "25", "unit": "USD", "reason": None},
+                "tradeCount": {"state": "VALUE", "value": "1", "unit": "trades", "reason": None},
+            },
+        }
+
+
 def service(fixtures):
     return ExperimentComparisonReadService(
         results=Repo(fixtures), result_service=ResultService(fixtures)
     )
+
+
+def test_completed_comparison_preserves_persisted_metric_projection():
+    first = _fixture()
+    second = _fixture()
+    for model in (StrategyVersionModel, VenueInstrumentModel, InstrumentModel, DatasetSnapshotModel):
+        second[1][model] = first[1][model]
+    second[0].strategy_version_id = first[0].strategy_version_id
+    second[0].venue_instrument_id = first[0].venue_instrument_id
+    second[0].dataset_snapshot_id = first[0].dataset_snapshot_id
+    value = ExperimentComparisonReadService(
+        results=Repo((first, second)),
+        result_service=PersistedResultService((first, second)),
+    ).compare(Session((first, second)), (first[0].id, second[0].id))
+    assert value["experiments"][0]["metrics"]["netReturn"]["value"] == "0.25"
+    assert value["experiments"][0]["metrics"]["sharpe"]["reason"] == "ZERO_VARIANCE"
 
 
 def test_comparison_preserves_order_and_typed_decimal_equality():

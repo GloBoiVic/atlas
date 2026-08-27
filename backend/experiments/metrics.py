@@ -62,27 +62,15 @@ def _daily_returns(
 ) -> list[Decimal]:
     if starting_equity <= 0:
         return []
-    last_by_date: dict[date, tuple[datetime, int, Decimal]] = {}
-    ordered = sorted(
-        enumerate(equity),
-        key=lambda item: (
-            item[1].observed_at,
-            getattr(item[1], "sequence_number", item[0]),
-        ),
-    )
-    for index, point in ordered:
+    last_by_date: dict[date, Decimal] = {}
+    for point in equity:
         observed_at = point.observed_at
         key = _utc_date(observed_at)
-        candidate = (
-            observed_at,
-            getattr(point, "sequence_number", index),
-            _decimal(point.equity),
-        )
-        if key not in last_by_date or candidate[:2] > last_by_date[key][:2]:
-            last_by_date[key] = candidate
-    values = [
-        item[2] for item in sorted(last_by_date.values(), key=lambda item: item[:2])
-    ]
+        # Sequence order is persisted canonical authority. The final point
+        # encountered for a UTC day is that day's endpoint; timestamps are
+        # descriptive and must not be used to reconstruct ordering.
+        last_by_date[key] = _decimal(point.equity)
+    values = list(last_by_date.values())
     returns: list[Decimal] = []
     previous = starting_equity
     for value in values:
@@ -99,23 +87,12 @@ def calculate_metrics(
 ) -> ExperimentMetrics:
     """Calculate metrics using only immutable Trade and equity facts.
 
-    The input order does not affect results except for equal-timestamp equity
-    points, where the supplied sequence order deterministically selects the
-    last point.
+    Equity input order is canonical persisted sequence order and is never
+    reconstructed from timestamps.
     """
     starting = _decimal(starting_equity)
     points = tuple(equity_points)
-    ordered_points = tuple(
-        point
-        for _, point in sorted(
-            enumerate(points),
-            key=lambda item: (
-                item[1].observed_at,
-                getattr(item[1], "sequence_number", item[0]),
-            ),
-        )
-    )
-    equities = [_decimal(point.equity) for point in ordered_points]
+    equities = [_decimal(point.equity) for point in points]
     if equities and starting > 0:
         net_return = _value(equities[-1] / starting - Decimal("1"), "ratio")
     else:
@@ -155,7 +132,7 @@ def calculate_metrics(
         )
         expectancy = _value(sum(net_pnls, Decimal("0")) / trade_count, "USD")
 
-    returns = _daily_returns(ordered_points, starting)
+    returns = _daily_returns(points, starting)
     if len(returns) < 2:
         sharpe = _unavailable("ratio", "INSUFFICIENT_DAILY_RETURNS")
     else:

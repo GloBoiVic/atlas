@@ -7,8 +7,13 @@ MetricState = Literal["VALUE", "INFINITE", "UNAVAILABLE", "LEGACY_UNCOMPUTED"]
 LEGACY_METRIC_SCHEMA_VERSION: Final = "LEGACY_UNCOMPUTED"
 PHASE5_RESULT_SCHEMA_VERSION: Final = "PHASE5_EXPERIMENT_RESULT_V2"
 PHASE5_METRIC_SCHEMA_VERSION: Final = "PHASE5_METRICS_V1"
+SHARPE_METHODOLOGY: Final = "ATLAS_SHARPE_CANONICAL_DAILY_V1"
+RESULT_METRIC_SCHEMA_VERSION: Final = "ATLAS_METRICS_V2_SHARPE_CANONICAL_DAILY_V1"
 
 METRIC_STATE_KEYS: Final[tuple[str, ...]] = (
+    "net_return",
+    "max_drawdown_amount",
+    "max_drawdown_percent",
     "sharpe_ratio",
     "profit_factor",
     "win_rate",
@@ -18,6 +23,8 @@ METRIC_STATE_KEYS: Final[tuple[str, ...]] = (
 LEGACY_METRIC_STATES: Final[dict[str, str]] = {
     key: LEGACY_METRIC_SCHEMA_VERSION for key in METRIC_STATE_KEYS
 }
+
+METRIC_STATE_SCHEMA_VERSION: Final = "ATLAS_METRIC_STATE_V2"
 
 # Stable, calculation-free fixtures used by the metrics implementation and tests.
 METRIC_STATE_FIXTURES: Final[dict[str, dict[str, object]]] = {

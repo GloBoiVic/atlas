@@ -137,11 +137,46 @@ class ExperimentResultReadService:
         )
         if experiment.status == "COMPLETED":
             result = self.results.result(session, experiment_id)
-            trades = self.results.trades(session, experiment_id, 100000)
-            equity = self.results.equity(session, experiment_id)
-            metrics = self._metrics(experiment, trades, equity)
+            if result is None:
+                raise ResultReadError(
+                    "INCOMPLETE_RESULT", "Completed Experiment result is unavailable"
+                )
+            metrics = self._persisted_metrics(result)
         return {"experiment": experiment, "result": result, "metrics": metrics,
                 "strategy_version": strategy_version}
+
+    @staticmethod
+    def _persisted_metrics(result: object) -> dict[str, object]:
+        """Project the immutable result row without reopening financial facts."""
+        states = getattr(result, "metric_states", {})
+        if not isinstance(states, dict) or not states:
+            return {}
+        names = (
+            ("netReturn", "net_return", "net_return"),
+            ("maxDrawdownAmount", "max_drawdown_amount", "max_drawdown_amount"),
+            ("maxDrawdownPercent", "max_drawdown_percent", "max_drawdown_percent"),
+            ("sharpe", "sharpe_ratio", "sharpe_ratio"),
+            ("profitFactor", "profit_factor", "profit_factor"),
+            ("winRate", "win_rate", "win_rate"),
+            ("expectancy", "expectancy_net_pnl", "expectancy_net_pnl"),
+        )
+        metrics: dict[str, object] = {}
+        for output, key, column in names:
+            state = states.get(key, {}) if isinstance(states, dict) else {}
+            if not isinstance(state, dict):
+                state = {"state": state, "reason": "LEGACY_RESULT"}
+            value = getattr(result, column, None)
+            metrics[output] = {
+                "state": state.get("state"),
+                "value": None if value is None else str(value),
+                "unit": state.get("unit", "ratio"),
+                "reason": state.get("reason"),
+            }
+        metrics["tradeCount"] = {
+            "state": "VALUE", "value": str(getattr(result, "trade_count", 0)),
+            "unit": "trades", "reason": None,
+        }
+        return metrics
 
     def gap_decisions(
         self, session: Session, experiment_id: UUID

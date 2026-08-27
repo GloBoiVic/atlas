@@ -3,6 +3,7 @@
 # ruff: noqa: E501, I001
 
 from alembic import op
+from sqlalchemy.sql.elements import conv
 
 
 revision = "0013_result_quality_degraded"
@@ -12,7 +13,7 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.drop_constraint("result_quality_values", "experiment_results", type_="check")
+    op.drop_constraint(conv("ck_experiment_results_result_quality_values"), "experiment_results", type_="check")
     op.create_check_constraint(
         "result_quality_values",
         "experiment_results",
@@ -21,7 +22,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_constraint("result_quality_values", "experiment_results", type_="check")
+    op.drop_constraint(conv("ck_experiment_results_result_quality_values"), "experiment_results", type_="check")
     op.create_check_constraint(
         "result_quality_values",
         "experiment_results",

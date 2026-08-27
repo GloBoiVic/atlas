@@ -150,6 +150,8 @@ class ExperimentRepository:
             raise ValueError("experiment does not exist")
         if row.status not in {"PENDING", "RUNNING"}:
             raise ValueError("only a pending or running experiment may be completed")
+        if session.get(ExperimentResultModel, experiment_id) is None:
+            raise ValueError("completed experiment requires a persisted result")
         row.status = "COMPLETED"
         row.completed_at = completed_at
         session.flush()
@@ -208,6 +210,12 @@ class ExperimentRepository:
     def append_equity_point(
         self, session: Session, **values: object
     ) -> ExperimentEquityPointModel:
+        experiment_id = values.get("experiment_id")
+        experiment = session.get(ExperimentModel, experiment_id)
+        if experiment is None:
+            raise ValueError("experiment does not exist")
+        if experiment.status in {"COMPLETED", "FAILED"}:
+            raise ValueError("terminal Experiment facts are immutable")
         row = ExperimentEquityPointModel(**values)  # type: ignore[arg-type]
         session.add(row)
         session.flush()
@@ -216,8 +224,35 @@ class ExperimentRepository:
     def create_result(
         self, session: Session, **values: object
     ) -> ExperimentResultModel:
-        values.setdefault("metric_states", dict(LEGACY_METRIC_STATES))
+        raw_states = values.setdefault("metric_states", dict(LEGACY_METRIC_STATES))
+        if isinstance(raw_states, Mapping):
+            states: dict[str, dict[str, object]] = {}
+            for key in LEGACY_METRIC_STATES:
+                value = raw_states.get(key)
+                if isinstance(value, Mapping):
+                    state = dict(value)
+                elif value is not None and str(value) != LEGACY_METRIC_SCHEMA_VERSION:
+                    state = {"state": str(value), "reason": None}
+                else:
+                    numeric = values.get(key)
+                    state = {
+                        "state": "VALUE" if numeric is not None else "UNAVAILABLE",
+                        "reason": None if numeric is not None else "LEGACY_RESULT",
+                    }
+                state.setdefault("reason", None)
+                if state.get("state") in {"UNAVAILABLE", "INFINITE"} and not state.get("reason"):
+                    state["reason"] = "LEGACY_RESULT"
+                states[key] = state
+            values["metric_states"] = states
         values.setdefault("metric_schema_version", LEGACY_METRIC_SCHEMA_VERSION)
+        experiment_id = values.get("experiment_id")
+        experiment = session.get(ExperimentModel, experiment_id)
+        if experiment is None:
+            raise ValueError("experiment does not exist")
+        if experiment.status in {"COMPLETED", "FAILED"}:
+            raise ValueError("terminal Experiment result graph is immutable")
+        if session.get(ExperimentResultModel, experiment_id) is not None:
+            raise ValueError("ExperimentResult is immutable and already exists")
         row = ExperimentResultModel(**values)  # type: ignore[arg-type]
         session.add(row)
         session.flush()
@@ -226,6 +261,11 @@ class ExperimentRepository:
     def create_gap_decision(
         self, session: Session, **values: object
     ) -> ExperimentGapDecisionModel:
+        experiment = session.get(ExperimentModel, values.get("experiment_id"))
+        if experiment is None:
+            raise ValueError("experiment does not exist")
+        if experiment.status in {"COMPLETED", "FAILED"}:
+            raise ValueError("terminal Experiment facts are immutable")
         row = ExperimentGapDecisionModel(**values)  # type: ignore[arg-type]
         session.add(row)
         session.flush()

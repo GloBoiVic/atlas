@@ -81,14 +81,15 @@ def test_sharpe_uses_final_equity_point_per_utc_day() -> None:
     assert abs(metrics.sharpe_ratio.value - expected) < Decimal("1e-24")
 
 
-def test_metrics_replay_is_deterministic_when_equity_rows_arrive_out_of_order() -> None:
+def test_metrics_uses_persisted_equity_order_as_canonical_authority() -> None:
     points = equity("100", "110", "90", "120")
     ordered = calculate_metrics([], points, starting_equity=Decimal("100"))
     replayed = calculate_metrics(
         [], tuple(reversed(points)), starting_equity=Decimal("100")
     )
 
-    assert replayed == ordered
+    assert replayed.net_return != ordered.net_return
+    assert replayed.net_return.value == Decimal("0")
 
 
 def test_sharpe_reports_insufficient_and_zero_variance_states() -> None:

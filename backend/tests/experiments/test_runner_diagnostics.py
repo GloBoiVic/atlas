@@ -9,6 +9,7 @@ from backend.experiments.runner import (
     Phase4RunnerComparisonDiagnostic,
     Phase4ValueErrorDiagnostic,
     _diagnostic_reason,
+    classify_runner_value_error,
     result_quality_for_gaps,
     terminal_protection_observation,
 )
@@ -34,6 +35,7 @@ def test_known_value_error_diagnostic_has_only_closed_fields() -> None:
         "reason_code": "FINAL_QUOTE_MISSING",
     }
 
+
     records = []
     runner = ExperimentRunner(
         strategy_registry=SimpleNamespace(), value_error_diagnostic_sink=records.append
@@ -48,6 +50,23 @@ def test_known_value_error_diagnostic_has_only_closed_fields() -> None:
     )
     assert records[0].as_dict()["reason_code"] == "INCOMPLETE_M1_OBSERVATION"
     assert records[0].as_dict()["at"] == "2026-01-06T06:00:00Z"
+
+
+def test_result_quality_prioritizes_data_uncertainty_then_ambiguity() -> None:
+    start = datetime(2024, 1, 1, tzinfo=UTC)
+    end = start + timedelta(hours=1)
+    gap = SimpleNamespace(blocked=True, start_time=start, end_time=end)
+    assert result_quality_for_gaps((), (), start, end) == "DETERMINED"
+    assert result_quality_for_gaps((), (), start, end, ambiguous=True) == (
+        "CONSERVATIVE_AMBIGUITY_RESOLVED"
+    )
+    assert result_quality_for_gaps((gap,), (), start, end, ambiguous=True) == "DEGRADED"
+
+
+def test_accounting_invariant_has_explicit_failure_code() -> None:
+    category, code = classify_runner_value_error(ValueError("Trade and Position directions disagree"))
+    assert category.value == "VALIDATION"
+    assert code == "ACCOUNTING_INVARIANT"
 
 
 def test_unknown_hostile_value_error_is_unclassified_and_not_emitted() -> None:

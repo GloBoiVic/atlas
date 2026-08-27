@@ -3,6 +3,7 @@
 # ruff: noqa: E501, F401
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy.sql.elements import conv
 
 revision = "0008_proposal_constraints"
 down_revision = "0007_proposal_watch"
@@ -17,4 +18,4 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     for name in ("expiry_after_decision", "positive_expiry_bars", "valid_trigger_price_basis", "valid_action_entry_policy"):
-        op.drop_constraint(name, "trade_intents", type_="check")
+        op.drop_constraint(conv(f"ck_trade_intents_{name}"), "trade_intents", type_="check")

@@ -187,6 +187,34 @@ def test_completed_experiment_list_reuses_detail_metrics_and_pagination(database
         experiment_id, _, _ = _seed(session, "LONG")
         row = session.get(ExperimentModel, experiment_id)
         assert row is not None
+        ExperimentRepository().create_result(
+            session,
+            experiment_id=experiment_id,
+            result_schema_version="TEST_RESULT_V1",
+            trade_count=0,
+            ambiguous_trade_count=0,
+            gross_pnl="0",
+            commission_cost="0",
+            financing_cost="0",
+            modeled_net_pnl="0",
+            ending_balance="10050",
+            ending_equity="10050",
+            net_return="0.005",
+            max_drawdown_amount="50",
+            max_drawdown_percent="0.0049504950495",
+            financing_disclosure="EXCLUDED",
+            completed_market_time=START + timedelta(days=2),
+            output_fingerprint="1" * 64,
+            metric_states={
+                "net_return": {"state": "VALUE", "reason": None},
+                "max_drawdown_amount": {"state": "VALUE", "reason": None},
+                "max_drawdown_percent": {"state": "VALUE", "reason": None},
+                "sharpe_ratio": {"state": "VALUE", "reason": None},
+                "profit_factor": {"state": "UNAVAILABLE", "reason": "ZERO_TRADES"},
+                "win_rate": {"state": "UNAVAILABLE", "reason": "ZERO_TRADES"},
+                "expectancy_net_pnl": {"state": "UNAVAILABLE", "reason": "ZERO_TRADES"},
+            },
+        )
         row.status = "COMPLETED"
         row.completed_at = START + timedelta(days=2)
         for sequence, equity in enumerate(("10000", "10100", "10050"), start=1):

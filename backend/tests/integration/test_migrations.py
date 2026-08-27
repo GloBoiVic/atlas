@@ -120,6 +120,14 @@ def test_migration_cycle(migration_url: str) -> None:
             "sharpe_ratio", "profit_factor", "win_rate", "expectancy_net_pnl",
             "metric_states", "metric_schema_version", "result_quality",
         }
+        result_checks = {
+            constraint["name"]
+            for constraint in inspector.get_check_constraints("experiment_results")
+        }
+        assert {
+            "ck_experiment_results_result_metric_state_keys",
+            "ck_experiment_results_result_metric_state_consistency",
+        } <= result_checks
         assert {column["name"] for column in inspector.get_columns("experiment_gap_decisions")} >= {
             "experiment_id", "sequence", "start_time", "end_time", "resolution",
             "price_component", "classification", "rule_version", "policy_version",

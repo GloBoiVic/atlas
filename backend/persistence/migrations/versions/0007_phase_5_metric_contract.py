@@ -6,6 +6,7 @@
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.sql.elements import conv
 
 revision = "0007_phase_5_metric_contract"
 down_revision = "0006_phase_4_persistence"
@@ -68,7 +69,7 @@ def downgrade() -> None:
         "result_sharpe_ratio_finite",
         "result_metric_state_keys",
     ):
-        op.drop_constraint(name, "experiment_results", type_="check")
+        op.drop_constraint(conv(f"ck_experiment_results_{name}"), "experiment_results", type_="check")
     op.drop_column("experiment_results", "metric_schema_version")
     op.drop_column("experiment_results", "metric_states")
     for name in ("expectancy_net_pnl", "win_rate", "profit_factor", "sharpe_ratio"):

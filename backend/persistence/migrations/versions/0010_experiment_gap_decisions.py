@@ -5,6 +5,7 @@
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.sql.elements import conv
 
 revision = "0010_experiment_gap_decisions"
 down_revision = "0009_historical_snapshot_v2"
@@ -46,5 +47,5 @@ def downgrade() -> None:
     op.execute("DROP TRIGGER experiment_gap_decisions_append_only ON experiment_gap_decisions")
     op.execute("DROP FUNCTION experiment_gap_decision_append_only()")
     op.drop_table("experiment_gap_decisions")
-    op.drop_constraint("result_quality_values", "experiment_results", type_="check")
+    op.drop_constraint(conv("ck_experiment_results_result_quality_values"), "experiment_results", type_="check")
     op.drop_column("experiment_results", "result_quality")

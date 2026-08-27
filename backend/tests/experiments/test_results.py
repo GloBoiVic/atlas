@@ -116,7 +116,7 @@ def test_result_subresources_fail_closed_before_completion(status: str) -> None:
         assert error.value.code == expected
 
 
-def test_zero_trade_detail_derives_unavailable_states_without_mutation() -> None:
+def test_legacy_result_detail_does_not_recalculate_mutable_facts() -> None:
     experiment = _experiment()
     legacy = SimpleNamespace(metric_schema_version="LEGACY_UNCOMPUTED")
     repo = FakeRepo(experiment, equity=())
@@ -125,10 +125,7 @@ def test_zero_trade_detail_derives_unavailable_states_without_mutation() -> None
 
     detail = service.detail(None, experiment.id)
     metrics = detail["metrics"]
-    assert metrics.trade_count == 0
-    assert metrics.profit_factor.reason == "ZERO_TRADES"
-    assert metrics.win_rate.reason == "ZERO_TRADES"
-    assert metrics.expectancy_net_pnl.reason == "ZERO_TRADES"
+    assert metrics == {}
     assert legacy.metric_schema_version == "LEGACY_UNCOMPUTED"
     assert repo.mutations == 0
 

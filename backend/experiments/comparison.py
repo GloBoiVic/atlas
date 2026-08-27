@@ -22,6 +22,8 @@ from .results import ExperimentResultReadService, ResultReadError
 def _metrics_payload(metrics: Any) -> dict[str, Any] | None:
     if metrics is None:
         return None
+    if isinstance(metrics, dict):
+        return metrics
     names = {
         "netReturn": "net_return",
         "maxDrawdownAmount": "max_drawdown_amount",

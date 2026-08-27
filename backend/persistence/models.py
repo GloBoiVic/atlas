@@ -638,8 +638,8 @@ class ExperimentResultModel(Base):
         CheckConstraint("profit_factor IS NULL OR (profit_factor <> 'NaN'::numeric AND profit_factor <> 'Infinity'::numeric AND profit_factor <> '-Infinity'::numeric)", name="result_profit_factor_finite"),
         CheckConstraint("win_rate IS NULL OR (win_rate <> 'NaN'::numeric AND win_rate <> 'Infinity'::numeric AND win_rate <> '-Infinity'::numeric)", name="result_win_rate_finite"),
         CheckConstraint("expectancy_net_pnl IS NULL OR (expectancy_net_pnl <> 'NaN'::numeric AND expectancy_net_pnl <> 'Infinity'::numeric AND expectancy_net_pnl <> '-Infinity'::numeric)", name="result_expectancy_net_pnl_finite"),
-        CheckConstraint("jsonb_typeof(metric_states) = 'object' AND metric_states ?& ARRAY['sharpe_ratio', 'profit_factor', 'win_rate', 'expectancy_net_pnl'] AND (metric_states->>'sharpe_ratio') IN ('VALUE', 'INFINITE', 'UNAVAILABLE', 'LEGACY_UNCOMPUTED') AND (metric_states->>'profit_factor') IN ('VALUE', 'INFINITE', 'UNAVAILABLE', 'LEGACY_UNCOMPUTED') AND (metric_states->>'win_rate') IN ('VALUE', 'INFINITE', 'UNAVAILABLE', 'LEGACY_UNCOMPUTED') AND (metric_states->>'expectancy_net_pnl') IN ('VALUE', 'INFINITE', 'UNAVAILABLE', 'LEGACY_UNCOMPUTED')", name="result_metric_state_keys"),
-        CheckConstraint("(metric_states->>'profit_factor' = 'INFINITE' AND profit_factor IS NULL) OR (metric_states->>'profit_factor' <> 'INFINITE')", name="result_metric_state_consistency"),
+         CheckConstraint("jsonb_typeof(metric_states) = 'object' AND metric_states ?& ARRAY['net_return', 'max_drawdown_amount', 'max_drawdown_percent', 'sharpe_ratio', 'profit_factor', 'win_rate', 'expectancy_net_pnl'] AND (metric_states->'net_return'->>'state') IN ('VALUE', 'INFINITE', 'UNAVAILABLE', 'LEGACY_UNCOMPUTED') AND (metric_states->'max_drawdown_amount'->>'state') IN ('VALUE', 'INFINITE', 'UNAVAILABLE', 'LEGACY_UNCOMPUTED') AND (metric_states->'max_drawdown_percent'->>'state') IN ('VALUE', 'INFINITE', 'UNAVAILABLE', 'LEGACY_UNCOMPUTED') AND (metric_states->'sharpe_ratio'->>'state') IN ('VALUE', 'INFINITE', 'UNAVAILABLE', 'LEGACY_UNCOMPUTED') AND (metric_states->'profit_factor'->>'state') IN ('VALUE', 'INFINITE', 'UNAVAILABLE', 'LEGACY_UNCOMPUTED') AND (metric_states->'win_rate'->>'state') IN ('VALUE', 'INFINITE', 'UNAVAILABLE', 'LEGACY_UNCOMPUTED') AND (metric_states->'expectancy_net_pnl'->>'state') IN ('VALUE', 'INFINITE', 'UNAVAILABLE', 'LEGACY_UNCOMPUTED')", name="result_metric_state_keys"),
+         CheckConstraint("(metric_states->'profit_factor'->>'state' = 'INFINITE' AND profit_factor IS NULL) OR (metric_states->'profit_factor'->>'state' <> 'INFINITE')", name="result_metric_state_consistency"),
         CheckConstraint("result_schema_version NOT LIKE 'PHASE5_%' OR metric_schema_version <> 'LEGACY_UNCOMPUTED'", name="result_phase5_metric_schema"),
         CheckConstraint("profit_factor IS NULL OR profit_factor >= 0", name="result_profit_factor_nonnegative"),
         CheckConstraint("win_rate IS NULL OR (win_rate >= 0 AND win_rate <= 1)", name="result_win_rate_range"),
@@ -665,10 +665,10 @@ class ExperimentResultModel(Base):
     profit_factor: Mapped[Decimal | None] = mapped_column(Numeric(24, 10), nullable=True)
     win_rate: Mapped[Decimal | None] = mapped_column(Numeric(24, 10), nullable=True)
     expectancy_net_pnl: Mapped[Decimal | None] = mapped_column(Numeric(24, 10), nullable=True)
-    metric_states: Mapped[dict[str, str]] = mapped_column(
+    metric_states: Mapped[dict[str, object]] = mapped_column(
         JSONB,
         nullable=False,
-        server_default=text("'{\"sharpe_ratio\": \"LEGACY_UNCOMPUTED\", \"profit_factor\": \"LEGACY_UNCOMPUTED\", \"win_rate\": \"LEGACY_UNCOMPUTED\", \"expectancy_net_pnl\": \"LEGACY_UNCOMPUTED\"}'::jsonb"),
+        server_default=text("'{\"net_return\": {\"state\": \"LEGACY_UNCOMPUTED\", \"reason\": \"LEGACY_RESULT\"}, \"max_drawdown_amount\": {\"state\": \"LEGACY_UNCOMPUTED\", \"reason\": \"LEGACY_RESULT\"}, \"max_drawdown_percent\": {\"state\": \"LEGACY_UNCOMPUTED\", \"reason\": \"LEGACY_RESULT\"}, \"sharpe_ratio\": {\"state\": \"LEGACY_UNCOMPUTED\", \"reason\": \"LEGACY_RESULT\"}, \"profit_factor\": {\"state\": \"LEGACY_UNCOMPUTED\", \"reason\": \"LEGACY_RESULT\"}, \"win_rate\": {\"state\": \"LEGACY_UNCOMPUTED\", \"reason\": \"LEGACY_RESULT\"}, \"expectancy_net_pnl\": {\"state\": \"LEGACY_UNCOMPUTED\", \"reason\": \"LEGACY_RESULT\"}}'::jsonb"),
     )
     metric_schema_version: Mapped[str] = mapped_column(
         String(100), nullable=False, server_default=text("'LEGACY_UNCOMPUTED'")
