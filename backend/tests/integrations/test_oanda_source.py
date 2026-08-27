@@ -337,12 +337,19 @@ def test_retry_after_http_date_and_missing_token(
         OandaHistoricalBarSource(None).fetch(moment(0), moment(1))
 
 
-def test_optional_configured_token_is_secret_and_absent_token_is_valid() -> None:
+def test_optional_configured_token_is_secret_and_respects_loaded_environment() -> None:
+    import os
+
     settings = Settings(
         _env_file=None,  # type: ignore[call-arg]
         database_url=SecretStr("postgresql+psycopg://user@localhost/atlas"),
     )
-    assert settings.oanda_api_token is None
+    environment_token = os.environ.get("ATLAS_OANDA_API_TOKEN")
+    if environment_token is None:
+        assert settings.oanda_api_token is None
+    else:
+        assert settings.oanda_api_token is not None
+        assert environment_token not in repr(settings)
     configured = Settings(
         _env_file=None,  # type: ignore[call-arg]
         database_url=SecretStr("postgresql+psycopg://user@localhost/atlas"),

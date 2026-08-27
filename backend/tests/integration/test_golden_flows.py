@@ -373,7 +373,12 @@ def _registry() -> StrategyRegistry:
 
 
 def _seed(
-    session: Session, direction: str, *, slippage_ticks: int = 0, end_open: bool = False
+    session: Session,
+    direction: str,
+    *,
+    slippage_ticks: int = 0,
+    end_open: bool = False,
+    complete_execution: bool = False,
 ) -> tuple[UUID, UUID, UUID]:
     venue = MarketDataRepository().ensure_initial_venue_instrument(
         session, VenueInstrument(Instrument.EUR_USD, Provider.OANDA, "EUR_USD")
@@ -396,11 +401,18 @@ def _seed(
     }
     # Keep the executable product intentionally sparse: the bounded entry quote
     # and one later quote that establishes the protected terminal outcome.
-    executable_times = {
-        START + timedelta(minutes=1530),
-        START + timedelta(minutes=1545),
-        START + timedelta(minutes=1559),
-    }
+    executable_times = (
+        {
+            START + timedelta(minutes=1500 + offset)
+            for offset in range(60)
+        }
+        if complete_execution
+        else {
+            START + timedelta(minutes=1530),
+            START + timedelta(minutes=1545),
+            START + timedelta(minutes=1559),
+        }
+    )
     execution = tuple(
         (stored_bars[(bar.start_time, bar.price_component.value)], bar)
         for bar in bars

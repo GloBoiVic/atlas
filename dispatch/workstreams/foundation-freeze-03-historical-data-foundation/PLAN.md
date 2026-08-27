@@ -1,6 +1,6 @@
 # Foundation Freeze 03 — Historical Data Foundation
 
-Status: `READY FOR MERGE APPROVAL`
+Status: `VALIDATION BLOCKED BY PROVIDER DATA`
 Classification: `Critical`
 Workstream: `foundation-freeze-03-historical-data-foundation`
 Branch: `solo/foundation-freeze-03-historical-data-foundation`
@@ -70,11 +70,28 @@ tests and benchmark evidence are binding.
 
 ## Task state
 
-T001–T006 are complete with concerns. Review remediation removed the residual warm-up
-ceilings, quarantined shared planning from V2 preparation, and corrected public product
-metadata. Fresh validation and review passed with no unresolved IMPORTANT/CRITICAL
-findings. PostgreSQL-backed and credentialed OANDA evidence remain explicitly blocked
-by environment and are preserved as open gates in the final report.
+T001–T012 are complete with concerns. T008 repaired the stale API fixture but its
+full-calendar-year durable run exposed a live schema constraint still enforcing
+one-minute intervals on native M15 rows. T009 reconciled the migration names, but
+validation requires a clean disposable database run. T009's naming fix still double-
+prefixed the generated constraint on a fresh schema; T010 corrected migration naming,
+but the real full-year load failed during persistence after durable progress. T011 is
+opened to diagnose that product/shape failure and complete live evidence; T011 bounded
+membership inserts and persisted the full native products, but the first run timed out
+before snapshot creation. The configured validation run found no T011 coverage in the
+durable database and could not migrate the legacy database because of immutable rows.
+Developer has now explicitly authorized resetting the current disposable database;
+fresh validation reset it and migrations reached head. T012 added effective-dated
+provider holiday closures without fabrication, but its rerun reached head and
+persisted partial M15 coverage before the execution window ended. Resume from durable
+progress and complete full-year/repeat evidence without weakening coverage. T012
+classified holiday closures but left 1,293 scattered expected-session gaps; T013 is
+opened to diagnose acquisition boundaries/provider sparsity and finish or precisely
+block the live evidence.
+local PostgreSQL database/schema; discard stale local Experiment/result data, preserve
+immutable-facts protections, migrate from a clean state through head, and rerun the
+genuine full-calendar-year OANDA load plus covered repeat evidence. PostgreSQL and real
+OANDA are available and must be validated without exposing secrets.
 
 ## BUILD tasks
 
@@ -98,6 +115,20 @@ by environment and are preserved as open gates in the final report.
   required by V2.
 - `T006-review-remediation`: remove residual warm-up ceilings, stale V2 preparation
   planning, and inaccurate public product metadata; add regressions.
+- `T007-live-validation-remediation`: fix V2 `Bar` ordering, reconcile the
+  environment-sensitive configuration test, and prove real repeat reuse.
+- `T008-live-evidence-completion`: repair the stale API fixture and prove durable
+  full-calendar-year OANDA repeat reuse with zero provider calls.
+- `T009-native-m15-migration-remediation`: reconcile native M15 migration constraint
+  names and rerun full-year durable load/repeat evidence.
+- `T010-fix-migration-naming`: correct the fresh-schema constraint naming bug and rerun
+  the approved live evidence.
+- `T011-full-year-persistence-remediation`: diagnose the real full-year persistence
+  failure and complete unchanged full-year/repeat evidence.
+- `T012-live-coverage-gap-remediation`: diagnose and correctly classify remaining live
+  provider gaps, then complete full-year/repeat evidence without fabrication.
+- `T013-oanda-gap-diagnosis`: diagnose scattered expected-session gaps and complete or
+  precisely document full-year/repeat evidence.
 
 Dependency order: T001 and T002 may proceed independently after approval; T003 depends
 on both; T004 depends on T001–T003; T005 follows the implementation and is the final
@@ -107,5 +138,6 @@ BUILD task. Each task must finish with a receipt in its task file.
 
 Developer approval received and GIT START completed. CodeGraph was queried after each
 BUILD slice and reported no stale-index banner; unrelated untracked `.codegraph/`
-and `frontend/.env.local` are intentionally untouched. Tasks, validation, review,
-branch, status, and diff checks are complete. Await explicit merge approval.
+and `frontend/.env.local` are intentionally untouched. T013 is complete and documents
+genuine provider sparsity across the requested year; final validation/review must
+preserve the blocked live-evidence gate without fabrication.

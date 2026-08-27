@@ -9,6 +9,8 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # Pass logical names so Alembic's naming convention renders the single
+    # table-prefixed names stored by revision 0003 (not a double prefix).
     op.drop_constraint("m1_only", "market_bars", type_="check")
     op.drop_constraint("exact_one_minute", "market_bars", type_="check")
     op.drop_constraint("minute_aligned_start", "market_bars", type_="check")

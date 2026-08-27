@@ -36,7 +36,7 @@ class PriceComponent(StrEnum):
 
 
 ALIGNMENT_CONVENTION = "UTC_HALF_OPEN_V1"
-SESSION_POLICY = "OANDA_FX_NY_V1"
+SESSION_POLICY = "OANDA_FX_NY_V2"
 FINGERPRINT_SCHEMA = "ATLAS_DATASET_SHA256_V1"
 SNAPSHOT_SCHEMA_V1 = "ATLAS_HISTORICAL_SNAPSHOT_V1"
 SNAPSHOT_SCHEMA_V2 = "ATLAS_HISTORICAL_SIMULATION_SNAPSHOT_V2"
@@ -231,7 +231,7 @@ class DatasetSnapshot:
             )
         if self.alignment_convention != ALIGNMENT_CONVENTION:
             raise InputError("unsupported alignment convention")
-        if self.session_policy != SESSION_POLICY:
+        if self.session_policy not in ("OANDA_FX_NY_V1", SESSION_POLICY):
             raise InputError("unsupported session policy")
         expected_fingerprint = (
             FINGERPRINT_SCHEMA

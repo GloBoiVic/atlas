@@ -21,6 +21,7 @@ from zoneinfo import ZoneInfo
 EXPECTED_DATA: Final[str] = "EXPECTED_DATA"
 UNAVAILABLE_SESSION: Final[str] = "UNAVAILABLE_SESSION"
 OANDA_FX_NY_V1: Final[str] = "OANDA_FX_NY_V1"
+OANDA_FX_NY_V2: Final[str] = "OANDA_FX_NY_V2"
 NEW_YORK_TIMEZONE: Final[str] = "America/New_York"
 
 
@@ -112,16 +113,29 @@ class ExpectedSessionPolicy:
         return EXPECTED_DATA, "EXPECTED_PROVIDER_SESSION", self.version
 
 
-# OANDA EUR/USD V1.  Do not alter these semantics in place: a semantic change
-# requires a new policy version and migration/fingerprint review.  Documentary
-# fields are source-pinned in oanda_session_policy_provenance.md; placeholders
-# are intentional until the worker fills the actual OANDA documents.
+# OANDA EUR/USD V2.  OANDA's 2025 holiday notice documents FX opening late at
+# 17:05 ET on 1 January and 25 December, and closing at 16:59 ET on 24 and 31
+# December.  The exception intervals begin after the regular 16:59–17:05
+# rollover window, so the existing daily rule remains authoritative elsewhere.
+# A semantic change is represented by a new policy version; old snapshots keep
+# their V1 meaning.
 OANDA_EUR_USD_POLICY: Final[ExpectedSessionPolicy] = ExpectedSessionPolicy(
-    version=OANDA_FX_NY_V1,
+    version=OANDA_FX_NY_V2,
     timezone=NEW_YORK_TIMEZONE,
     maintenance_start_minute=16 * 60 + 59,
     maintenance_end_minute=17 * 60 + 5,
-    exceptions=(),
+    exceptions=(
+        SessionException(date(2024, 12, 31), date(2024, 12, 31), 17 * 60 + 5,
+                         1440, UNAVAILABLE_SESSION, "HOLIDAY_CLOSURE"),
+        SessionException(date(2025, 1, 1), date(2025, 1, 1), 0, 17 * 60 + 5,
+                         UNAVAILABLE_SESSION, "HOLIDAY_CLOSURE"),
+        SessionException(date(2025, 12, 24), date(2025, 12, 24), 16 * 60 + 59,
+                         1440, UNAVAILABLE_SESSION, "HOLIDAY_CLOSURE"),
+        SessionException(date(2025, 12, 25), date(2025, 12, 25), 0, 17 * 60 + 5,
+                         UNAVAILABLE_SESSION, "HOLIDAY_CLOSURE"),
+        SessionException(date(2025, 12, 31), date(2025, 12, 31), 16 * 60 + 59,
+                         1440, UNAVAILABLE_SESSION, "HOLIDAY_CLOSURE"),
+    ),
 )
 DEFAULT_POLICY: Final[ExpectedSessionPolicy] = OANDA_EUR_USD_POLICY
 
@@ -130,6 +144,7 @@ __all__ = [
     "EXPECTED_DATA",
     "UNAVAILABLE_SESSION",
     "OANDA_FX_NY_V1",
+    "OANDA_FX_NY_V2",
     "ExpectedSessionPolicy",
     "OANDA_EUR_USD_POLICY",
     "DEFAULT_POLICY",

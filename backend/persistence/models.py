@@ -189,11 +189,11 @@ class DatasetSnapshotModel(Base):
         CheckConstraint("(snapshot_schema = 'ATLAS_HISTORICAL_SNAPSHOT_V1' AND base_resolution = 'M1') OR (snapshot_schema = 'ATLAS_HISTORICAL_SIMULATION_SNAPSHOT_V2' AND base_resolution = 'M15')", name="snapshot_resolution_by_schema"),
         CheckConstraint("(snapshot_schema = 'ATLAS_HISTORICAL_SNAPSHOT_V1' AND components = '[\"ASK\",\"BID\",\"MID\"]'::jsonb) OR (snapshot_schema = 'ATLAS_HISTORICAL_SIMULATION_SNAPSHOT_V2' AND components = '[\"MID\"]'::jsonb)", name="components_by_schema"),
         CheckConstraint("alignment_convention = 'UTC_HALF_OPEN_V1'", name="alignment_v1"),
-        CheckConstraint("session_policy = 'OANDA_FX_NY_V1'", name="session_policy_v1"),
+        CheckConstraint("session_policy IN ('OANDA_FX_NY_V1', 'OANDA_FX_NY_V2')", name="session_policy_v1"),
         CheckConstraint("(snapshot_schema = 'ATLAS_HISTORICAL_SNAPSHOT_V1' AND fingerprint_schema = 'ATLAS_DATASET_SHA256_V1') OR (snapshot_schema = 'ATLAS_HISTORICAL_SIMULATION_SNAPSHOT_V2' AND fingerprint_schema = 'ATLAS_DATASET_SHA256_V2')", name="fingerprint_schema_by_snapshot"),
         CheckConstraint("coverage_start = date_trunc('minute', coverage_start) AND coverage_end = date_trunc('minute', coverage_end) AND coverage_end > coverage_start", name="valid_coverage_range"),
         CheckConstraint("fingerprint ~ '^[0-9a-f]{64}$'", name="sha256_fingerprint"),
-        CheckConstraint("jsonb_typeof(integrity_summary) = 'object' AND integrity_summary->>'status' = 'VALID' AND ((snapshot_schema = 'ATLAS_HISTORICAL_SNAPSHOT_V1' AND integrity_summary ?& ARRAY['expected_open_minutes','expected_closure_minutes','member_minutes','bar_count','unexpected_gap_count','unexpected_observation_count','session_policy'] AND integrity_summary->>'session_policy' = 'OANDA_FX_NY_V1') OR (snapshot_schema = 'ATLAS_HISTORICAL_SIMULATION_SNAPSHOT_V2' AND integrity_summary->>'policy_version' = 'ATLAS_HISTORICAL_GAP_POLICY_V1'))", name="valid_integrity_summary"),
+        CheckConstraint("jsonb_typeof(integrity_summary) = 'object' AND integrity_summary->>'status' = 'VALID' AND ((snapshot_schema = 'ATLAS_HISTORICAL_SNAPSHOT_V1' AND integrity_summary ?& ARRAY['expected_open_minutes','expected_closure_minutes','member_minutes','bar_count','unexpected_gap_count','unexpected_observation_count','session_policy'] AND integrity_summary->>'session_policy' IN ('OANDA_FX_NY_V1', 'OANDA_FX_NY_V2')) OR (snapshot_schema = 'ATLAS_HISTORICAL_SIMULATION_SNAPSHOT_V2' AND integrity_summary->>'policy_version' = 'ATLAS_HISTORICAL_GAP_POLICY_V1'))", name="valid_integrity_summary"),
         UniqueConstraint("fingerprint"),
     )
 

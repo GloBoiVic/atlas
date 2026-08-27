@@ -41,6 +41,20 @@ def test_migration_cycle(migration_url: str) -> None:
         config = alembic_config(migration_url)
         command.upgrade(config, "head")
         inspector = inspect(engine)
+        market_bar_checks = {
+            constraint["name"]
+            for constraint in inspector.get_check_constraints("market_bars")
+        }
+        assert {
+            "ck_market_bars_supported_resolution",
+            "ck_market_bars_native_aligned_start",
+            "ck_market_bars_exact_native_interval",
+        } <= market_bar_checks
+        assert not {
+            "ck_market_bars_m1_only",
+            "ck_market_bars_exact_one_minute",
+            "ck_market_bars_minute_aligned_start",
+        } & market_bar_checks
         assert sorted(inspector.get_table_names()) == [
             "alembic_version",
             "dataset_snapshot_analytical_bars",
@@ -249,6 +263,26 @@ def test_market_data_constraints_and_immutability(migration_url: str) -> None:
             rejected("DELETE FROM market_bars WHERE id = :id", {"id": bar})
             rejected("INSERT INTO instruments (code, base_currency, quote_currency) VALUES ('GBP/USD', 'GBP', 'USD')")
             rejected("INSERT INTO venue_instruments (instrument_id, provider, provider_symbol) VALUES (:instrument, 'OANDA', 'EUR_USD')", {"instrument": instrument})
+
+            native_m15 = connection.execute(
+                bar_insert,
+                bar_values(
+                    resolution="M15",
+                    start_time="2026-01-01T00:15:00Z",
+                    end_time="2026-01-01T00:30:00Z",
+                    fingerprint="9" * 64,
+                ),
+            ).scalar_one()
+            assert native_m15 != bar
+            rejected(
+                bar_insert.text,
+                bar_values(
+                    resolution="M1",
+                    start_time="2026-01-01T00:15:00Z",
+                    end_time="2026-01-01T00:30:00Z",
+                    fingerprint="8" * 64,
+                ),
+            )
             historical_variant = connection.execute(
                 bar_insert, bar_values(
                     open_price=1.0,

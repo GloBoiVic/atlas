@@ -138,6 +138,23 @@ def _utc_aligned(value: datetime, name: str, *, fifteen: bool = False) -> None:
         raise ConfigurationError("INVALID_RANGE", f"{name} is not aligned")
 
 
+def _execution_bar(row: MarketBarModel) -> Bar:
+    """Normalize a persisted execution observation using Bar's field order."""
+    return Bar(
+        instrument=Instrument.EUR_USD,
+        timeframe=Timeframe.M1,
+        price_component=PriceComponent(row.price_component),
+        start_time=row.start_time,
+        end_time=row.end_time,
+        open=row.open_price,
+        high=row.high_price,
+        low=row.low_price,
+        close=row.close_price,
+        volume=row.volume,
+        provider=Provider.OANDA,
+    )
+
+
 def _validate_parameters(
     row: StrategyVersionModel, values: Mapping[str, object], implementation: object
 ) -> dict[str, object]:
@@ -359,22 +376,7 @@ class ExperimentConfigurationService:
                 MarketBarModel.start_time < trading_end,
             )
         ).all()
-        execution_bars = tuple(
-            Bar(
-                Instrument.EUR_USD,
-                Provider.OANDA,
-                Timeframe.M1,
-                PriceComponent(row.price_component),
-                row.start_time,
-                row.end_time,
-                row.open_price,
-                row.high_price,
-                row.low_price,
-                row.close_price,
-                volume=row.volume,
-            )
-            for row in execution_rows
-        )
+        execution_bars = tuple(_execution_bar(row) for row in execution_rows)
         if not validate_coverage(
             trading_start,
             trading_end,

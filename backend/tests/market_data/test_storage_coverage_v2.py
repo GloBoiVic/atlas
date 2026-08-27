@@ -66,3 +66,15 @@ def test_weekend_closure_is_not_planned_as_fabricated_m15_coverage() -> None:
         start, start + timedelta(minutes=30), "M15", (PriceComponent.MID,), ()
     )
     assert plan.fully_covered
+
+
+def test_declared_oanda_holiday_is_not_planned_as_missing_m1_coverage() -> None:
+    start = datetime(2025, 1, 1, tzinfo=UTC)
+    plan = plan_product_coverage(
+        start,
+        start + timedelta(hours=22, minutes=5),
+        "M1",
+        (PriceComponent.BID, PriceComponent.ASK),
+        (),
+    )
+    assert plan.fully_covered

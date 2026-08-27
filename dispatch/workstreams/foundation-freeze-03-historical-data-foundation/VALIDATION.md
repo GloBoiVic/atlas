@@ -1,84 +1,91 @@
 # Validation
 
-Status: `PASS WITH BLOCKED ENVIRONMENT EVIDENCE`
+Status: `BLOCKED`
 Role: `VALIDATE`
 Workstream: `foundation-freeze-03-historical-data-foundation`
 Branch: `solo/foundation-freeze-03-historical-data-foundation`
 
-Fresh independent validation completed 2026-08-27 from `/Users/vike/Desktop/atlas`.
-No implementation files, branches, or Git history were changed. This artifact is
-the only file changed by this validation.
+Validation ran 2026-08-27 from `/Users/vike/Desktop/atlas`. Repository root,
+CWD, and branch were verified. CodeGraph was queried first. No credentials or
+provider response bodies were exposed. Only this artifact was changed.
 
-## Contract checks
+## Migration and durable database
 
-CodeGraph and current-source review, corroborated by focused regressions, confirm:
+- Alembic declared and applied head: `0017_session_policy_v2` (`alembic heads`,
+  `alembic current`).
+- `alembic check`: passed (`No new upgrade operations detected`).
+- The authorized disposable database was not reset. It contained durable partial
+  T012 coverage, but no `historical_data_load_requests`, no StrategyVersion rows,
+  and no snapshots. Consequently the coordinator/API lifecycle could not create a
+  request; the unchanged V2 ingestion service was resumed directly from persisted
+  observations, without changing implementation or data.
 
-- `_warmup_plan` has no 40-window or 90-day ceiling; only malformed/invariant inputs
-  fail. Readiness is based on observed eligible completed native M15 bars, including
-  closure/gap behavior, not wall-clock estimates.
-- `HistoricalDataLoadCoordinator.prepare()` does not invoke the legacy shared
-  `plan_missing` planner. V2 preparation derives the semantic analytical context and
-  leaves independent native-product planning to the V2 path.
-- Public metadata describes independent native M15/MID analytical and native M1/
-  BID+ASK execution products.
-- Native M15 MID is not derived from M1 in the authoritative V2 Experiment path;
-  M1 BID/ASK execution observations remain independently planned and reusable.
-- Missing-only planning, zero provider calls for fully covered products, completed
-  filtering, UTC half-open boundaries/frontier checks, bounded arbitrary-size chunks,
-  immutable deterministic snapshot membership, and durable resume/failure semantics
-  are covered by source and tests.
+## Genuine OANDA V2 full-year attempt
 
-## Checks and evidence
+Exact half-open range: `[2025-01-01T00:00:00Z, 2026-01-01T00:00:00Z)`.
 
-- Focused historical-load, V2, storage, OANDA, migration, and configuration suite:
-  **61 passed, 1 skipped**.
-- Full backend suite: **307 passed, 30 skipped, 13 errors**. The 13 setup errors
-  are PostgreSQL-gated tests failing because `ATLAS_TEST_DATABASE_URL` is unset;
-  no implementation assertion failure was observed.
-- Changed-scope Ruff: **passed**.
-- `python -m compileall -q backend`: **passed**.
-- `git diff --check`: **passed**.
-- Alembic offline generation from repository root: **passed**, 69,775 bytes; head
-  includes `0016_load_progress` and emits `DROP CONSTRAINT
-  ck_historical_data_load_requests_load_maximum`.
+The direct V2 load resumed existing native M15 coverage, then acquired native
+M15/MID and M1/BID+ASK missing ranges from OANDA Practice. Provider calls were
+counted by a wrapper around the unchanged source; no credentials were printed.
 
-## Actual fixture benchmark
+| attempt | elapsed | M15 calls | M1 calls | result |
+|---|---:|---:|---:|---|
+| resumed full-year load | 740.957 s | 181 | 259 | invalid, no snapshot |
+| exact unchanged repeat | 415.393 s | 0 | 927 | invalid, no snapshot |
 
-`python -m backend.market_data.freeze03_benchmark` completed successfully and
-exercised the actual V2 planner, native provider seam, persistence seam, coverage
-validator, snapshot, and fingerprint path. Timings are local deterministic fixture
-evidence; the one-year labels are bounded representative windows, not full-year
-provider measurements.
+The repeat was attempted after the first load. It did **not** prove zero calls:
+the request was not covered and the remaining execution gaps caused 927 M1
+provider calls. No M15 calls were needed on the repeat.
 
-| Scenario | M15 calls | M1 calls | Planning | Coverage | Persistence | Snapshot/fingerprint | Total | Inserted / reused | Repeat calls |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| fresh one-month | 24 | 24 | 0.422s | 0.075s | 1.208s | 0.000s / 1.021s | 10.224s | 70,975 / 0 | 0 |
-| fresh one-year (representative) | 24 | 24 | 0.351s | 0.074s | 0.895s | 0.000s / 0.956s | 9.203s | 68,126 / 0 | 0 |
-| repeat covered one-year | 0 | 0 | 0.854s | 0.217s | 0.934s | 0.000s / 0.983s | 7.048s | 68,126 / 68,126 | 0 |
-| interrupted/resumed one-year (representative) | 35 | 24 | 0.671s | 0.077s | 1.003s | 0.000s / 0.947s | 9.733s | 68,126 / 933 | 48 |
+## Persisted coverage and classification
 
-Provider timing was separately recorded by the harness: fresh month M15/M1
-`0.214s/1.374s`; fresh representative year `0.177s/1.120s`; repeat `0s/0s`;
-interrupted/resumed `0.261s/1.029s`.
+Final canonical current rows:
 
-## Environment-gated evidence
+| native product | rows | earliest | latest |
+|---|---:|---|---|
+| M15/MID | 24,605 | 2025-01-01T22:15Z | 2025-12-31T21:45Z |
+| M1/BID | 370,113 | 2025-01-01T22:05Z | 2025-12-31T21:58Z |
+| M1/ASK | 370,113 | 2025-01-01T22:05Z | 2025-12-31T21:58Z |
 
-- PostgreSQL-backed migration execution, immutable triggers, repository,
-  transaction/resume, and Experiment integration evidence: **BLOCKED**.
-  `ATLAS_TEST_DATABASE_URL` is absent. `psql` is installed but no database endpoint
-  is configured; `docker info` also fails because the Docker daemon is unavailable.
-  Offline SQL generation is evidence of script validity, not actual execution.
-- Credentialed OANDA Practice fresh month/year/repeat evidence: **BLOCKED**.
-  OANDA credentials are absent; `backend/tests/integrations/test_oanda_external.py`
-  results: **1 skipped**. Fixture timings were not substituted for real-provider
-  evidence.
-- Full-backend Ruff remains outside this validation's clean changed-scope result due
-  to unrelated pre-existing findings documented by prior receipts.
+The V2 execution coverage report after the attempt reported 371,406 expected
+open minutes, 154,194 expected closure minutes, 370,113 complete member
+minutes, and 1,293 missing minutes. Closure anomalies: 0. Unexpected
+observations: 0. The 1,293 gaps are scattered expected-session acquisition
+incompleteness, not provider/session closures; no bars were fabricated,
+forward-filled, or derived from M1.
 
-## Findings and verdict
+Snapshot/fingerprint: **none / none**. Snapshot creation correctly remained
+blocked by incomplete execution coverage. The database has 0 snapshots and 0
+load-request rows after the run.
 
-No unresolved implementation finding was identified in the T006 remediation scope.
-The required warm-up, planner-quarantine, and public-metadata regressions pass.
-The overall verdict is **PASS WITH BLOCKED ENVIRONMENT EVIDENCE**: PostgreSQL-backed
-and credentialed OANDA acceptance gates remain open until those environments are
-available. The disclosed bounded representative fixture limitation also remains.
+## Tests and benchmark
+
+- Focused historical-data, migration, OANDA, ingestion, and market-data suite:
+  **90 passed, 9 skipped** in 70.68s.
+- Full backend suite excluding external credentials:
+  **309 passed, 29 skipped, 1 deselected, 2 failed, 13 errors** in 149.29s.
+  Failures were the stale expected migration-head assertion (`0016` versus the
+  applied `0017`) and the native analytical-frontier diagnostic assertion.
+  Errors were integration fixtures requiring the absent exported
+  `ATLAS_TEST_DATABASE_URL`. No test reset the authorized database.
+- Fixture benchmark completed successfully. Required unchanged fixture repeat:
+  0 M15 calls, 0 M1 calls, 0 repeat calls, 68,126 reused, fingerprint
+  `67e7eaf974274ac97e4d8f221d683e9c474426dfb338fd5196f7651ed8142f6f`, total
+  10.093s. This is deterministic fixture evidence, not live full-year proof.
+- `git diff --check`: passed.
+
+## Verdict
+
+`BLOCKED`: OANDA returned/persisted 1,293 scattered execution gaps, so the
+full-year native products are not valid, no immutable snapshot/fingerprint was
+created, and the unchanged live repeat made 927 calls rather than zero. The
+authorized database also lacks a durable load request/StrategyVersion needed to
+record the coordinator lifecycle. No implementation or branch/history changes
+were made.
+
+ROLE: VALIDATE
+STATUS: BLOCKED
+ARTIFACT: dispatch/workstreams/foundation-freeze-03-historical-data-foundation/VALIDATION.md
+FILES CHANGED: dispatch/workstreams/foundation-freeze-03-historical-data-foundation/VALIDATION.md
+CHECKS / EVIDENCE: CodeGraph-first; migration head/current/check; genuine OANDA attempts; persisted row counts and coverage; 90-pass focused suite; full backend results; fixture benchmark; diff check
+FINDINGS / CONCERNS: 1,293 acquisition gaps remain; snapshot and zero-call live repeat are unproven; durable request and StrategyVersion rows are absent

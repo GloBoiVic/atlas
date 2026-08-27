@@ -81,13 +81,13 @@ def test_versioned_policy_returns_stable_classification_reason_and_version() -> 
     weekend = OANDA_EUR_USD_POLICY.classify_minute(
         datetime(2026, 1, 10, 12, 0, tzinfo=UTC)
     )
-    assert weekday == (EXPECTED_DATA, "EXPECTED_PROVIDER_SESSION", "OANDA_FX_NY_V1")
+    assert weekday == (EXPECTED_DATA, "EXPECTED_PROVIDER_SESSION", "OANDA_FX_NY_V2")
     assert maintenance == (
         UNAVAILABLE_SESSION,
         "PROVIDER_MAINTENANCE_ROLLOVER",
-        "OANDA_FX_NY_V1",
+        "OANDA_FX_NY_V2",
     )
-    assert weekend == (UNAVAILABLE_SESSION, "WEEKLY_CLOSURE", "OANDA_FX_NY_V1")
+    assert weekend == (UNAVAILABLE_SESSION, "WEEKLY_CLOSURE", "OANDA_FX_NY_V2")
 
 
 def test_policy_uses_iana_dst_not_a_fixed_utc_offset() -> None:
@@ -124,8 +124,20 @@ def test_effective_dated_exception_is_explicit_and_missing_data_is_not_inference
         "DECLARED_HOLIDAY",
         "TEST_V1",
     )
-    # The empty V1 exception table does not learn a holiday from absent data.
-    assert OANDA_EUR_USD_POLICY.exceptions == ()
+    # The authoritative V2 table contains only source-pinned exceptions.
+    assert OANDA_EUR_USD_POLICY.exceptions
+
+
+def test_oanda_2025_holiday_closures_are_explicit_and_coverage_ignores_them() -> None:
+    assert OANDA_EUR_USD_POLICY.classify_minute(
+        datetime(2025, 1, 1, 15, 0, tzinfo=UTC)
+    ) == (UNAVAILABLE_SESSION, "HOLIDAY_CLOSURE", "OANDA_FX_NY_V2")
+    assert OANDA_EUR_USD_POLICY.classify_minute(
+        datetime(2025, 1, 1, 22, 5, tzinfo=UTC)
+    )[0] == EXPECTED_DATA
+    assert OANDA_EUR_USD_POLICY.classify_minute(
+        datetime(2025, 12, 25, 16, 59, tzinfo=UTC)
+    ) == (UNAVAILABLE_SESSION, "HOLIDAY_CLOSURE", "OANDA_FX_NY_V2")
 
 
 def test_warmup_counts_eligible_windows_not_closure_minutes() -> None:
@@ -297,7 +309,7 @@ def test_fingerprint_decimal_canonicalization_and_repeatability() -> None:
         alignment_convention=ALIGNMENT_CONVENTION,
     )
     assert first == second
-    assert first == "8ba3453a7ee49acd4f06e884a57a5220036c61f2c7b3ed3696ee4f48da5a24a4"
+    assert first == "87ffdb8f6bdfaf8396fd428c8b8acb0978984cb0af09351f0f0767cb857ac24e"
     assert len(first) == 64
     assert FINGERPRINT_SCHEMA == "ATLAS_DATASET_SHA256_V1"
 
@@ -315,7 +327,7 @@ def test_snapshot_integrity_and_fingerprint_bind_policy_version() -> None:
     )
     alternate = dataset_fingerprint(
         venue, start, end, (PriceComponent.MID,), bars,
-        session_policy="OANDA_FX_NY_V2", alignment_convention=ALIGNMENT_CONVENTION,
+        session_policy="OANDA_FX_NY_V1", alignment_convention=ALIGNMENT_CONVENTION,
     )
     assert fingerprint != alternate
     snapshot = DatasetSnapshot(

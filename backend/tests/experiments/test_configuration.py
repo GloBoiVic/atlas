@@ -1,13 +1,17 @@
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from backend.domain.market_data import PriceComponent, Provider, Timeframe
 from backend.experiments.configuration import (
     MODEL_VERSION,
     RISK_SCHEMA_VERSION,
     SIMULATION_SCHEMA_VERSION,
     ConfigurationError,
+    _execution_bar,
     risk_config,
     simulation_config,
 )
@@ -44,6 +48,25 @@ def test_configuration_derives_only_supported_phase4_assumptions() -> None:
 def test_configuration_rejects_negative_simulation_values_at_boundary() -> None:
     with pytest.raises(ConfigurationError):
         simulation_config(slippage_ticks=-1, commission_per_unit=Decimal("0"))
+
+
+def test_execution_bar_normalization_preserves_canonical_constructor_contract() -> None:
+    start = datetime(2026, 1, 5, tzinfo=UTC)
+    bar = _execution_bar(
+        SimpleNamespace(
+            price_component="BID",
+            start_time=start,
+            end_time=start + timedelta(minutes=1),
+            open_price=Decimal("1.1"),
+            high_price=Decimal("1.2"),
+            low_price=Decimal("1.0"),
+            close_price=Decimal("1.15"),
+            volume=None,
+        )
+    )
+    assert bar.provider is Provider.OANDA
+    assert bar.timeframe is Timeframe.M1
+    assert bar.price_component is PriceComponent.BID
 
 
 def test_production_registration_archives_once_and_evaluation_has_no_path_input() -> (

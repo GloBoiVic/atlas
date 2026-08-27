@@ -163,7 +163,7 @@ def test_one_month_fixture_session_policy_binds_to_fingerprint() -> None:
         FIXTURE_RANGE_START + timedelta(minutes=1),
         components,
         bars,
-        session_policy="OANDA_FX_NY_V2",
+            session_policy="OANDA_FX_NY_V1",
         alignment_convention=ALIGNMENT_CONVENTION,
     )
     assert fp_v1 != fp_alt
@@ -217,7 +217,7 @@ def test_daily_maintenance_window_v1_classifies_2159_to_2205_as_unavailable() ->
         cls, reason, version = OANDA_EUR_USD_POLICY.classify_minute(moment)
         formatted = moment.isoformat()
         assert cls == expected, f"{formatted} → {cls}/{reason}/{version}"
-        assert version == "OANDA_FX_NY_V1"
+        assert version == "OANDA_FX_NY_V2"
 
 
 def test_weekend_window_v1_classifies_friday_2159_through_monday_2205_as_unavailable(
@@ -235,7 +235,7 @@ def test_weekend_window_v1_classifies_friday_2159_through_monday_2205_as_unavail
     assert pre_weekend_open == (
         EXPECTED_DATA,
         "EXPECTED_PROVIDER_SESSION",
-        "OANDA_FX_NY_V1",
+        "OANDA_FX_NY_V2",
     ), "Fri 16:58 NY EST is still expected, before Friday close"
     weekend_samples = [
         datetime(2024, 1, 12, 21, 59, tzinfo=UTC),
@@ -249,14 +249,14 @@ def test_weekend_window_v1_classifies_friday_2159_through_monday_2205_as_unavail
             f"{moment.isoformat()} expected UNAVAILABLE_SESSION, got {cls}/{reason}"
         )
         assert reason == "WEEKLY_CLOSURE"
-        assert version == "OANDA_FX_NY_V1"
+        assert version == "OANDA_FX_NY_V2"
     sunday_reopen = OANDA_EUR_USD_POLICY.classify_minute(
         datetime(2024, 1, 14, 22, 5, tzinfo=UTC)
     )
     assert sunday_reopen == (
         EXPECTED_DATA,
         "EXPECTED_PROVIDER_SESSION",
-        "OANDA_FX_NY_V1",
+        "OANDA_FX_NY_V2",
     )
     monday_pre_maintenance = OANDA_EUR_USD_POLICY.classify_minute(
         datetime(2024, 1, 15, 21, 58, tzinfo=UTC)
@@ -264,7 +264,7 @@ def test_weekend_window_v1_classifies_friday_2159_through_monday_2205_as_unavail
     assert monday_pre_maintenance == (
         EXPECTED_DATA,
         "EXPECTED_PROVIDER_SESSION",
-        "OANDA_FX_NY_V1",
+        "OANDA_FX_NY_V2",
     ), "Mon 16:58 NY EST is expected — pre-maintenance minute"
 
 
@@ -298,32 +298,32 @@ def test_dst_transition_does_not_offset_v1_session_window() -> None:
     assert winter_pre == (
         EXPECTED_DATA,
         "EXPECTED_PROVIDER_SESSION",
-        "OANDA_FX_NY_V1",
+        "OANDA_FX_NY_V2",
     )
     assert winter_in == (
         UNAVAILABLE_SESSION,
         "PROVIDER_MAINTENANCE_ROLLOVER",
-        "OANDA_FX_NY_V1",
+        "OANDA_FX_NY_V2",
     )
     assert winter_post == (
         EXPECTED_DATA,
         "EXPECTED_PROVIDER_SESSION",
-        "OANDA_FX_NY_V1",
+        "OANDA_FX_NY_V2",
     )
     assert summer_pre == (
         EXPECTED_DATA,
         "EXPECTED_PROVIDER_SESSION",
-        "OANDA_FX_NY_V1",
+        "OANDA_FX_NY_V2",
     )
     assert summer_in == (
         UNAVAILABLE_SESSION,
         "PROVIDER_MAINTENANCE_ROLLOVER",
-        "OANDA_FX_NY_V1",
+        "OANDA_FX_NY_V2",
     )
     assert summer_post == (
         EXPECTED_DATA,
         "EXPECTED_PROVIDER_SESSION",
-        "OANDA_FX_NY_V1",
+        "OANDA_FX_NY_V2",
     )
     transition_day_open = OANDA_EUR_USD_POLICY.classify_minute(
         datetime(2026, 3, 9, 14, 0, tzinfo=UTC)

@@ -296,7 +296,10 @@ def test_v2_bulk_memberships_persist_representative_large_batch(
             Decimal("1.0990"),
             Decimal("1.1005"),
         )
-        for index in range(500)
+        # Full-year native M15 acquisition produces tens of thousands of
+        # analytical rows.  This crosses the bounded persistence batch size
+        # and guards against regressing to one oversized executemany payload.
+        for index in range(1_201)
     )
     end = start + timedelta(minutes=15 * len(analytical))
     gaps = tuple(
@@ -340,7 +343,7 @@ def test_v2_bulk_memberships_persist_representative_large_batch(
                 DatasetSnapshotAnalyticalBarModel.dataset_snapshot_id == snapshot.id
             )
         )
-        == 500
+        == 1_201
     )
     assert (
         session.scalar(

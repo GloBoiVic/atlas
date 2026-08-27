@@ -104,7 +104,13 @@ def test_http_status_poll_observes_running_while_run_is_gated(database_url):
 
 def test_create_and_read_contract_timestamps_are_utc_z(database_url):
     engine = configure_utc_session_timezone(create_engine(database_url))
-    experiment_id = _create(engine)
+    # This API contract request spans a full hour.  Keep its V2 fixture honest:
+    # execution membership must contain both native M1 quote components for
+    # every minute in the requested range, rather than the sparse trading
+    # fixture used by the execution-behavior tests.
+    with Session(engine) as session:
+        experiment_id, _, _ = _seed(session, "LONG", complete_execution=True)
+        session.commit()
     with Session(engine) as session:
         source = session.get(ExperimentModel, experiment_id)
         assert source is not None

@@ -44,6 +44,7 @@ from .models import (
 
 PERSISTED_M1_RESOLUTION = "M1"
 PERSISTED_M15_RESOLUTION = "M15"
+_SNAPSHOT_MEMBERSHIP_BATCH_SIZE = 1_000
 
 
 def _encode_m1_resolution(timeframe: Timeframe) -> str:
@@ -646,9 +647,17 @@ class DatasetSnapshotRepository:
                 for sequence, bar in enumerate(analytical, 1)
             ]
         if analytical_rows:
-            session.execute(
-                insert(DatasetSnapshotAnalyticalBarModel.__table__), analytical_rows
-            )
+            # Keep the immutable snapshot transaction atomic, but bound each
+            # PostgreSQL executemany payload.  A full-year native-M15 product
+            # can contain tens of thousands of rows; one unbounded payload
+            # exceeds the practical driver/server statement limits.
+            for offset in range(
+                0, len(analytical_rows), _SNAPSHOT_MEMBERSHIP_BATCH_SIZE
+            ):
+                session.execute(
+                    insert(DatasetSnapshotAnalyticalBarModel.__table__),
+                    analytical_rows[offset : offset + _SNAPSHOT_MEMBERSHIP_BATCH_SIZE],
+                )
         execution_rows = [
                 {
                     "dataset_snapshot_id": row.id,
@@ -662,16 +671,23 @@ class DatasetSnapshotRepository:
                 for sequence, (market_bar, bar) in enumerate(execution, 1)
             ]
         if execution_rows:
-            session.execute(
-                insert(DatasetSnapshotExecutionObservationModel.__table__),
-                execution_rows,
-            )
+            for offset in range(
+                0, len(execution_rows), _SNAPSHOT_MEMBERSHIP_BATCH_SIZE
+            ):
+                session.execute(
+                    insert(DatasetSnapshotExecutionObservationModel.__table__),
+                    execution_rows[offset : offset + _SNAPSHOT_MEMBERSHIP_BATCH_SIZE],
+                )
         gap_rows = [
                 {"dataset_snapshot_id": row.id, "sequence": sequence, **gap}
                 for sequence, gap in enumerate(gaps, 1)
             ]
         if gap_rows:
-            session.execute(insert(DatasetSnapshotGapModel.__table__), gap_rows)
+            for offset in range(0, len(gap_rows), _SNAPSHOT_MEMBERSHIP_BATCH_SIZE):
+                session.execute(
+                    insert(DatasetSnapshotGapModel.__table__),
+                    gap_rows[offset : offset + _SNAPSHOT_MEMBERSHIP_BATCH_SIZE],
+                )
         session.flush()
         return snapshot
 
