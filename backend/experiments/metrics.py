@@ -106,9 +106,11 @@ def calculate_metrics(
         if peak > 0:
             drawdown = peak - value
             drawdown_percent = drawdown / peak
-            # Amount and percentage describe the same peak-to-trough event.
+            # These are separate headline maxima.  The largest dollar loss and
+            # largest relative loss need not occur at the same trough.
             if drawdown > max_drawdown:
                 max_drawdown = drawdown
+            if drawdown_percent > max_drawdown_percent:
                 max_drawdown_percent = drawdown_percent
 
     completed = tuple(trade for trade in trades if trade.status == "COMPLETED")

@@ -5,11 +5,13 @@ from uuid import uuid4
 from backend.experiments.configuration import missing_analytical_frontiers
 from backend.experiments.runner import (
     ExperimentRunner,
+    FailureCategory,
     Phase4DiagnosticStage,
     Phase4RunnerComparisonDiagnostic,
     Phase4ValueErrorDiagnostic,
     _diagnostic_reason,
     classify_runner_value_error,
+    _failure_category_for_stage,
     result_quality_for_gaps,
     terminal_protection_observation,
 )
@@ -63,10 +65,63 @@ def test_result_quality_prioritizes_data_uncertainty_then_ambiguity() -> None:
     assert result_quality_for_gaps((gap,), (), start, end, ambiguous=True) == "DEGRADED"
 
 
-def test_accounting_invariant_has_explicit_failure_code() -> None:
-    category, code = classify_runner_value_error(ValueError("Trade and Position directions disagree"))
+def test_failure_classification_comes_from_typed_ownership_not_message_text() -> None:
+    category, code = classify_runner_value_error(
+        ValueError("Trade and Position directions disagree"),
+        category=FailureCategory.VALIDATION,
+        code="ACCOUNTING_INVARIANT",
+    )
     assert category.value == "VALIDATION"
     assert code == "ACCOUNTING_INVARIANT"
+    assert classify_runner_value_error(
+        ValueError("completely different wording"),
+        category=FailureCategory.VALIDATION,
+        code="ACCOUNTING_INVARIANT",
+    ) == (category, code)
+
+
+def test_runner_seams_have_narrow_failure_owners() -> None:
+    assert _failure_category_for_stage(Phase4DiagnosticStage.SNAPSHOT_MEMBER_LOAD) == FailureCategory.MARKET_DATA
+    assert _failure_category_for_stage(Phase4DiagnosticStage.DECISION_EVALUATION) == FailureCategory.STRATEGY
+    assert classify_runner_value_error(
+        ValueError("risk rejected"), category=FailureCategory.RISK, code="RISK_REJECTED"
+    ) == (FailureCategory.RISK, "RISK_REJECTED")
+    assert classify_runner_value_error(
+        ValueError("execution failed"), category=FailureCategory.EXECUTION, code="EXECUTION_REJECTED"
+    ) == (FailureCategory.EXECUTION, "EXECUTION_REJECTED")
+    assert classify_runner_value_error(
+        ValueError("sqlalchemy wording"), category=FailureCategory.PERSISTENCE, code="PERSISTENCE_FAILURE"
+    ) == (FailureCategory.PERSISTENCE, "PERSISTENCE_FAILURE")
+    # The broad engine fallback is deliberately validation-owned, not persistence.
+    assert FailureCategory.VALIDATION != FailureCategory.PERSISTENCE
+
+
+def test_v2_unexpected_engine_failure_is_not_persistence() -> None:
+    failures = []
+
+    class ExplodingStrategies:
+        def get_version(self, _session, _strategy_version_id):
+            raise RuntimeError("engine exploded outside the database")
+
+    class FailureRepository:
+        def mark_failed(self, _session, experiment_id, **kwargs):
+            failures.append((experiment_id, kwargs))
+
+    experiment = SimpleNamespace(id=uuid4(), status="RUNNING", strategy_version_id=uuid4())
+    runner = ExperimentRunner(
+        strategy_registry=SimpleNamespace(),
+        strategy_repository=ExplodingStrategies(),
+        experiment_repository=FailureRepository(),
+    )
+
+    result = runner._run_v2(SimpleNamespace(), experiment)
+
+    assert result.status == "FAILED"
+    assert result.failure is not None
+    assert result.failure.category is FailureCategory.VALIDATION
+    assert result.failure.code == "UNEXPECTED_ENGINE_FAILURE"
+    assert failures[0][1]["category"] == "VALIDATION"
+    assert failures[0][1]["code"] == "UNEXPECTED_ENGINE_FAILURE"
 
 
 def test_unknown_hostile_value_error_is_unclassified_and_not_emitted() -> None:

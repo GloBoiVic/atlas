@@ -41,9 +41,11 @@ def test_max_drawdown_percent_uses_peak_before_the_trough() -> None:
     assert metrics.max_drawdown_percent.value == Decimal(20) / Decimal(110)
 
 
-def test_drawdown_amount_and_percent_share_the_maximum_peak_to_trough_event() -> None:
+def test_drawdown_amount_and_percent_are_independent_maxima() -> None:
     metrics = calculate_metrics(
         [trade("5"), trade("-3")],
+        # 200 -> 150 is the largest dollar drawdown; 200 -> 150 is 25%,
+        # while 210 -> 180 is a smaller dollar loss but not the larger ratio.
         equity("100", "200", "150", "210", "180"),
         starting_equity=Decimal("100"),
     )
@@ -51,6 +53,16 @@ def test_drawdown_amount_and_percent_share_the_maximum_peak_to_trough_event() ->
     assert metrics.trade_count == 2
     assert metrics.max_drawdown_amount.value == Decimal("50")
     assert metrics.max_drawdown_percent.value == Decimal("0.25")
+
+
+def test_drawdown_maxima_do_not_share_a_required_peak_to_trough_event() -> None:
+    metrics = calculate_metrics(
+        [], equity("100", "50", "1000", "700"),
+        starting_equity=Decimal("100"),
+    )
+
+    assert metrics.max_drawdown_amount.value == Decimal("300")
+    assert metrics.max_drawdown_percent.value == Decimal("0.5")
 
 
 def test_sharpe_uses_final_equity_point_per_utc_day() -> None:

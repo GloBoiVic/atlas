@@ -2,12 +2,12 @@
 
 ## Status
 
-`APPROVED — implementation authorized with frozen Sharpe, canonical equity, result-quality, and completion-invariant decisions`
+`READY FOR MERGE APPROVAL — implementation authorized with frozen Sharpe, canonical equity, result-quality, and completion-invariant decisions`
 
 Branch: `solo/foundation-freeze-02-experiment-correctness`
 Base SHA: `eb64aa09dffdf001283cdf6bc5c9bb152d304b67`
-Current phase: `MERGE APPROVAL GATE`
-Next action: developer merge approval; then perform GIT END as the final workflow step.
+Current phase: `REVIEW PASSED`
+Next action: await explicit developer merge approval; do not begin Freeze 03.
 
 ## Authority and scope
 
@@ -47,7 +47,21 @@ defects, and Foundation Freeze 03.
   live PostgreSQL validation now has blockers. Merge approval is blocked.
 - `T008` BUILD: done — migration cycle and stale completed-fixture remediation.
 - VALIDATION passed against PostgreSQL; REVIEW passed.
-- VALIDATE/REVIEW: not started.
+- `T009` BUILD: done — added the direct unexpected-engine non-Persistence
+  regression required by VALIDATE.
+- T009 checks passed; VALIDATE must rerun the migration cycle, PostgreSQL
+  integration suite, non-integration suite, and independent review.
+- External review reopened Freeze 02; merge approval is blocked until remediation validation/review pass.
+
+T009 acceptance is explicitly limited to the external-review blockers: preserve
+canonical equity sampling while tracking amount and percentage drawdown maxima
+independently; classify failures from typed seam ownership rather than exception
+wording; retain narrow Strategy, Market Data, Risk, Execution,
+Validation/Accounting, and Persistence categories; and never label an unexpected
+non-database engine exception as Persistence. Required regressions cover the
+independent drawdown case, database/SQLAlchemy, Strategy, Risk rejection,
+Execution, accounting invariant, unexpected engine failure, and wording
+independence.
 
 ## Approval gate
 

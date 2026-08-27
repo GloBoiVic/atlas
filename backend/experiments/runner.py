@@ -40,6 +40,7 @@ from backend.execution.contract import ExecutionObservation, ExecutionRejected, 
 from backend.execution.fill_application import apply_fill
 from backend.execution.simulated import SimulatedExecutionAdapter
 from backend.market_data.aggregation import aggregate_m1_to_m15
+from backend.market_data.aggregation import AggregationError
 from backend.persistence.experiment_repository import ExperimentRepository
 from backend.persistence.market_data_repository import DatasetSnapshotRepository
 from backend.persistence.models import (
@@ -458,11 +459,13 @@ class ExperimentRunner:
         self, session: Session, experiment: ExperimentModel
     ) -> ExperimentRunResult:
         """Run V2 using native M15 input and sparse BID/ASK observations."""
+        stage = Phase4DiagnosticStage.PRECONDITIONS
         try:
             if experiment.status == "PENDING":
                 self.experiments.mark_running(session, experiment.id)
             elif experiment.status != "RUNNING":
                 raise ValueError("experiment is not pending or running")
+            stage = Phase4DiagnosticStage.STRATEGY_OBSERVATION_LOOP
             version_row = self.strategies.get_version(
                 session, experiment.strategy_version_id
             )
@@ -470,6 +473,7 @@ class ExperimentRunner:
                 raise ValueError("strategy version does not exist")
             version = version_to_domain(version_row)
             implementation = self.registry.implementation_for_version(version)
+            stage = Phase4DiagnosticStage.SNAPSHOT_MEMBER_LOAD
             snapshot = session.get(DatasetSnapshotModel, experiment.dataset_snapshot_id)
             if snapshot is None:
                 raise ValueError("dataset snapshot does not exist")
@@ -519,6 +523,7 @@ class ExperimentRunner:
                         row, instrument, venue, member.observation_fingerprint
                     )
                 )
+            stage = Phase4DiagnosticStage.CLOCK_CONSTRUCTION
             clock = SimulationClock(
                 execution_members,
                 analytical,
@@ -527,6 +532,7 @@ class ExperimentRunner:
                 required_historical_context_bars=version.required_historical_context_bars,
                 sparse_execution=True,
             )
+            stage = Phase4DiagnosticStage.FINANCIAL_PROJECTION_LOAD
             account = session.scalar(
                 select(ExperimentAccountModel).where(
                     ExperimentAccountModel.experiment_id == experiment.id
@@ -551,6 +557,7 @@ class ExperimentRunner:
             decisions = tuple(
                 frame for frame in frames if frame.phase is ClockPhase.DECISION
             )
+            stage = Phase4DiagnosticStage.STRATEGY_OBSERVATION_LOOP
             for frame in frames:
                 if frame.phase is ClockPhase.WARMUP:
                     history.append(frame.decision_bar)
@@ -829,8 +836,15 @@ class ExperimentRunner:
                 session, experiment, FailureCategory.PERSISTENCE,
                 "PERSISTENCE_FAILURE", "Experiment persistence failed",
             )
+        except AggregationError as error:
+            return self._fail(
+                session, experiment, FailureCategory.MARKET_DATA,
+                "MARKET_DATA_INVALID", _safe_failure_detail(error, "Market data is invalid"),
+            )
         except ValueError as error:
-            category, code = classify_runner_value_error(error)
+            category, code = classify_runner_value_error(
+                error, category=_failure_category_for_stage(stage)
+            )
             return self._fail(
                 session,
                 experiment,
@@ -842,9 +856,9 @@ class ExperimentRunner:
             return self._fail(
                 session,
                 experiment,
-                FailureCategory.PERSISTENCE,
-                "PERSISTENCE_FAILURE",
-                "Experiment persistence failed",
+                FailureCategory.VALIDATION,
+                "UNEXPECTED_ENGINE_FAILURE",
+                "Unexpected experiment engine failure",
             )
 
     def _record_execution_gap(self, session, experiment, frontier):
@@ -1209,21 +1223,23 @@ class ExperimentRunner:
             )
             self._emit_terminal_comparison(comparison, stage, result)
             return result
+        except SQLAlchemyError:
+            result = self._fail(
+                session, experiment, FailureCategory.PERSISTENCE,
+                "PERSISTENCE_FAILURE", "Experiment persistence failed",
+            )
+            self._emit_terminal_comparison(comparison, stage, result)
+            return result
         except ValueError as error:
             self._emit_value_error_diagnostic(experiment, stage, error)
-            category = (
-                FailureCategory.MARKET_DATA
-                if any(
-                    word in str(error).lower()
-                    for word in ("snapshot", "m1", "bar", "market", "quote")
-                )
-                else FailureCategory.VALIDATION
+            category, code = classify_runner_value_error(
+                error, category=_failure_category_for_stage(stage)
             )
             result = self._fail(
                 session,
                 experiment,
                 category,
-                "INVALID_INPUT",
+                code,
                 "Experiment could not be run",
             )
             self._emit_terminal_comparison(comparison, stage, result)
@@ -1232,9 +1248,9 @@ class ExperimentRunner:
             result = self._fail(
                 session,
                 experiment,
-                FailureCategory.PERSISTENCE,
-                "PERSISTENCE_FAILURE",
-                "Experiment persistence failed",
+                FailureCategory.VALIDATION,
+                "UNEXPECTED_ENGINE_FAILURE",
+                "Unexpected experiment engine failure",
             )
             self._emit_terminal_comparison(comparison, stage, result)
             return result
@@ -1670,7 +1686,7 @@ class ExperimentRunner:
             ),
             obs,
         )
-        apply_fill(
+        self._apply_fill(
             session,
             FillModel(
                 order_id=fill.order_id,
@@ -1820,7 +1836,7 @@ class ExperimentRunner:
     def _apply_exit_fill(
         self, session, experiment, position, order, fill, commission, decision=None
     ):
-        apply_fill(
+        self._apply_fill(
             session,
             FillModel(
                 order_id=fill.order_id,
@@ -2249,7 +2265,7 @@ class ExperimentRunner:
             ),
             observation,
         )
-        apply_fill(
+        self._apply_fill(
             session,
             FillModel(
                 order_id=fill.order_id,
@@ -2289,7 +2305,7 @@ class ExperimentRunner:
                 if error.code.value == "UNSUPPORTED_PHASE3_INTRABAR_TRIGGER":
                     raise
                 continue
-            apply_fill(
+            self._apply_fill(
                 session,
                 FillModel(
                     order_id=exit_fill.order_id,
@@ -2351,6 +2367,20 @@ class ExperimentRunner:
             ExperimentFailure(category, code, sanitized_detail),
         )
 
+    @staticmethod
+    def _apply_fill(session, fill, **kwargs):
+        """Keep fill/accounting validation owned by the accounting seam."""
+        try:
+            return apply_fill(session, fill, **kwargs)
+        except ValueError as error:
+            raise ExperimentFailureError(
+                ExperimentFailure(
+                    FailureCategory.VALIDATION,
+                    "ACCOUNTING_INVARIANT",
+                    _safe_failure_detail(error, "Accounting invariant failed"),
+                )
+            ) from error
+
 
 class ExperimentFailureError(Exception):
     def __init__(self, failure: ExperimentFailure):
@@ -2362,18 +2392,32 @@ def _safe_failure_detail(error: BaseException, fallback: str) -> str:
     return detail or fallback
 
 
-def classify_runner_value_error(error: ValueError) -> tuple[FailureCategory, str]:
-    """Classify known simulation invariant failures without a framework."""
-    text = str(error).lower()
-    invariant_terms = (
-        "fill ", "trade ", "position", "financial projections",
-        "fill sequence", "direction", "cannot receive another fill",
-    )
-    if any(term in text for term in invariant_terms):
-        return FailureCategory.VALIDATION, "ACCOUNTING_INVARIANT"
-    if any(word in text for word in ("snapshot", "market", "quote", "history", "observation")):
-        return FailureCategory.MARKET_DATA, "MARKET_DATA_INVALID"
-    return FailureCategory.VALIDATION, "INVALID_INPUT"
+def _failure_category_for_stage(stage: Phase4DiagnosticStage) -> FailureCategory:
+    """Map the typed runner seam, rather than exception text, to ownership."""
+    if stage in {
+        Phase4DiagnosticStage.SNAPSHOT_MEMBER_LOAD,
+        Phase4DiagnosticStage.M15_AGGREGATION,
+        Phase4DiagnosticStage.CLOCK_CONSTRUCTION,
+        Phase4DiagnosticStage.CLOCK_MATERIALIZATION,
+    }:
+        return FailureCategory.MARKET_DATA
+    if stage in {
+        Phase4DiagnosticStage.WARMUP_EVALUATION,
+        Phase4DiagnosticStage.DECISION_EVALUATION,
+        Phase4DiagnosticStage.STRATEGY_OBSERVATION_LOOP,
+    }:
+        return FailureCategory.STRATEGY
+    return FailureCategory.VALIDATION
+
+
+def classify_runner_value_error(
+    error: ValueError,
+    *,
+    category: FailureCategory = FailureCategory.VALIDATION,
+    code: str | None = None,
+) -> tuple[FailureCategory, str]:
+    """Classify a value error from its typed seam ownership, never its text."""
+    return category, code or "INVALID_INPUT"
 
 
 __all__ = [
