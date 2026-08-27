@@ -233,7 +233,7 @@ class FakeStrategies:
             implementation_key="ema_sweep_engulfing.v2",
             parameter_schema=[], primary_timeframe="15m",
             required_historical_context_bars=100,
-            state_schema_version=1, created_at=UTC_START,
+            state_schema_version=2, created_at=UTC_START,
         )
 
 

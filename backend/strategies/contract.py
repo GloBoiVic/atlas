@@ -106,7 +106,9 @@ def validate_registration(registration: StrategyRegistration) -> None:
     if len(keys) != len(set(keys)):
         raise StrategyContractError("parameter_schema keys must be unique")
     if definition.primary_timeframe is not definition.required_resolution:
-        raise StrategyContractError("primary timeframe must match analytical resolution")
+        raise StrategyContractError(
+            "primary timeframe must match analytical resolution"
+        )
     if definition.required_resolution is not Timeframe.M15:
         raise StrategyContractError("only 15m is supported")
     if (

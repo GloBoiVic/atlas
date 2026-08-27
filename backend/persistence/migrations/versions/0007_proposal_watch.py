@@ -1,4 +1,6 @@
 """Persist generic Strategy proposal watch facts."""
+
+# ruff: noqa: E501
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
@@ -19,7 +21,7 @@ def upgrade() -> None:
     op.create_check_constraint("valid_entry_policy", "trade_intents", "entry_policy IN ('IMMEDIATE','PRICE_TRIGGERED')")
     op.create_check_constraint("valid_trigger_price", "trade_intents", "trigger_price IS NULL OR (trigger_price > 0 AND trigger_price <> 'NaN'::numeric)")
     op.create_check_constraint("valid_proposal_status", "trade_intents", "proposal_status IN ('PENDING','FILLED','EXPIRED','REJECTED')")
-    op.create_check_constraint("entry_policy_shape", "trade_intents", "(entry_policy = 'IMMEDIATE' AND trigger_price IS NULL AND expiry_time IS NULL) OR (entry_policy = 'PRICE_TRIGGERED' AND trigger_price IS NOT NULL AND expiry_time IS NOT NULL)")
+    op.create_check_constraint("entry_policy_shape", "trade_intents", "(entry_policy = 'IMMEDIATE' AND trigger_price IS NULL AND expiry_time IS NULL) OR (entry_policy = 'PRICE_TRIGGERED' AND trigger_price IS NOT NULL AND expiry_time IS NULL)")
     op.create_table("experiment_proposal_diagnostics",
         sa.Column("experiment_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("sequence", sa.BigInteger(), nullable=False),

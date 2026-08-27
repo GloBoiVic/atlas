@@ -1,5 +1,7 @@
 """PostgreSQL receipts for the Fill-only financial transition boundary."""
 
+# ruff: noqa: E501
+
 import os
 from collections.abc import Generator
 from datetime import UTC, datetime, timedelta
@@ -59,7 +61,7 @@ def _seed(session: Session) -> tuple[ExperimentModel, OrderModel]:
         capabilities=[], source_manifest=[], exact_source_snapshot={},
         primary_timeframe="M15",
         required_historical_context_bars=100,
-        state_schema_version=1,
+        state_schema_version=2,
     )
     instrument = InstrumentModel(
         code="EUR/USD", base_currency="EUR", quote_currency="USD"

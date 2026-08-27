@@ -60,7 +60,7 @@ def _version(fingerprint: str, identifier: UUID | None = None) -> StrategyVersio
         ),
         primary_timeframe=Timeframe.M15,
         required_historical_context_bars=100,
-        state_schema_version=1,
+        state_schema_version=2,
         created_at=datetime.now(UTC),
     )
 

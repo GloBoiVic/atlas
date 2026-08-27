@@ -46,17 +46,18 @@ def test_configuration_rejects_negative_simulation_values_at_boundary() -> None:
         simulation_config(slippage_ticks=-1, commission_per_unit=Decimal("0"))
 
 
-def test_production_registration_archives_once_and_evaluation_has_no_path_input(
-) -> None:
+def test_production_registration_archives_once_and_evaluation_has_no_path_input() -> (
+    None
+):
     registry = create_production_strategy_registry(Path(__file__).parents[3])
     entry = registry.get(
         "ema_sweep_confirmation_break",
-        implementation_key="ema_sweep_confirmation_break.v1",
+        implementation_key="ema_sweep_confirmation_break.v2",
     )
     assert entry.source_archive.fingerprint
     assert tuple(registry.catalog()) == (entry,)
     assert (
         entry.implementation.definition.implementation_key
-        == "ema_sweep_confirmation_break.v1"
+        == "ema_sweep_confirmation_break.v2"
     )
     assert entry.implementation.definition.name == "EMA Sweep Confirmation Break"
