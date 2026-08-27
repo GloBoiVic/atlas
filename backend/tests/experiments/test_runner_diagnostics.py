@@ -2,6 +2,8 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
 
+import pytest
+
 from backend.experiments.configuration import missing_analytical_frontiers
 from backend.experiments.runner import (
     ExperimentRunner,
@@ -10,12 +12,13 @@ from backend.experiments.runner import (
     Phase4RunnerComparisonDiagnostic,
     Phase4ValueErrorDiagnostic,
     _diagnostic_reason,
-    classify_runner_value_error,
     _failure_category_for_stage,
+    classify_runner_value_error,
     result_quality_for_gaps,
     terminal_protection_observation,
 )
 from backend.market_data.session_calendar import eligible_m15_windows
+from backend.strategies.registry import StrategyVersionUnavailableError
 
 
 def test_known_value_error_diagnostic_has_only_closed_fields() -> None:
@@ -81,16 +84,26 @@ def test_failure_classification_comes_from_typed_ownership_not_message_text() ->
 
 
 def test_runner_seams_have_narrow_failure_owners() -> None:
-    assert _failure_category_for_stage(Phase4DiagnosticStage.SNAPSHOT_MEMBER_LOAD) == FailureCategory.MARKET_DATA
-    assert _failure_category_for_stage(Phase4DiagnosticStage.DECISION_EVALUATION) == FailureCategory.STRATEGY
+    assert (
+        _failure_category_for_stage(Phase4DiagnosticStage.SNAPSHOT_MEMBER_LOAD)
+        == FailureCategory.MARKET_DATA
+    )
+    assert (
+        _failure_category_for_stage(Phase4DiagnosticStage.DECISION_EVALUATION)
+        == FailureCategory.STRATEGY
+    )
     assert classify_runner_value_error(
         ValueError("risk rejected"), category=FailureCategory.RISK, code="RISK_REJECTED"
     ) == (FailureCategory.RISK, "RISK_REJECTED")
     assert classify_runner_value_error(
-        ValueError("execution failed"), category=FailureCategory.EXECUTION, code="EXECUTION_REJECTED"
+        ValueError("execution failed"),
+        category=FailureCategory.EXECUTION,
+        code="EXECUTION_REJECTED",
     ) == (FailureCategory.EXECUTION, "EXECUTION_REJECTED")
     assert classify_runner_value_error(
-        ValueError("sqlalchemy wording"), category=FailureCategory.PERSISTENCE, code="PERSISTENCE_FAILURE"
+        ValueError("sqlalchemy wording"),
+        category=FailureCategory.PERSISTENCE,
+        code="PERSISTENCE_FAILURE",
     ) == (FailureCategory.PERSISTENCE, "PERSISTENCE_FAILURE")
     # The broad engine fallback is deliberately validation-owned, not persistence.
     assert FailureCategory.VALIDATION != FailureCategory.PERSISTENCE
@@ -107,7 +120,9 @@ def test_v2_unexpected_engine_failure_is_not_persistence() -> None:
         def mark_failed(self, _session, experiment_id, **kwargs):
             failures.append((experiment_id, kwargs))
 
-    experiment = SimpleNamespace(id=uuid4(), status="RUNNING", strategy_version_id=uuid4())
+    experiment = SimpleNamespace(
+        id=uuid4(), status="RUNNING", strategy_version_id=uuid4()
+    )
     runner = ExperimentRunner(
         strategy_registry=SimpleNamespace(),
         strategy_repository=ExplodingStrategies(),
@@ -122,6 +137,80 @@ def test_v2_unexpected_engine_failure_is_not_persistence() -> None:
     assert result.failure.code == "UNEXPECTED_ENGINE_FAILURE"
     assert failures[0][1]["category"] == "VALIDATION"
     assert failures[0][1]["code"] == "UNEXPECTED_ENGINE_FAILURE"
+
+
+@pytest.mark.parametrize("error", [KeyError("unrelated"), IndexError("unrelated")])
+def test_v2_unrelated_lookup_errors_are_not_strategy_version_unavailable(error) -> None:
+    class Strategies:
+        def get_version(self, _session, _strategy_version_id):
+            return object()
+
+    class Registry:
+        def implementation_for_version(self, _version):
+            raise error
+
+    class FailureRepository:
+        def mark_failed(self, _session, _experiment_id, **_kwargs):
+            return None
+
+    experiment = SimpleNamespace(
+        id=uuid4(), status="RUNNING", strategy_version_id=uuid4()
+    )
+    runner = ExperimentRunner(
+        strategy_registry=Registry(),
+        strategy_repository=Strategies(),
+        experiment_repository=FailureRepository(),
+    )
+
+    # The database/domain conversion is not part of this seam regression.
+    import backend.experiments.runner as runner_module
+
+    original = runner_module.version_to_domain
+    runner_module.version_to_domain = lambda row: row
+    try:
+        result = runner._run_v2(SimpleNamespace(), experiment)
+    finally:
+        runner_module.version_to_domain = original
+
+    assert result.failure is not None
+    assert result.failure.code == "UNEXPECTED_ENGINE_FAILURE"
+    assert result.failure.code != "STRATEGY_VERSION_UNAVAILABLE"
+
+
+def test_v2_registry_unavailability_is_strategy_version_unavailable() -> None:
+    class Strategies:
+        def get_version(self, _session, _strategy_version_id):
+            return object()
+
+    class Registry:
+        def implementation_for_version(self, _version):
+            raise StrategyVersionUnavailableError("not registered")
+
+    class FailureRepository:
+        def mark_failed(self, _session, _experiment_id, **_kwargs):
+            return None
+
+    experiment = SimpleNamespace(
+        id=uuid4(), status="RUNNING", strategy_version_id=uuid4()
+    )
+    runner = ExperimentRunner(
+        strategy_registry=Registry(),
+        strategy_repository=Strategies(),
+        experiment_repository=FailureRepository(),
+    )
+
+    import backend.experiments.runner as runner_module
+
+    original = runner_module.version_to_domain
+    runner_module.version_to_domain = lambda row: row
+    try:
+        result = runner._run_v2(SimpleNamespace(), experiment)
+    finally:
+        runner_module.version_to_domain = original
+
+    assert result.failure is not None
+    assert result.failure.category is FailureCategory.STRATEGY
+    assert result.failure.code == "STRATEGY_VERSION_UNAVAILABLE"
 
 
 def test_unknown_hostile_value_error_is_unclassified_and_not_emitted() -> None:

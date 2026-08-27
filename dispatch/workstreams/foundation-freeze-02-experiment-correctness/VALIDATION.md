@@ -8,75 +8,38 @@ Status: `PASS`
 - **WORKSTREAM:** foundation-freeze-02-experiment-correctness
 - **BRANCH:** `solo/foundation-freeze-02-experiment-correctness`
 - **CWD:** `/Users/vike/Desktop/atlas`
-- **Validated:** complete branch after T009 continuation
+- **Validated:** fresh independent validation of the approved final T009 correction
 
-All database-backed commands below used the exact command-scoped variables
+All database-backed commands used the exact command-scoped variables
 `ATLAS_TEST_DATABASE_URL='postgresql+psycopg://atlas:atlas@127.0.0.1:5432/atlas_test'`
-and `ATLAS_DATABASE_URL='postgresql+psycopg://atlas:atlas@127.0.0.1:5432/atlas_test'`;
-no credentials were persisted. Validation changed only this artifact.
+and `ATLAS_DATABASE_URL='postgresql+psycopg://atlas:atlas@127.0.0.1:5432/atlas_test'`.
+No credentials were persisted. Only this artifact was modified by VALIDATE.
 
-## Commands and complete results
+## Checks and complete results
 
-Executed sequentially where tests reset the shared PostgreSQL schema:
+Executed sequentially because the PostgreSQL tests reset the shared schema:
 
-1. `ATLAS_TEST_DATABASE_URL='postgresql+psycopg://atlas:atlas@127.0.0.1:5432/atlas_test' ATLAS_DATABASE_URL='postgresql+psycopg://atlas:atlas@127.0.0.1:5432/atlas_test' pytest -q backend/tests/integration/test_migrations.py`
-   — **PASS:** `2 passed in 3.37s` (PostgreSQL upgrade → downgrade → upgrade).
-2. `ATLAS_TEST_DATABASE_URL='postgresql+psycopg://atlas:atlas@127.0.0.1:5432/atlas_test' ATLAS_DATABASE_URL='postgresql+psycopg://atlas:atlas@127.0.0.1:5432/atlas_test' pytest -q backend/tests/integration`
-   — **PASS:** `37 passed, 4 warnings in 78.25s (0:01:18)`.
-3. `ATLAS_TEST_DATABASE_URL='postgresql+psycopg://atlas:atlas@127.0.0.1:5432/atlas_test' ATLAS_DATABASE_URL='postgresql+psycopg://atlas:atlas@127.0.0.1:5432/atlas_test' pytest -q backend/tests -m 'not integration'`
-   — **PASS:** `291 passed, 1 skipped, 39 deselected, 4 warnings in 74.89s (0:01:14)`.
-4. `pytest -q backend/tests/experiments/test_metrics.py backend/tests/experiments/test_runner_diagnostics.py`
-   — **PASS:** `24 passed in 0.81s`.
-5. `pytest -q backend/tests/experiments`
-   — **PASS:** `81 passed in 70.36s (0:01:10)`.
-6. `pytest -q backend/tests/test_migration_revision.py`
-   — **PASS:** `1 passed in 0.75s`.
-7. `python -m compileall -q backend`
-   — **PASS:** no output/errors.
-8. `git diff --check`
-   — **PASS:** no output/errors.
-9. `ATLAS_TEST_DATABASE_URL='postgresql+psycopg://atlas:atlas@127.0.0.1:5432/atlas_test' ATLAS_DATABASE_URL='postgresql+psycopg://atlas:atlas@127.0.0.1:5432/atlas_test' alembic heads`
-   — **PASS:** `0014_result_metric_state_details (head)`; exactly one head.
+1. Migration cycle: `pytest -q backend/tests/integration/test_migrations.py` — **PASS**, `2 passed in 4.13s` (upgrade → downgrade → upgrade).
+2. PostgreSQL integration suite: `pytest -q backend/tests/integration` — **PASS**, `37 passed, 4 warnings in 78.46s`.
+3. Non-integration suite: `pytest -q backend/tests -m 'not integration'` — **PASS**, `294 passed, 1 skipped, 39 deselected, 4 warnings in 74.88s`.
+4. Focused diagnostics/metrics: `pytest -q backend/tests/experiments/test_metrics.py backend/tests/experiments/test_runner_diagnostics.py` — **PASS**, `27 passed in 0.63s`.
+5. Full experiments suite: `pytest -q backend/tests/experiments` — **PASS**, `84 passed in 66.87s`.
+6. Migration revision: `pytest -q backend/tests/test_migration_revision.py` — **PASS**, `1 passed in 0.42s`.
+7. Compile: `python -m compileall -q backend` — **PASS**, no output/errors.
+8. Formatting: `git diff --check` — **PASS**, no output/errors.
+9. Alembic heads: `alembic heads` with the exact scoped variables — **PASS**, `0014_result_metric_state_details (head)`; exactly one head.
 
-## T009 contract and diff verification
+## T009 contract verification
 
-- Actual application/test diff is limited to `backend/experiments/metrics.py`,
-  `backend/experiments/runner.py`, `backend/tests/experiments/test_metrics.py`,
-  and `backend/tests/experiments/test_runner_diagnostics.py` (plus workstream
-  coordination artifacts). Drawdown amount and percentage are independent
-  maxima over `tuple(equity_points)` in canonical persisted order; no timestamp
-  sorting was introduced.
-- Typed seam ownership is explicit: Strategy, Market Data, Risk, Execution,
-  Validation/Accounting, and Persistence retain narrow categories. SQLAlchemy
-  failures map to `PERSISTENCE`; accounting fill `ValueError` is wrapped as
-  `VALIDATION` / `ACCOUNTING_INVARIANT`; unexpected non-database failures map to
-  `VALIDATION` / `UNEXPECTED_ENGINE_FAILURE`. Classification does not inspect
-  exception wording.
-- The new regression directly invokes `ExperimentRunner._run_v2` with a typed
-  strategy repository whose `get_version` raises `RuntimeError`. It asserts the
-  returned failure is `status == FAILED`, category `FailureCategory.VALIDATION`,
-  code `UNEXPECTED_ENGINE_FAILURE`, and that durable `mark_failed` receives
-  `VALIDATION` and `UNEXPECTED_ENGINE_FAILURE`; it therefore proves the failure
-  is not classified as `PERSISTENCE`.
-- Focused regressions cover independent drawdown maxima, wording-independent
-  classification, typed category owners, SQLAlchemy/Persistence, Strategy, Risk
-  rejection, Execution, accounting invariant, and the direct unexpected-engine
-  fallback. All focused, experiment, integration, and non-integration suites
-  pass.
+- Actual diff confirms `_run_v2` catches only `StrategyVersionUnavailableError` around `implementation_for_version`; unrelated `KeyError` and `IndexError` reach `UNEXPECTED_ENGINE_FAILURE`, not `STRATEGY_VERSION_UNAVAILABLE`.
+- Stage ownership advances through Strategy lookup/evaluation, snapshot and clock Market Data, entry/protection/accounting/equity, and result/metrics/completion seams. Typed accounting failures remain Validation-owned; SQLAlchemy remains Persistence-owned; classification does not inspect exception wording.
+- Drawdown correction remains unchanged: amount and percentage are independently maximized over canonical persisted equity sequence order, with no timestamp sorting.
+- Direct regressions exercise both registry unavailability and unrelated lookup errors through `_run_v2`, durable unexpected-engine failure handling, independent drawdown maxima, wording-independent classification, seam owners, Risk rejection, Execution, accounting invariant, SQLAlchemy/Persistence, and result/completion behavior. Normal Risk rejection remains a persisted `RiskDecision`, not a terminal experiment failure.
 
-## Warnings and limitations
+## Warnings and concerns
 
-Tests emitted four existing warnings: one Starlette/httpx deprecation warning
-and three `PytestUnknownMarkWarning` warnings for the existing `price_analysis`
-mark. They did not fail tests and are not validation blockers. One
-non-integration test was skipped; 39 integration-marked tests were deselected
-by the requested selector. PostgreSQL was available. The working tree also
-contains unowned/pre-existing changes and untracked `.codegraph/`,
-`frontend/.env.local`, and the T009 task receipt; none were modified or
-included in this validation artifact.
+Four existing warnings appeared (Starlette/httpx deprecation and three unknown `price_analysis` marks); none failed validation. One non-integration test was skipped and 39 integration-marked tests were deselected by the requested selector. Pre-existing/unowned changes remain in the worktree (`PLAN.md`, `.codegraph/`, `frontend/.env.local`, and T009 receipt); they were not modified.
 
 ## Disposition
 
-`PASS` — T009 implementation and required direct `_run_v2` unexpected-engine
-regression are verified, all requested checks pass, and only `VALIDATION.md`
-was modified by VALIDATE.
+`PASS` — required T009 behavior and regressions are verified; every requested diagnostic, experiment, PostgreSQL, migration, compile, head, and diff check passed.

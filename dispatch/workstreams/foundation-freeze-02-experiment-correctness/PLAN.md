@@ -2,7 +2,7 @@
 
 ## Status
 
-`READY FOR MERGE APPROVAL — implementation authorized with frozen Sharpe, canonical equity, result-quality, and completion-invariant decisions`
+`READY FOR MERGE APPROVAL — final failure-ownership correction complete; prior drawdown remediation remains approved`
 
 Branch: `solo/foundation-freeze-02-experiment-correctness`
 Base SHA: `eb64aa09dffdf001283cdf6bc5c9bb152d304b67`
@@ -51,6 +51,14 @@ defects, and Foundation Freeze 03.
   regression required by VALIDATE.
 - T009 checks passed; VALIDATE must rerun the migration cycle, PostgreSQL
   integration suite, non-integration suite, and independent review.
+- Final external review correction: scope Strategy implementation lookup handling
+  to the registry seam; unrelated KeyError/IndexError must not become
+  STRATEGY_VERSION_UNAVAILABLE. V2 stage ownership must advance across snapshot,
+  clock, Strategy, entry/protection/accounting/equity, and completion seams so
+  ValueError cannot inherit stale Strategy ownership. Required regressions cover
+  Strategy, Market Data, accounting, completion/metrics, SQLAlchemy, unrelated
+  LookupError, and unexpected engine failure. Normal Risk rejection remains a
+  persisted RiskDecision, not a terminal failure.
 - External review reopened Freeze 02; merge approval is blocked until remediation validation/review pass.
 
 T009 acceptance is explicitly limited to the external-review blockers: preserve

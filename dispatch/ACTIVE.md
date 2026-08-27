@@ -2,7 +2,7 @@
 
 `foundation-freeze-02-experiment-correctness` — CRITICAL / ARCHITECTURE
 
-Status: external review remediation validated and reviewed; awaiting explicit merge approval.
+Status: final failure-ownership remediation validated and reviewed; awaiting explicit merge approval.
 Branch: `solo/foundation-freeze-02-experiment-correctness`
 Base SHA: `eb64aa09dffdf001283cdf6bc5c9bb152d304b67`
 Current phase: REVIEW PASSED

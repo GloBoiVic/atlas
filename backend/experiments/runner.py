@@ -79,8 +79,11 @@ from backend.risk.service import (
 from backend.strategies.contract import evaluate_strategy
 from backend.strategies.contract import StrategyContractError, StrategyEvaluationError
 from backend.domain.strategy import StateError, VersionError
-from backend.execution.contract import ExecutionInputError, ExecutionRejected
-from backend.strategies.registry import StrategyRegistry
+from backend.execution.contract import ExecutionInputError
+from backend.strategies.registry import (
+    StrategyRegistry,
+    StrategyVersionUnavailableError,
+)
 
 from .clock import ClockFrame, ClockPhase, M1Observation, SimulationClock
 from .metric_contract import (
@@ -460,20 +463,35 @@ class ExperimentRunner:
     ) -> ExperimentRunResult:
         """Run V2 using native M15 input and sparse BID/ASK observations."""
         stage = Phase4DiagnosticStage.PRECONDITIONS
+
+        def mark(value: Phase4DiagnosticStage) -> None:
+            nonlocal stage
+            stage = value
+
         try:
             if experiment.status == "PENDING":
                 self.experiments.mark_running(session, experiment.id)
             elif experiment.status != "RUNNING":
                 raise ValueError("experiment is not pending or running")
-            stage = Phase4DiagnosticStage.STRATEGY_OBSERVATION_LOOP
+            mark(Phase4DiagnosticStage.PRECONDITIONS)
             version_row = self.strategies.get_version(
                 session, experiment.strategy_version_id
             )
             if version_row is None:
                 raise ValueError("strategy version does not exist")
             version = version_to_domain(version_row)
-            implementation = self.registry.implementation_for_version(version)
-            stage = Phase4DiagnosticStage.SNAPSHOT_MEMBER_LOAD
+            mark(Phase4DiagnosticStage.STRATEGY_OBSERVATION_LOOP)
+            try:
+                implementation = self.registry.implementation_for_version(version)
+            except StrategyVersionUnavailableError as error:
+                raise ExperimentFailureError(
+                    ExperimentFailure(
+                        FailureCategory.STRATEGY,
+                        "STRATEGY_VERSION_UNAVAILABLE",
+                        "Verified StrategyVersion implementation unavailable",
+                    )
+                ) from error
+            mark(Phase4DiagnosticStage.SNAPSHOT_MEMBER_LOAD)
             snapshot = session.get(DatasetSnapshotModel, experiment.dataset_snapshot_id)
             if snapshot is None:
                 raise ValueError("dataset snapshot does not exist")
@@ -523,7 +541,7 @@ class ExperimentRunner:
                         row, instrument, venue, member.observation_fingerprint
                     )
                 )
-            stage = Phase4DiagnosticStage.CLOCK_CONSTRUCTION
+            mark(Phase4DiagnosticStage.CLOCK_CONSTRUCTION)
             clock = SimulationClock(
                 execution_members,
                 analytical,
@@ -532,7 +550,7 @@ class ExperimentRunner:
                 required_historical_context_bars=version.required_historical_context_bars,
                 sparse_execution=True,
             )
-            stage = Phase4DiagnosticStage.FINANCIAL_PROJECTION_LOAD
+            mark(Phase4DiagnosticStage.FINANCIAL_PROJECTION_LOAD)
             account = session.scalar(
                 select(ExperimentAccountModel).where(
                     ExperimentAccountModel.experiment_id == experiment.id
@@ -546,6 +564,7 @@ class ExperimentRunner:
             if account is None or position is None:
                 raise ValueError("experiment financial projections are missing")
             # V2 policy: initial account boundary, then each eligible M1 close.
+            mark(Phase4DiagnosticStage.EQUITY_SAMPLING)
             self._sample_equity(session, experiment, account, position, None, 0)
             params, state, history = (
                 _parameters(experiment.parameter_snapshot),
@@ -557,9 +576,10 @@ class ExperimentRunner:
             decisions = tuple(
                 frame for frame in frames if frame.phase is ClockPhase.DECISION
             )
-            stage = Phase4DiagnosticStage.STRATEGY_OBSERVATION_LOOP
+            mark(Phase4DiagnosticStage.STRATEGY_OBSERVATION_LOOP)
             for frame in frames:
                 if frame.phase is ClockPhase.WARMUP:
+                    mark(Phase4DiagnosticStage.WARMUP_EVALUATION)
                     history.append(frame.decision_bar)
                     state = evaluate_strategy(
                         implementation,
@@ -640,6 +660,7 @@ class ExperimentRunner:
                                 executable = replace(executable, ask_open=price)
                             else:
                                 executable = replace(executable, bid_open=price)
+                            mark(Phase4DiagnosticStage.ENTRY_ATTEMPT)
                             filled = self._attempt_entry(
                                 session,
                                 experiment,
@@ -657,10 +678,12 @@ class ExperimentRunner:
                             pending = None
                             if filled:
                                 return
+                mark(Phase4DiagnosticStage.PROTECTION_APPLICATION)
                 self._apply_protection(
                     session, experiment, position, observation, commission
                 )
                 if not (observation is observations[-1] and position.state != "FLAT"):
+                    mark(Phase4DiagnosticStage.EQUITY_SAMPLING)
                     self._sample_equity(
                         session, experiment, account, position, observation, None
                     )
@@ -674,6 +697,7 @@ class ExperimentRunner:
                     observation_index += 1
                 # Every native frontier is evaluated exactly once, regardless
                 # of sparse execution availability.
+                mark(Phase4DiagnosticStage.DECISION_EVALUATION)
                 history.append(frame.decision_bar)
                 evaluation = evaluate_strategy(
                     implementation,
@@ -690,6 +714,7 @@ class ExperimentRunner:
                 state = evaluation.next_state
                 if evaluation.decision.action in (Action.OPEN_LONG, Action.OPEN_SHORT):
                     decision = evaluation.decision
+                    mark(Phase4DiagnosticStage.ENTRY_ATTEMPT)
                     intent_row = self._create_intent(
                         session, experiment, version.id, frame, decision
                     )
@@ -728,6 +753,7 @@ class ExperimentRunner:
                                 commission,
                                 intent_row=intent_row,
                             )
+                            mark(Phase4DiagnosticStage.PROTECTION_APPLICATION)
                             self._apply_protection(
                                 session, experiment, position, observation, commission
                             )
@@ -735,6 +761,7 @@ class ExperimentRunner:
                                 observation is observations[-1]
                                 and position.state != "FLAT"
                             ):
+                                mark(Phase4DiagnosticStage.EQUITY_SAMPLING)
                                 self._sample_equity(
                                     session,
                                     experiment,
@@ -777,6 +804,7 @@ class ExperimentRunner:
                 )
                 pending = None
             if position.state != "FLAT":
+                mark(Phase4DiagnosticStage.TERMINAL_FACT_READ)
                 terminal = terminal_protection_observation(
                     observations, position.opened_at, experiment.trading_end
                 )
@@ -788,10 +816,13 @@ class ExperimentRunner:
                             "Historical protection outcome is unknowable",
                         )
                     )
+                mark(Phase4DiagnosticStage.END_CLOSE)
                 self._close_at_end(session, experiment, position, terminal, commission)
+                mark(Phase4DiagnosticStage.EQUITY_SAMPLING)
                 self._sample_equity(
                     session, experiment, account, position, terminal, None
                 )
+            mark(Phase4DiagnosticStage.RESULT_FINALIZATION)
             self._complete_v2(session, experiment, account)
             return ExperimentRunResult(
                 experiment.id,
@@ -824,12 +855,6 @@ class ExperimentRunner:
             return self._fail(
                 session, experiment, FailureCategory.EXECUTION,
                 "EXECUTION_REJECTED", _safe_failure_detail(error, "Execution failed"),
-            )
-        except LookupError:
-            return self._fail(
-                session, experiment, FailureCategory.STRATEGY,
-                "STRATEGY_VERSION_UNAVAILABLE",
-                "Verified StrategyVersion implementation unavailable",
             )
         except SQLAlchemyError:
             return self._fail(

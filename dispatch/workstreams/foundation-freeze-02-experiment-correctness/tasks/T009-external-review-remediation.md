@@ -15,6 +15,15 @@ Persistence; Strategy, Risk rejection, Execution, and accounting invariant map
 to their owning categories; an unexpected non-database engine exception is not
 Persistence; and changing exception wording does not change classification.
 
+Final review correction: scope Strategy implementation lookup failure to the
+registry/`implementation_for_version` seam; unrelated `KeyError`/`IndexError`
+must not become `STRATEGY_VERSION_UNAVAILABLE`. Advance V2 seam ownership before
+operations that can emit `ValueError`, or use narrow explicit typed failures, so
+entry, protection, accounting/equity, and completion/metrics cannot inherit
+Strategy ownership. Prove Strategy, Market Data, accounting, completion/metrics,
+SQLAlchemy, unrelated LookupError, and unexpected engine behavior. Normal Risk
+rejection remains a persisted RiskDecision.
+
 ## BUILD receipt
 
 - **ROLE:** BUILD
@@ -22,8 +31,7 @@ Persistence; and changing exception wording does not change classification.
 - **BRANCH:** `solo/foundation-freeze-02-experiment-correctness`
 - **CWD:** `/Users/vike/Desktop/atlas`
 - **TASK:** T009
-- **Status:** DONE — continuation added the required direct runner fallback
-  regression for unexpected non-database engine failures.
+- **Status:** DONE — final external-review failure-ownership correction complete.
 
 Implemented independent amount/percentage drawdown maxima over canonical equity
 order. Replaced message-keyword classification with typed seam/category mapping;
@@ -41,10 +49,17 @@ Checks: initial targeted metrics/runner diagnostics `23 passed`; experiments sui
 `80 passed`; continuation diagnostics/metrics `24 passed`; experiments suite
 rerun `81 passed`; `python -m compileall -q backend`; `git diff --check`.
 
-Continuation files changed: `backend/tests/experiments/test_runner_diagnostics.py`
-and this receipt. The new test invokes `_run_v2` with a deterministic exploding
-non-database strategy repository and asserts durable `VALIDATION` /
-`UNEXPECTED_ENGINE_FAILURE`, not `PERSISTENCE`.
+Final correction files changed: `backend/experiments/runner.py`,
+`backend/tests/experiments/test_runner_diagnostics.py`, and this receipt. V2 now
+maps only `StrategyVersionUnavailableError` from the registry implementation seam
+to `STRATEGY_VERSION_UNAVAILABLE`; unrelated `KeyError`/`IndexError` use the
+unexpected-engine path. V2 stage ownership advances through Strategy, market
+data, entry/protection/equity, and result finalization seams, preserving typed
+accounting and Risk rejection behavior.
+
+Checks: focused diagnostics/metrics `27 passed`; experiments suite `84 passed`;
+`python -m compileall -q backend`; `git diff --check`.
 
 Concerns: PostgreSQL integration tests were not rerun; no database-backed code
-was changed.
+was changed. Existing unrelated coordination edits (`PLAN.md`, `.codegraph/`,
+`frontend/.env.local`) were not modified.
