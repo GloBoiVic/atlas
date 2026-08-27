@@ -20,6 +20,11 @@ from .schemas import (
     HistoricalDataLoadStatusResponse,
 )
 
+_HISTORICAL_PRODUCTS = [
+    {"product": "analytical", "resolution": "M15", "components": ["MID"]},
+    {"product": "execution", "resolution": "M1", "components": ["BID", "ASK"]},
+]
+
 
 def _error(code, message, details=None, code_status=400):
     return HTTPException(
@@ -55,8 +60,7 @@ def _payload(
         "source": {
             "provider": "OANDA Practice",
             "instrument": "EUR/USD",
-            "resolution": "M1",
-            "components": ["MID", "BID", "ASK"],
+            "products": _HISTORICAL_PRODUCTS,
         },
         "requestedPeriod": {
             "start": _iso(row.trading_start),
@@ -111,8 +115,7 @@ def create_historical_data_router(
         return {
             "provider": "OANDA Practice",
             "instrument": "EUR/USD",
-            "resolution": "M1",
-            "components": ["MID", "BID", "ASK"],
+            "products": _HISTORICAL_PRODUCTS,
             "available": available,
             "reasonCode": None if available else "OANDA_HISTORICAL_UNAVAILABLE",
         }
@@ -229,5 +232,26 @@ def create_historical_data_router(
                 snapshot.session_policy if snapshot else None
             ),
         )
+
+    @router.post(
+        "/load-requests/{request_id}/resume",
+        response_model=HistoricalDataLoadStatusResponse,
+        status_code=202,
+    )
+    def resume(
+        request_id: UUID,
+        background: BackgroundTasks,
+        session: Session = Depends(db),  # noqa: B008
+    ):
+        with session.begin():
+            if not repo.resume(session, request_id):
+                raise _error(
+                    "HISTORICAL_LOAD_NOT_RESUMABLE",
+                    "Only a terminal historical load can be resumed explicitly.",
+                    code_status=409,
+                )
+            row = repo.get(session, request_id)
+        background.add_task(coordinator.run, request_id)
+        return _payload(row)
 
     return router

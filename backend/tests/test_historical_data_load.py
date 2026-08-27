@@ -6,10 +6,8 @@ from uuid import uuid4
 
 import pytest
 
-from backend.api.historical_data import _active_conflict_details
+from backend.api.historical_data import _active_conflict_details, _payload
 from backend.market_data.historical_load import (
-    MAX_ELAPSED_DAYS,
-    MAX_WINDOWS,
     HistoricalDataLoadCoordinator,
     _warmup_plan,
 )
@@ -34,16 +32,29 @@ def test_warmup_plan_accepts_exactly_100_observed_bars() -> None:
     assert plan.outcome == "READY"
 
 
-def test_warmup_plan_fails_at_both_hard_bounds() -> None:
+def test_warmup_plan_has_no_window_or_elapsed_time_ceiling() -> None:
     plan = _warmup_plan(
         UTC_START,
         UTC_START + timedelta(minutes=15),
-        UTC_START - timedelta(days=MAX_ELAPSED_DAYS),
+        UTC_START - timedelta(days=365),
         99,
-        MAX_WINDOWS,
+        40,
         100,
     )
-    assert plan.outcome == "INSUFFICIENT_WARMUP"
+    assert plan.outcome == "EXTEND"
+    assert plan.load_start == UTC_START - timedelta(days=365, hours=25)
+
+
+def test_warmup_readiness_uses_observed_native_m15_count() -> None:
+    plan = _warmup_plan(
+        UTC_START,
+        UTC_START + timedelta(minutes=15),
+        UTC_START - timedelta(days=365),
+        100,
+        400,
+        100,
+    )
+    assert plan.outcome == "READY"
 
 
 def test_warmup_plan_extension_is_deterministic_across_closure_ranges() -> None:
@@ -82,6 +93,29 @@ def test_prepare_rejects_non_utc_misaligned_and_overlong_ranges() -> None:
                 trading_start=start,
                 trading_end=end,
             )
+
+
+def test_prepare_does_not_invoke_legacy_shared_m1_planner(monkeypatch) -> None:
+    ingestion = SimpleNamespace(
+        plan_missing=lambda *_args: pytest.fail("legacy planner was invoked")
+    )
+    strategies = SimpleNamespace(get_version=lambda *_args: object())
+    registry = SimpleNamespace(implementation_for_version=lambda _version: object())
+    monkeypatch.setattr(
+        "backend.market_data.historical_load.version_to_domain",
+        lambda _row: SimpleNamespace(id="version", warm_up_bars=100),
+    )
+    coordinator = HistoricalDataLoadCoordinator(
+        lambda: None, ingestion, SimpleNamespace(), registry, strategies=strategies
+    )
+    load_start, load_end = coordinator.prepare(
+        SimpleNamespace(),
+        strategy_version_id=uuid4(),
+        trading_start=UTC_START,
+        trading_end=UTC_START + timedelta(minutes=15),
+    )
+    assert load_start == UTC_START - timedelta(minutes=1500)
+    assert load_end == UTC_START + timedelta(minutes=15)
 
 
 def test_model_declares_json_checks_and_one_active_partial_unique_index() -> None:
@@ -161,6 +195,24 @@ def test_active_conflict_exposes_attachable_status_facts() -> None:
     assert details["statusUrl"].endswith(str(row.id))
 
 
+def test_historical_status_metadata_exposes_independent_native_products() -> None:
+    row = SimpleNamespace(
+        id=uuid4(), created_at=UTC_START, status="PENDING",
+        fetched_ranges=[], committed_ranges=[], inserted=0, reactivated=0,
+        unchanged=0, incomplete_minute_count=0, coverage_summary=None,
+        snapshot_id=None, experiment_validation=None, failure_category=None,
+        failure_code=None, failure_detail=None, trading_start=UTC_START,
+        trading_end=UTC_START + timedelta(minutes=15), load_start=UTC_START,
+        load_end=UTC_START + timedelta(minutes=15), started_at=None,
+        finished_at=None,
+    )
+    products = _payload(row)["source"]["products"]
+    assert products == [
+        {"product": "analytical", "resolution": "M15", "components": ["MID"]},
+        {"product": "execution", "resolution": "M1", "components": ["BID", "ASK"]},
+    ]
+
+
 def test_failure_classification_redacts_provider_details() -> None:
     error = RuntimeError("token=do-not-persist Authorization: secret")
     category, code, detail = classify_failure(error)
@@ -212,6 +264,63 @@ def test_startup_recovery_uses_distinct_fail_closed_codes() -> None:
         "LOAD_INTERRUPTED_BEFORE_START",
     )
     assert (running.status, running.failure_code) == ("FAILED", "LOAD_INTERRUPTED")
+
+
+def test_explicit_resume_reopens_failed_request_without_erasing_coverage() -> None:
+    row = SimpleNamespace(
+        id=uuid4(), status="FAILED", started_at=UTC_START,
+        finished_at=UTC_START + timedelta(minutes=1),
+        failure_category="MARKET_DATA", failure_code="OANDA_REQUEST_FAILED",
+        failure_detail="The provider request failed.", updated_at=UTC_START,
+        coverage_summary={
+            "progress": {"products": {"analytical": {"completed_units": 3}}}
+        },
+    )
+
+    class ResumeSession:
+        def scalar(self, _statement):
+            return row
+
+        def flush(self):
+            pass
+
+    assert HistoricalDataLoadRepository().resume(ResumeSession(), row.id)
+    assert row.status == "RUNNING"
+    assert row.finished_at is None
+    assert row.failure_code is None
+    assert (
+        row.coverage_summary["progress"]["products"]["analytical"]["completed_units"]
+        == 3
+    )
+
+
+def test_product_progress_is_additive_and_records_only_committed_window() -> None:
+    row = SimpleNamespace(
+        id=uuid4(), status="RUNNING", coverage_summary=None,
+        fetched_ranges=[], committed_ranges=[], inserted=0, reactivated=0,
+        unchanged=0, incomplete_minute_count=0, updated_at=UTC_START,
+    )
+
+    class ProgressSession:
+        def scalar(self, _statement):
+            return row
+
+        def flush(self):
+            pass
+
+    repo = HistoricalDataLoadRepository()
+    window = {"start": "2026-01-05T15:00:00Z", "end": "2026-01-05T15:15:00Z"}
+    assert repo.record_progress(
+        ProgressSession(),
+        row.id,
+        committed_ranges=((UTC_START, UTC_START + timedelta(minutes=15)),),
+        completed_units=1, total_units=100, product="analytical", window=window,
+    )
+    assert (
+        row.coverage_summary["progress"]["products"]["analytical"]
+        ["last_committed_window"]
+        == window
+    )
 
 
 class FakeSession:

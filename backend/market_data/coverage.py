@@ -46,6 +46,139 @@ class CoverageReport:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class ProductCoveragePlan:
+    """Deterministic missing-only plan for one native product."""
+
+    resolution: str
+    components: tuple[PriceComponent, ...]
+    start: datetime
+    end: datetime
+    missing_ranges: tuple[CoverageGap, ...]
+
+    @property
+    def fully_covered(self) -> bool:
+        return not self.missing_ranges
+
+
+def _native_starts(
+    start: datetime, end: datetime, resolution: str
+) -> tuple[datetime, ...]:
+    if resolution not in ("M1", "M15"):
+        raise ValueError("resolution must be M1 or M15")
+    step = timedelta(minutes=1 if resolution == "M1" else 15)
+    if start.second or start.microsecond or end.second or end.microsecond:
+        raise ValueError("coverage range must be minute-aligned")
+    if resolution == "M15" and (start.minute % 15 or end.minute % 15):
+        raise ValueError("M15 coverage range must be quarter-hour aligned")
+    values: list[datetime] = []
+    cursor = start
+    while cursor < end:
+        # A native M15 candle is expected only when every constituent minute is
+        # in an expected provider session.  Closures therefore never become
+        # synthetic missing candles.
+        constituent = (
+            (cursor,)
+            if resolution == "M1"
+            else tuple(cursor + timedelta(minutes=index) for index in range(15))
+        )
+        if all(
+            OANDA_EUR_USD_POLICY.classify_minute(item)[0] == EXPECTED_DATA
+            for item in constituent
+        ):
+            values.append(cursor)
+        cursor += step
+    return tuple(values)
+
+
+def plan_product_coverage(
+    start: datetime,
+    end: datetime,
+    resolution: str,
+    required_components: tuple[PriceComponent, ...],
+    bars: Iterable[Bar],
+) -> ProductCoveragePlan:
+    """Plan independent, sorted, coalesced missing ranges for one product."""
+    _validate_range(start, end)
+    components = tuple(sorted(set(required_components), key=lambda value: value.value))
+    if not components or len(components) != len(required_components):
+        raise ValueError("required_components must be a non-empty unique tuple")
+    step = timedelta(minutes=1 if resolution == "M1" else 15)
+    expected = _native_starts(start, end, resolution)
+    present: dict[datetime, set[PriceComponent]] = defaultdict(set)
+    for bar in bars:
+        if (
+            bar.timeframe.value == ("1m" if resolution == "M1" else "15m")
+            and start <= bar.start_time < end
+        ):
+            present[bar.start_time].add(bar.price_component)
+    missing = [
+        MissingMinute(
+            moment,
+            tuple(
+                component
+                for component in components
+                if component not in present.get(moment, set())
+            ),
+        )
+        for moment in expected
+        if any(component not in present.get(moment, set()) for component in components)
+    ]
+    # coalesce_gaps uses one-minute adjacency; native M15 plans need the same
+    # deterministic shape but with their native step.
+    ranges: list[CoverageGap] = []
+    for item in missing:
+        if (
+            ranges
+            and ranges[-1].end == item.start
+            and ranges[-1].components == item.components
+        ):
+            previous = ranges[-1]
+            ranges[-1] = CoverageGap(
+                previous.start,
+                item.start + step,
+                previous.components,
+                previous.minutes + (item,),
+            )
+        else:
+            ranges.append(
+                CoverageGap(item.start, item.start + step, item.components, (item,))
+            )
+    return ProductCoveragePlan(resolution, components, start, end, tuple(ranges))
+
+
+def analytical_range_for_completed_bars(
+    trading_start: datetime,
+    trading_end: datetime,
+    required_completed_bars: int,
+    bars: Iterable[Bar],
+) -> tuple[datetime, datetime, int]:
+    """Return the exact observed M15 warm-up boundary, never counting gaps."""
+    _validate_range(trading_start, trading_end)
+    if (
+        trading_start.minute % 15
+        or trading_end.minute % 15
+        or required_completed_bars < 0
+    ):
+        raise ValueError("analytical range must be quarter-hour aligned")
+    eligible = tuple(
+        sorted(
+            (
+                bar
+                for bar in bars
+                if bar.timeframe.value == "15m"
+                and bar.price_component is PriceComponent.MID
+                and bar.complete
+                and bar.end_time <= trading_start
+            ),
+            key=lambda bar: bar.start_time,
+        )
+    )
+    selected = eligible[-required_completed_bars:] if required_completed_bars else ()
+    start = selected[0].start_time if selected else trading_start
+    return start, trading_end, len(selected)
+
+
 def diagnostic_payloads(
     report: CoverageReport, *, limit: int = 100
 ) -> tuple[list[dict[str, object]], bool]:
@@ -222,8 +355,11 @@ def validate_coverage(
 __all__ = [
     "CoverageGap",
     "CoverageReport",
+    "ProductCoveragePlan",
     "MissingMinute",
     "coalesce_gaps",
+    "plan_product_coverage",
+    "analytical_range_for_completed_bars",
     "diagnostic_payloads",
     "validate_coverage",
 ]

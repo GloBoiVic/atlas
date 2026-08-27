@@ -98,6 +98,17 @@ def test_native_m15_rejects_non_quarter_hour_alignment() -> None:
         source(handler).fetch_native_m15(moment(0), moment(15))
 
 
+def test_m1_rejects_provider_timestamp_with_seconds() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"candles": [candle(moment(0)) | {"time": "2026-01-05T10:00:30Z"}]},
+        )
+
+    with pytest.raises(OandaNormalizationError, match="minute aligned"):
+        source(handler).fetch_execution_m1(moment(0), moment(1))
+
+
 def test_execution_m1_requests_sparse_bid_ask_without_mid() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"candles": [candle(moment(0))]})

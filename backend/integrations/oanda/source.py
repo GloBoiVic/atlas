@@ -305,6 +305,10 @@ class OandaHistoricalBarSource:
                     candle_time = _timestamp(candle.get("time"))
                     if not (window_start <= candle_time < window_end):
                         continue
+                    if candle_time.second or candle_time.microsecond:
+                        raise OandaNormalizationError(
+                            "provider candle is not UTC minute aligned"
+                        )
                     if validate_m15_alignment and candle_time.minute % 15:
                         raise OandaNormalizationError(
                             "native M15 candle is not UTC quarter-hour aligned"

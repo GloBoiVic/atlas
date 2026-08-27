@@ -10,18 +10,26 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.domain.market_data import Instrument, Provider
+from backend.domain.market_data import (
+    Bar,
+    Instrument,
+    PriceComponent,
+    Provider,
+    Timeframe,
+)
 from backend.domain.strategy import StrategyParameters
 from backend.domain.strategy_requirements import requirement_for_version
-from backend.market_data.coverage import CoverageGap, CoverageReport
+from backend.market_data.coverage import CoverageGap, CoverageReport, validate_coverage
 from backend.market_data.session_calendar import eligible_m15_windows
 from backend.persistence.experiment_repository import ExperimentRepository
 from backend.persistence.market_data_repository import DatasetSnapshotRepository
 from backend.persistence.models import (
     DatasetSnapshotAnalyticalBarModel,
+    DatasetSnapshotExecutionObservationModel,
     DatasetSnapshotGapModel,
     DatasetSnapshotModel,
     InstrumentModel,
+    MarketBarModel,
     StrategyVersionModel,
     VenueInstrumentModel,
 )
@@ -334,6 +342,46 @@ class ExperimentConfigurationService:
             {item.start_time for item in analytical}, required_start, trading_end
         ):
             reasons.append("MISSING_ANALYTICAL_FRONTIERS")
+
+        # Execution is an independent immutable native product.  Validate its
+        # BID/ASK membership, never mutable market-bar heads or M1-derived M15.
+        execution_rows = session.scalars(
+            select(MarketBarModel)
+            .join(
+                DatasetSnapshotExecutionObservationModel,
+                DatasetSnapshotExecutionObservationModel.market_bar_id
+                == MarketBarModel.id,
+            )
+            .where(
+                DatasetSnapshotExecutionObservationModel.dataset_snapshot_id
+                == snapshot.id,
+                MarketBarModel.start_time >= trading_start,
+                MarketBarModel.start_time < trading_end,
+            )
+        ).all()
+        execution_bars = tuple(
+            Bar(
+                Instrument.EUR_USD,
+                Provider.OANDA,
+                Timeframe.M1,
+                PriceComponent(row.price_component),
+                row.start_time,
+                row.end_time,
+                row.open_price,
+                row.high_price,
+                row.low_price,
+                row.close_price,
+                volume=row.volume,
+            )
+            for row in execution_rows
+        )
+        if not validate_coverage(
+            trading_start,
+            trading_end,
+            execution_bars,
+            (PriceComponent.BID, PriceComponent.ASK),
+        ).valid:
+            reasons.append("INCOMPLETE_EXECUTION_DATA")
 
         blocked_gaps = session.scalars(
             select(DatasetSnapshotGapModel)

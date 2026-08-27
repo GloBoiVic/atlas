@@ -224,8 +224,7 @@ class HistoricalDataLoadStatusResponse(StrictModel):
 class HistoricalDataCapabilityResponse(StrictModel):
     provider: str
     instrument: str
-    resolution: str
-    components: list[str]
+    products: list[dict[str, Any]]
     available: bool
     reason_code: str | None
 

@@ -20,6 +20,7 @@ from backend.domain.market_data import (
     FINGERPRINT_SCHEMA,
     FINGERPRINT_SCHEMA_V2,
     GAP_POLICY_V1,
+    NATIVE_M1_EXECUTION_CONTRACT_V1,
     NATIVE_M15_CONTRACT_V1,
     SESSION_POLICY,
     SNAPSHOT_SCHEMA_V2,
@@ -182,22 +183,24 @@ def _validate_range(start: datetime, end: datetime) -> None:
 
 def _coalesce_expected_ranges(
     ranges: Sequence[BarRange],
+    *,
+    step: timedelta = timedelta(minutes=1),
 ) -> tuple[tuple[datetime, datetime], ...]:
-    """Coalesce only adjacent missing session-open minutes."""
+    """Coalesce only adjacent missing session-open intervals."""
     minutes: set[datetime] = set()
     for item in ranges:
         cursor = item.start
         while cursor < item.end:
             if OANDA_EUR_USD_POLICY.classify_minute(cursor)[0] == EXPECTED_DATA:
                 minutes.add(cursor)
-            cursor += timedelta(minutes=1)
+            cursor += step
     ordered = sorted(minutes)
     result: list[tuple[datetime, datetime]] = []
     for minute in ordered:
         if result and result[-1][1] == minute:
-            result[-1] = (result[-1][0], minute + timedelta(minutes=1))
+            result[-1] = (result[-1][0], minute + step)
         else:
-            result.append((minute, minute + timedelta(minutes=1)))
+            result.append((minute, minute + step))
     return tuple(result)
 
 
@@ -457,7 +460,12 @@ class MarketDataService:
         # Coverage opens its own read transaction. Compute it before taking the
         # V2 mapping lock so PostgreSQL never sees a nested FOR UPDATE on the
         # same venue row from a second session.
-        coverage = self._coverage(start, end)
+        # V2 has two independent native products.  Do not use the legacy
+        # three-component/M1 coverage validator here: it both admits the old
+        # shared-range contract and cannot prove native M15 provenance.
+        coverage = self._coverage_product(
+            start, end, (PriceComponent.BID, PriceComponent.ASK), Timeframe.M1
+        )
         mapping_id = self._mapping_id()
         session = self._session_factory()
         try:
@@ -501,6 +509,32 @@ class MarketDataService:
                 ordered_analytical = tuple(
                     sorted(analytical, key=lambda b: b.start_time)
                 )
+                if any(
+                    bar.timeframe is not Timeframe.M15
+                    or bar.price_component is not PriceComponent.MID
+                    or not bar.complete
+                    or bar.start_time < start
+                    or bar.end_time > end
+                    for bar in ordered_analytical
+                ):
+                    raise ValueError("V2 analytical membership must be native M15 MID")
+                if len({bar.start_time for bar in ordered_analytical}) != len(
+                    ordered_analytical
+                ):
+                    raise ValueError("V2 analytical membership contains duplicates")
+                execution_keys = {
+                    (bar.start_time, bar.price_component) for _, bar in execution
+                }
+                if len(execution_keys) != len(execution):
+                    raise ValueError("V2 execution membership contains duplicates")
+                if not coverage.valid:
+                    return SnapshotReport(
+                        start,
+                        end,
+                        coverage,
+                        None,
+                        "execution coverage is invalid",
+                    )
                 analytical_members = tuple(
                     {
                         "sequence": i,
@@ -550,6 +584,9 @@ class MarketDataService:
                     "coverage_end": end.isoformat(),
                     "native_resolution": "M15",
                     "analytical_contract": NATIVE_M15_CONTRACT_V1,
+                    "execution_resolution": "M1",
+                    "execution_components": ["BID", "ASK"],
+                    "execution_contract": NATIVE_M1_EXECUTION_CONTRACT_V1,
                     "gap_policy": GAP_POLICY_V1,
                 }
                 fingerprint = dataset_fingerprint_v2(
@@ -588,6 +625,25 @@ class MarketDataService:
         finally:
             session.close()
 
+    def _coverage_product(
+        self,
+        start: datetime,
+        end: datetime,
+        components: tuple[PriceComponent, ...],
+        resolution: Timeframe,
+    ) -> CoverageReport:
+        """Validate one native product without mixing resolutions/components."""
+        mapping_id = self._mapping_id()
+        session = self._session_factory()
+        try:
+            with session.begin():
+                bars = self._repository.current_bars(
+                    session, mapping_id, start, end, components, resolution
+                )
+                return validate_coverage(start, end, bars, components)
+        finally:
+            session.close()
+
     def load_v2(
         self,
         start: datetime,
@@ -595,31 +651,90 @@ class MarketDataService:
         *,
         progress: Callable[[IngestionReport], None] | None = None,
     ):
-        """Acquire both native products, then atomically create a V2 snapshot."""
+        """Acquire native products in missing-only, independently committed windows.
+
+        Provider calls deliberately happen before ``_apply`` opens its short
+        transaction.  Replanning on every invocation makes this operation safe
+        after an interrupted process: durable coverage, rather than progress
+        JSON, is the resume authority.
+        """
         native = getattr(self._source, "fetch_native_m15", None)
         execution = getattr(self._source, "fetch_execution_m1", None)
         if native is None or execution is None:
             raise ValueError("source does not support Alternative A acquisition")
-        native_result = native(start, end)
-        execution_result = execution(start, end)
-        if native_result.incomplete or execution_result.incomplete:
-            raise ValueError("provider returned incomplete historical observations")
-        applied = self._apply(self._mapping_id(), execution_result)
-        if progress:
-            # Native M15 is immutable snapshot membership; execution M1 is the
-            # durable database commit. Report that commit only after it lands.
-            progress(
-                SimpleNamespace(
-                    fetched_ranges=((start, end),),
-                    committed_ranges=((start, end),),
-                    inserted=applied.inserted,
-                    reactivated=applied.reactivated,
-                    unchanged=applied.unchanged,
-                    incomplete_minutes=(),
-                    coverage=self._coverage(start, end),
+        mapping_id = self._mapping_id()
+
+        def plans(resolution, components):
+            session = self._session_factory()
+            try:
+                with session.begin():
+                    return _coalesce_expected_ranges(
+                        self._repository.missing_ranges(
+                            session, mapping_id, start, end, components, resolution
+                        ),
+                        step=timedelta(
+                            minutes=15 if resolution is Timeframe.M15 else 1
+                        ),
+                    )
+            finally:
+                session.close()
+
+        totals = [0, 0, 0]
+        all_fetched: list[tuple[datetime, datetime]] = []
+        all_committed: list[tuple[datetime, datetime]] = []
+
+        def acquire(product, fetch, ranges):
+            for window in ranges:
+                # No database transaction is held during this provider call.
+                result = fetch(*window)
+                if result.incomplete:
+                    raise ValueError(
+                        "provider returned incomplete historical observations"
+                    )
+                applied = self._apply(mapping_id, result)
+                all_fetched.append(window)
+                all_committed.append(window)
+                totals[0] += applied.inserted
+                totals[1] += applied.reactivated
+                totals[2] += applied.unchanged
+                if progress:
+                    progress(SimpleNamespace(
+                        operation="load_v2",
+                        requested_start=start, requested_end=end,
+                        fetched_ranges=tuple(all_fetched),
+                        committed_ranges=tuple(all_committed),
+                        inserted=totals[0], reactivated=totals[1], unchanged=totals[2],
+                        incomplete_minutes=(), coverage=self._coverage(start, end),
+                        product=product,
+                        window={
+                            "start": window[0].isoformat(),
+                            "end": window[1].isoformat(),
+                        },
+                    ))
+
+        native_ranges = plans(Timeframe.M15, (PriceComponent.MID,))
+        execution_ranges = plans(
+            Timeframe.M1, (PriceComponent.BID, PriceComponent.ASK)
+        )
+        acquire("analytical", native, native_ranges)
+        acquire("execution", execution, execution_ranges)
+
+        # Snapshot construction consumes the persisted native M15 membership,
+        # including work committed by an earlier attempt.
+        session = self._session_factory()
+        try:
+            with session.begin():
+                analytical = self._repository.current_bars(
+                    session,
+                    mapping_id,
+                    start,
+                    end,
+                    (PriceComponent.MID,),
+                    Timeframe.M15,
                 )
-            )
-        return self.create_snapshot_v2(start, end, analytical=native_result.bars)
+        finally:
+            session.close()
+        return self.create_snapshot_v2(start, end, analytical=analytical)
 
     def load_v2_incremental(
         self,
@@ -714,6 +829,12 @@ class MarketDataService:
         try:
             with session.begin():
                 snapshot = self._snapshots.by_fingerprint(session, snapshot_fingerprint)
+                if snapshot.snapshot_schema == SNAPSHOT_SCHEMA_V2:
+                    if component is not PriceComponent.MID:
+                        raise ValueError("V2 analytical path supports native MID only")
+                    return self._snapshots.v2_analytical_members(
+                        session, snapshot.id
+                    )
                 if component not in snapshot.components:
                     raise ValueError("component is not present in snapshot")
                 self._check_frontier(snapshot.coverage_end)

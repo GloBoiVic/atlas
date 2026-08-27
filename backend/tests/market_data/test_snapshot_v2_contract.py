@@ -1,3 +1,4 @@
+from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -39,6 +40,48 @@ def test_v2_snapshot_accepts_native_m15_contract() -> None:
     )
     assert snapshot.to_json()["snapshot_schema"] == SNAPSHOT_SCHEMA_V2
     assert NATIVE_M15_CONTRACT_V1 == "OANDA_M15_NATIVE_UTC_V1"
+
+
+def test_v2_snapshot_descriptor_is_immutable() -> None:
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    snapshot = DatasetSnapshot(
+        uuid4(),
+        VenueInstrument(Instrument.EUR_USD, Provider.OANDA, "EUR_USD"),
+        Timeframe.M15,
+        (PriceComponent.MID,),
+        now,
+        now.replace(hour=1),
+        "UTC_HALF_OPEN_V1",
+        "OANDA_FX_NY_V1",
+        FINGERPRINT_SCHEMA_V2,
+        "a" * 64,
+        {"status": "VALID", "policy_version": GAP_POLICY_V1},
+        now,
+        SNAPSHOT_SCHEMA_V2,
+    )
+    with pytest.raises(FrozenInstanceError):
+        snapshot.fingerprint = "b" * 64  # type: ignore[misc]
+
+
+def test_v2_fingerprint_distinguishes_native_execution_contract() -> None:
+    common = {
+        "provider": "OANDA",
+        "analytical_contract": "OANDA_M15_NATIVE_UTC_V1",
+        "execution_components": ["BID", "ASK"],
+    }
+    native = dataset_fingerprint_v2(
+        metadata={**common, "execution_contract": "OANDA_M1_NATIVE_BID_ASK_UTC_V1"},
+        analytical_members=[],
+        execution_members=[],
+        gaps=[],
+    )
+    derived = dataset_fingerprint_v2(
+        metadata={**common, "execution_contract": "M1_DERIVED_M15_V1"},
+        analytical_members=[],
+        execution_members=[],
+        gaps=[],
+    )
+    assert native != derived
 
 
 def test_v2_fingerprint_includes_ordered_contract_sections() -> None:

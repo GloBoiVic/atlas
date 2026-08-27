@@ -94,6 +94,8 @@ class HistoricalDataLoadRepository:
         completed_units=None,
         total_units=None,
         unit="database_commit",
+        product=None,
+        window=None,
     ) -> bool:
         row = session.scalar(
             select(HistoricalDataLoadRequestModel)
@@ -119,6 +121,16 @@ class HistoricalDataLoadRepository:
             "fetched_range_count": len(fetched_ranges),
             "committed_range_count": len(committed_ranges),
         }
+        if product is not None:
+            products = dict(previous_progress.get("products", {}))
+            product_progress = dict(products.get(product, {}))
+            if window is not None:
+                product_progress["last_committed_window"] = window
+            product_progress["completed_units"] = max(
+                completed_units, product_progress.get("completed_units", 0)
+            )
+            products[product] = product_progress
+            progress["products"] = products
         # Keep additive progress durable without introducing a second lifecycle
         # table.  Final coverage retains these facts for auditability.
         summary = dict(coverage_summary or row.coverage_summary or {})
@@ -179,6 +191,23 @@ class HistoricalDataLoadRepository:
         row.failure_code = code[:80]
         row.failure_detail = detail[:500]
         row.finished_at = _now()
+        row.updated_at = _now()
+        session.flush()
+        return True
+
+    def resume(self, session: Session, request_id: UUID) -> bool:
+        """Explicitly resume a failed load, retaining committed coverage facts."""
+        row = session.scalar(
+            select(HistoricalDataLoadRequestModel)
+            .where(HistoricalDataLoadRequestModel.id == request_id)
+            .with_for_update()
+        )
+        if row is None or row.status != "FAILED":
+            return False
+        row.status = "RUNNING"
+        row.started_at = _now()
+        row.finished_at = None
+        row.failure_category = row.failure_code = row.failure_detail = None
         row.updated_at = _now()
         session.flush()
         return True

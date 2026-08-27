@@ -1,8 +1,9 @@
 # Active Workstream
 
-No active workstream.
-
-`foundation-freeze-02-experiment-correctness` was merged to `main` and closed;
-see `dispatch/COMPLETED.md` and its preserved workstream artifacts.
-
-Pre-existing user-untracked `.codegraph/` and `frontend/.env.local` remain untouched.
+- Workstream: `foundation-freeze-03-historical-data-foundation`
+- Classification: `Critical`
+- Phase: `READY FOR MERGE APPROVAL`
+- Branch: `solo/foundation-freeze-03-historical-data-foundation`
+- Base SHA: `38b869bb4341b2f0e5b7f150233428cf69f321cc`
+- Canonical plan: `dispatch/workstreams/foundation-freeze-03-historical-data-foundation/PLAN.md`
+- Next action: obtain explicit merge approval, then GIT END

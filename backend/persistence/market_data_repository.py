@@ -43,6 +43,7 @@ from .models import (
 )
 
 PERSISTED_M1_RESOLUTION = "M1"
+PERSISTED_M15_RESOLUTION = "M15"
 
 
 def _encode_m1_resolution(timeframe: Timeframe) -> str:
@@ -50,6 +51,14 @@ def _encode_m1_resolution(timeframe: Timeframe) -> str:
     if timeframe is not Timeframe.M1:
         raise ValueError("only M1 bars may be persisted")
     return PERSISTED_M1_RESOLUTION
+
+
+def _encode_resolution(timeframe: Timeframe) -> str:
+    if timeframe is Timeframe.M1:
+        return PERSISTED_M1_RESOLUTION
+    if timeframe is Timeframe.M15:
+        return PERSISTED_M15_RESOLUTION
+    raise ValueError(f"unsupported timeframe: {timeframe}")
 
 
 def _decode_resolution(value: str) -> Timeframe:
@@ -228,13 +237,14 @@ class MarketDataRepository:
         start: datetime,
         end: datetime,
         components: Sequence[PriceComponent],
+        timeframe: Timeframe = Timeframe.M1,
     ) -> tuple[Bar, ...]:
         venue_row, instrument = self._venue_rows(session, venue_instrument_id)
         rows = session.scalars(
             select(MarketBarModel)
             .where(
                 MarketBarModel.venue_instrument_id == venue_instrument_id,
-                MarketBarModel.resolution == PERSISTED_M1_RESOLUTION,
+                MarketBarModel.resolution == _encode_resolution(timeframe),
                 MarketBarModel.price_component.in_([c.value for c in components]),
                 MarketBarModel.start_time >= start,
                 MarketBarModel.start_time < end,
@@ -251,13 +261,17 @@ class MarketDataRepository:
         start: datetime,
         end: datetime,
         components: Sequence[PriceComponent],
+        timeframe: Timeframe = Timeframe.M1,
     ) -> tuple[BarRange, ...]:
         wanted = tuple(sorted(set(components), key=lambda c: c.value))
-        existing = self.current_bars(session, venue_instrument_id, start, end, wanted)
+        existing = self.current_bars(
+            session, venue_instrument_id, start, end, wanted, timeframe
+        )
         by_minute: dict[datetime, set[PriceComponent]] = {}
         for bar in existing:
             by_minute.setdefault(bar.start_time, set()).add(bar.price_component)
         ranges: list[BarRange] = []
+        step = timedelta(minutes=1 if timeframe is Timeframe.M1 else 15)
         cursor = start
         while cursor < end:
             missing = tuple(c for c in wanted if c not in by_minute.get(cursor, set()))
@@ -267,14 +281,10 @@ class MarketDataRepository:
                     and ranges[-1].end == cursor
                     and ranges[-1].components == missing
                 ):
-                    ranges[-1] = BarRange(
-                        ranges[-1].start, cursor + timedelta(minutes=1), missing
-                    )
+                    ranges[-1] = BarRange(ranges[-1].start, cursor + step, missing)
                 else:
-                    ranges.append(
-                        BarRange(cursor, cursor + timedelta(minutes=1), missing)
-                    )
-            cursor += timedelta(minutes=1)
+                    ranges.append(BarRange(cursor, cursor + step, missing))
+            cursor += step
         return tuple(ranges)
 
     def apply_bar_batch(
@@ -294,8 +304,8 @@ class MarketDataRepository:
         prepared: list[tuple[BarBatchItem, dict[str, UUID | str | datetime], str]] = []
         for item in items:
             bar = item.bar
-            if bar.provider is not Provider.OANDA or bar.timeframe is not Timeframe.M1:
-                raise ValueError("only OANDA M1 bars may be persisted")
+            if bar.provider is not Provider.OANDA:
+                raise ValueError("only OANDA bars may be persisted")
             if (
                 item.retrieved_at.tzinfo is None
                 or item.retrieved_at.utcoffset() != timedelta(0)
@@ -304,13 +314,27 @@ class MarketDataRepository:
             fingerprint = _content_fingerprint(bar)
             logical = dict(
                 venue_instrument_id=venue_instrument_id,
-                resolution=_encode_m1_resolution(bar.timeframe),
+                resolution=_encode_resolution(bar.timeframe),
                 price_component=bar.price_component.value,
                 start_time=bar.start_time,
             )
             prepared.append((item, logical, fingerprint))
         if not prepared:
             return BarBatchResult()
+        # A provider response must be internally consistent.  Do not let input
+        # ordering turn two different payloads for one canonical identity into
+        # an implicit last-write-wins correction.
+        batch_fingerprints: dict[tuple[str, UUID, datetime, str], str] = {}
+        for _item, logical, fingerprint in prepared:
+            identity = (
+                cast(str, logical["resolution"]),
+                cast(UUID, logical["venue_instrument_id"]),
+                cast(datetime, logical["start_time"]),
+                cast(str, logical["price_component"]),
+            )
+            previous = batch_fingerprints.setdefault(identity, fingerprint)
+            if previous != fingerprint:
+                raise ValueError("conflicting observations for one canonical identity")
 
         # The venue lock above serializes competing corrections. Load the
         # relevant month/window once, rather than issuing two SELECTs for every
@@ -319,7 +343,9 @@ class MarketDataRepository:
         rows = session.scalars(
             select(MarketBarModel).where(
                 MarketBarModel.venue_instrument_id == venue_instrument_id,
-                MarketBarModel.resolution == PERSISTED_M1_RESOLUTION,
+                MarketBarModel.resolution.in_(
+                    (PERSISTED_M1_RESOLUTION, PERSISTED_M15_RESOLUTION)
+                ),
                 MarketBarModel.price_component.in_(
                     {
                         cast(str, logical["price_component"])
@@ -332,6 +358,7 @@ class MarketDataRepository:
         ).all()
         variants = {
             (
+                row.resolution,
                 row.start_time,
                 row.price_component,
                 row.content_fingerprint,
@@ -339,13 +366,16 @@ class MarketDataRepository:
             for row in rows
         }
         current_by_key = {
-            (row.start_time, row.price_component): row for row in rows if row.is_current
+            (row.resolution, row.start_time, row.price_component): row
+            for row in rows
+            if row.is_current
         }
         new_rows: list[MarketBarModel] = []
         reactivations: list[MarketBarModel] = []
         current_changed = False
         for item, logical, fingerprint in prepared:
             key = (
+                cast(str, logical["resolution"]),
                 cast(datetime, logical["start_time"]),
                 cast(str, logical["price_component"]),
             )
@@ -813,6 +843,7 @@ __all__ = [
     "DatasetSnapshotRepository",
     "MarketDataRepository",
     "PERSISTED_M1_RESOLUTION",
+    "PERSISTED_M15_RESOLUTION",
     "SnapshotBar",
     "SnapshotBarSourceIdentity",
     "SnapshotFrontier",

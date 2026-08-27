@@ -145,10 +145,10 @@ class VenueInstrumentModel(Base):
 class MarketBarModel(Base):
     __tablename__ = "market_bars"
     __table_args__ = (
-        CheckConstraint("resolution = 'M1'", name="m1_only"),
+        CheckConstraint("resolution IN ('M1', 'M15')", name="supported_resolution"),
         CheckConstraint("price_component IN ('ASK', 'BID', 'MID')", name="valid_component"),
-        CheckConstraint("start_time = date_trunc('minute', start_time)", name="minute_aligned_start"),
-        CheckConstraint("end_time = start_time + interval '1 minute'", name="exact_one_minute"),
+        CheckConstraint("start_time = date_trunc('minute', start_time) AND (resolution = 'M1' OR extract(minute from start_time)::integer % 15 = 0)", name="native_aligned_start"),
+        CheckConstraint("(resolution = 'M1' AND end_time = start_time + interval '1 minute') OR (resolution = 'M15' AND end_time = start_time + interval '15 minutes')", name="exact_native_interval"),
         CheckConstraint("complete IS TRUE", name="completed_only"),
         CheckConstraint("open_price > 0 AND high_price > 0 AND low_price > 0 AND close_price > 0", name="positive_prices"),
         CheckConstraint("open_price <> 'NaN'::numeric AND high_price <> 'NaN'::numeric AND low_price <> 'NaN'::numeric AND close_price <> 'NaN'::numeric", name="finite_prices"),
@@ -316,7 +316,6 @@ class HistoricalDataLoadRequestModel(Base):
         CheckConstraint("trading_end > trading_start AND load_start <= trading_start AND load_end = trading_end", name="load_order"),
         CheckConstraint("extract(epoch from trading_start)::bigint % 900 = 0 AND extract(epoch from trading_end)::bigint % 900 = 0", name="trading_alignment"),
         CheckConstraint("extract(epoch from load_start)::bigint % 60 = 0 AND extract(epoch from load_end)::bigint % 60 = 0", name="load_alignment"),
-        CheckConstraint("load_end - load_start <= interval '90 days'", name="load_maximum"),
         CheckConstraint("atlas_historical_ranges_valid(fetched_ranges) AND atlas_historical_ranges_valid(committed_ranges)", name="progress_arrays"),
         CheckConstraint("jsonb_typeof(coverage_summary) = 'object' OR coverage_summary IS NULL", name="coverage_object"),
         CheckConstraint("jsonb_typeof(experiment_validation) = 'object' OR experiment_validation IS NULL", name="validation_object"),

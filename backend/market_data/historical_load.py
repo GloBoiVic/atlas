@@ -22,8 +22,6 @@ from backend.strategies.registry import StrategyVersionUnavailableError
 
 from .ingestion import MarketDataService, classify_failure
 
-MAX_WINDOWS = 40
-MAX_ELAPSED_DAYS = 90
 INITIAL_ESTIMATE = timedelta(hours=25)
 
 
@@ -46,26 +44,36 @@ def _warmup_plan(
     provider_windows: int,
     required_historical_context_bars: int,
 ) -> WarmupPlan:
-    """Return the next deterministic range or a bounded terminal outcome.
+    """Return the next deterministic range or the ready outcome.
 
     ``eligible_bars`` is intentionally an observed aggregation result, not an
     estimate based on open minutes.  A caller repeats this function after
-    fetching the returned range and recomputing aggregation.
+    fetching the returned range and recomputing aggregation.  There is no
+    elapsed-time or provider-window ceiling: valid research ranges may need
+    any number of bounded provider chunks.
     """
+    if (
+        trading_start.tzinfo is None
+        or trading_end.tzinfo is None
+        or load_start.tzinfo is None
+        or trading_start.utcoffset() != timedelta(0)
+        or trading_end.utcoffset() != timedelta(0)
+        or load_start.utcoffset() != timedelta(0)
+        or trading_end <= trading_start
+        or load_start > trading_start
+        or type(eligible_bars) is not int
+        or eligible_bars < 0
+        or type(provider_windows) is not int
+        or provider_windows < 0
+        or type(required_historical_context_bars) is not int
+        or required_historical_context_bars < 0
+    ):
+        raise ValueError("invalid warm-up planning inputs")
     if eligible_bars >= required_historical_context_bars:
         return WarmupPlan(
             load_start, trading_end, eligible_bars, provider_windows, "READY"
         )
-    bound = trading_start - timedelta(days=MAX_ELAPSED_DAYS)
-    if load_start <= bound or provider_windows >= MAX_WINDOWS:
-        return WarmupPlan(
-            load_start,
-            trading_end,
-            eligible_bars,
-            provider_windows,
-            "INSUFFICIENT_WARMUP",
-        )
-    next_start = max(bound, load_start - INITIAL_ESTIMATE)
+    next_start = load_start - INITIAL_ESTIMATE
     return WarmupPlan(
         next_start, trading_end, eligible_bars, provider_windows, "EXTEND"
     )
@@ -149,19 +157,6 @@ class HistoricalDataLoadCoordinator:
             minutes=15 * requirement.required_historical_context_bars
         )
         load_end = trading_end
-        if load_end - load_start > timedelta(days=90):
-            raise HistoricalDataLoadError(
-                "LOAD_RANGE_TOO_LARGE",
-                "The computed historical load range exceeds 90 days.",
-            )
-        if hasattr(self.ingestion, "plan_missing"):
-            plan = self.ingestion.plan_missing(load_start, load_end)
-            if len(plan) > MAX_WINDOWS:
-                raise HistoricalDataLoadError(
-                    "LOAD_PLAN_TOO_LARGE",
-                    "The initial historical load requires too many bounded "
-                    "provider windows.",
-                )
         return load_start, load_end
 
     def run(self, request_id: UUID) -> None:
@@ -302,6 +297,8 @@ class HistoricalDataLoadCoordinator:
                     unchanged=report.unchanged,
                     incomplete_minutes=report.incomplete_minutes,
                     coverage_summary=coverage,
+                    product=getattr(report, "product", None),
+                    window=getattr(report, "window", None),
                 )
 
     def _required_context_bars(self, row) -> int:
