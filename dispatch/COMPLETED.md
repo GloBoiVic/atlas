@@ -153,3 +153,13 @@ review artifact in `dispatch/`. Prior dispatch artifacts remain untouched in `di
 - **Scope:** Corrected authoritative EMA Sweep Confirmation Break v2 semantics, immediate strict confirmation, Strategy-owned W1–W5 pending window, ATR14 stop timing, schema/evidence versioning, nullable non-authoritative expiry, runner handoff, persistence constraints, and public regression coverage.
 - **Validation:** PostgreSQL `atlas_test` migrated to head; full backend suite `322 passed, 1 skipped, 4 warnings`; targeted tests, compileall, Ruff, and diff checks passed.
 - **Review:** `dispatch/workstreams/foundation-freeze-01-reference-strategy/REVIEW.md` — PASS; no blockers.
+
+<!-- completion-id: foundation-freeze-02-experiment-correctness -->
+## Foundation Freeze 02 — Experiment Correctness and Result Immutability — completion record
+
+- **Date/status:** 2026-08-27 — final external-review remediation, validation, and independent review **PASS**; fast-forward merged to `main`.
+- **Commits:** `efe4e62` Freeze Experiment correctness and immutable results; `a9c0436` Remediate Freeze 02 review blockers; `0f04b30` Narrow Freeze 02 failure ownership.
+- **Scope:** Canonical equity/result correctness, independent drawdown amount and percentage maxima, immutable result state, and seam-owned historical Experiment failure classification. Strategy lookup, execution, Risk, accounting, persistence, and unexpected-engine failure ownership remain narrow and typed. Freeze 03 was not started.
+- **Validation:** PostgreSQL migration cycle **2 passed**; PostgreSQL integration **37 passed**; non-integration **294 passed, 1 skipped, 39 deselected**; focused diagnostics/metrics **27 passed**; Experiments **84 passed**; migration revision, compileall, Alembic heads, and diff checks passed.
+- **Review:** `dispatch/workstreams/foundation-freeze-02-experiment-correctness/REVIEW.md` — PASS; no unresolved Important or Critical findings.
+- **Git state:** Merged from `solo/foundation-freeze-02-experiment-correctness` at `0f04b30`; workstream closed. Pre-existing untracked `.codegraph/` and `frontend/.env.local` were untouched.
