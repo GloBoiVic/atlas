@@ -1,5 +1,15 @@
 # Completed
 
+<!-- completion-id: foundation-freeze-03-historical-data-foundation -->
+## Foundation Freeze 03 — Historical Data Foundation — completion record
+
+- **Date/status:** 2026-08-28 — remediation, validation, and fresh independent review **PASS**; commit pushed and workstream closed.
+- **Commit:** `1dd3614` Complete Freeze 03 historical data foundation.
+- **Scope:** Authoritative native OANDA M15 MID plus M1 BID/ASK acquisition, independent bounded planning, durable progress/resume, atomic observation/window persistence, sparse/closure semantics, immutable deterministic V2 DatasetSnapshots, bounded Experiment validation, fail-closed completion, and complete terminal metrics.
+- **Validation:** T036/T037 focused regressions **2 passed**; affected tests **46 passed**; isolated PostgreSQL **11 passed**; full backend **383 passed, 1 skipped, 4 warnings**; scoped Ruff, compileall, and diff checks passed. Existing genuine-year, covered-repeat, and stopped-run recovery evidence remains accepted; no new genuine-year benchmark was run.
+- **Review:** `dispatch/workstreams/foundation-freeze-03-historical-data-foundation/REVIEW.md` — PASS; no Critical or Important findings.
+- **Non-blocking observations:** Accepted malformed-URL `atlas_test.public` validation-process incident and 45 unrelated pre-existing full-Ruff issues remain documented. `.codegraph/` and `frontend/.env.local` were excluded from the commit.
+
 Completion log for items that passed their final gate. Each row references the authoritative
 review artifact in `dispatch/`. Prior dispatch artifacts remain untouched in `dispatch/`.
 
