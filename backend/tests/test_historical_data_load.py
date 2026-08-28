@@ -524,21 +524,19 @@ def test_v2_warmup_extension_uses_missing_only_union_seam() -> None:
         integrity_summary={"warmup_count": 100},
     )
 
+    snapshots = iter((first, extended))
+
     def load_v2(*_args, **_kwargs):
         events.append(("full", 1))
-        return SimpleNamespace(snapshot=first)
-
-    def incremental(*_args, **_kwargs):
-        events.append(("prefix", 1))
-        return SimpleNamespace(snapshot=extended)
+        return SimpleNamespace(snapshot=next(snapshots))
 
     coordinator = HistoricalDataLoadCoordinator(
         lambda: FakeSession(),
-        SimpleNamespace(load_v2=load_v2, load_v2_incremental=incremental),
+        SimpleNamespace(load_v2=load_v2, load_v2_incremental=lambda **_: pytest.fail("legacy incremental path invoked")),
         SimpleNamespace(), FakeRegistry(), repository=repository,
         strategies=FakeStrategies(),
     )
     coordinator.run(row.id)
 
-    assert events == [("full", 1), ("prefix", 1)]
+    assert events == [("full", 1), ("full", 1)]
     assert row.status == "COMPLETED"

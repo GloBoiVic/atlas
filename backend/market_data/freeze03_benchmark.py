@@ -8,6 +8,7 @@ and fingerprint implementation.  It is fixture evidence, never OANDA evidence.
 from __future__ import annotations
 
 import json
+import resource
 import time
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
@@ -45,6 +46,9 @@ class BenchmarkResult:
     reused: int
     repeat_calls: int
     fingerprint: str
+    max_batch_size: int
+    max_progress_payload_bytes: int
+    peak_rss_bytes: int
 
 
 class _FixtureSession:
@@ -82,6 +86,7 @@ class _FixtureRepository:
         self.m1_rows = []
         self.planning_seconds = self.coverage_seconds = self.persistence_seconds = 0.0
         self.inserted = self.unchanged = 0
+        self.max_batch_size = 0
 
     def ensure_initial_venue_instrument(self, _session, _venue):
         return self.mapping
@@ -104,6 +109,18 @@ class _FixtureRepository:
         )
         self.coverage_seconds += time.perf_counter() - began
         return result
+
+    def current_bars_stream(
+        self, session, mapping, start, end, components, resolution=Timeframe.M1
+    ):
+        yield from self.current_bars(session, mapping, start, end, components, resolution)
+
+    def current_bar_rows_stream(
+        self, _session, _mapping, start, end, components, resolution=Timeframe.M1
+    ):
+        for row in sorted(self.m1_rows, key=lambda item: (item.start_time, item.price_component)):
+            if start <= row.start_time < end and resolution is Timeframe.M1 and row.price_component in {c.value for c in components}:
+                yield row
 
     def missing_ranges(
         self, _session, _mapping, start, end, components, resolution=Timeframe.M1
@@ -134,6 +151,7 @@ class _FixtureRepository:
         return tuple(windows)
 
     def apply_bar_batch(self, _session, _mapping, items):
+        self.max_batch_size = max(self.max_batch_size, len(items))
         began = time.perf_counter()
         inserted = unchanged = 0
         for item in items:
@@ -172,7 +190,7 @@ class _FixtureSnapshotRepository:
         self.snapshots = {}
         self.snapshot_seconds = 0.0
 
-    def create_v2_validated(self, _session, snapshot, analytical, execution, gaps):
+    def create_v2_validated(self, _session, snapshot, analytical, execution, gaps, **_kwargs):
         began = time.perf_counter()
         result = self.snapshots.setdefault(snapshot.fingerprint, snapshot)
         self.snapshot_seconds += time.perf_counter() - began
@@ -251,6 +269,7 @@ def run_fixture_benchmarks() -> tuple[BenchmarkResult, ...]:
         repository = _FixtureRepository()
         snapshots = _FixtureSnapshotRepository()
         source = _FixtureSource()
+        first_fingerprint = None
         service = MarketDataService(
             lambda repository=repository: _FixtureSession(repository),
             source,
@@ -260,6 +279,7 @@ def run_fixture_benchmarks() -> tuple[BenchmarkResult, ...]:
         )
         if covered:
             service.load_v2(start, end)
+            first_fingerprint = next(iter(snapshots.snapshots))
             source = _FixtureSource()
             service = MarketDataService(
                 lambda repository=repository: _FixtureSession(repository),
@@ -271,6 +291,7 @@ def run_fixture_benchmarks() -> tuple[BenchmarkResult, ...]:
         source.fail_after = fail_after
         began = time.perf_counter()
         fingerprint_seconds = 0.0
+        max_progress_payload_bytes = 0
         original_fingerprint = ingestion_module.dataset_fingerprint_v2
 
         def measured_fingerprint(original=original_fingerprint, **kwargs):
@@ -282,11 +303,18 @@ def run_fixture_benchmarks() -> tuple[BenchmarkResult, ...]:
 
         ingestion_module.dataset_fingerprint_v2 = measured_fingerprint
         try:
-            report = service.load_v2(start, end)
+            def progress(report):
+                nonlocal max_progress_payload_bytes
+                max_progress_payload_bytes = max(
+                    max_progress_payload_bytes,
+                    len(json.dumps(asdict(report) if hasattr(report, "__dataclass_fields__") else vars(report), default=str)),
+                )
+
+            report = service.load_v2(start, end, progress=progress)
         except RuntimeError:
             source.fail_after = None
             before = sum(source.calls.values())
-            report = service.load_v2(start, end)
+            report = service.load_v2(start, end, progress=progress)
             repeat_calls = sum(source.calls.values()) - before
         else:
             repeat_calls = 0
@@ -296,6 +324,8 @@ def run_fixture_benchmarks() -> tuple[BenchmarkResult, ...]:
         if report.snapshot is None:
             raise RuntimeError(f"fixture coverage invalid: {report.coverage}")
         fingerprint = report.snapshot.fingerprint
+        if covered and fingerprint != first_fingerprint:
+            raise AssertionError("covered repeat changed snapshot fingerprint")
         inserted = repository.inserted
         reused = len(repository.bars) if covered else repository.unchanged
         results.append(
@@ -315,6 +345,9 @@ def run_fixture_benchmarks() -> tuple[BenchmarkResult, ...]:
                 reused=reused,
                 repeat_calls=repeat_calls,
                 fingerprint=fingerprint,
+                max_batch_size=repository.max_batch_size,
+                max_progress_payload_bytes=max_progress_payload_bytes,
+                peak_rss_bytes=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
             )
         )
     return tuple(results)

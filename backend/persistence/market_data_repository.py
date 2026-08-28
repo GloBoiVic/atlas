@@ -6,14 +6,14 @@ caller can compose them in one PostgreSQL transaction.
 """
 
 import json
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import cast
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import case, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -29,7 +29,7 @@ from backend.domain.market_data import (
     Timeframe,
     VenueInstrument,
 )
-from backend.market_data.fingerprint import dataset_fingerprint
+from backend.market_data.fingerprint import V2FingerprintBuilder, dataset_fingerprint
 
 from .models import (
     DatasetSnapshotAnalyticalBarModel,
@@ -257,8 +257,71 @@ class MarketDataRepository:
                 MarketBarModel.is_current.is_(True),
             )
             .order_by(MarketBarModel.start_time, MarketBarModel.price_component)
-        ).all()
+        ).yield_per(_SNAPSHOT_MEMBERSHIP_BATCH_SIZE)
         return tuple(_bar(row, _venue(venue_row, instrument)) for row in rows)
+
+    def current_bars_stream(
+        self,
+        session: Session,
+        venue_instrument_id: UUID,
+        start: datetime,
+        end: datetime,
+        components: Sequence[PriceComponent],
+        timeframe: Timeframe = Timeframe.M1,
+    ) -> Iterable[Bar]:
+        """Yield ordered current bars without an ORM result-list allocation."""
+        venue_row, instrument = self._venue_rows(session, venue_instrument_id)
+        rows = session.scalars(
+            select(MarketBarModel)
+            .where(
+                MarketBarModel.venue_instrument_id == venue_instrument_id,
+                MarketBarModel.resolution == _encode_resolution(timeframe),
+                MarketBarModel.price_component.in_([c.value for c in components]),
+                MarketBarModel.start_time >= start,
+                MarketBarModel.start_time < end,
+                MarketBarModel.is_current.is_(True),
+            )
+            .order_by(
+                MarketBarModel.start_time,
+                case(
+                    (MarketBarModel.price_component == PriceComponent.BID.value, 0),
+                    (MarketBarModel.price_component == PriceComponent.ASK.value, 1),
+                    else_=2,
+                ),
+            )
+        ).yield_per(_SNAPSHOT_MEMBERSHIP_BATCH_SIZE)
+        for row in rows:
+            yield _bar(row, _venue(venue_row, instrument))
+
+    def current_bar_rows_stream(
+        self,
+        session: Session,
+        venue_instrument_id: UUID,
+        start: datetime,
+        end: datetime,
+        components: Sequence[PriceComponent],
+        timeframe: Timeframe = Timeframe.M1,
+    ) -> Iterable[MarketBarModel]:
+        rows = session.scalars(
+            select(MarketBarModel)
+            .where(
+                MarketBarModel.venue_instrument_id == venue_instrument_id,
+                MarketBarModel.resolution == _encode_resolution(timeframe),
+                MarketBarModel.price_component.in_([c.value for c in components]),
+                MarketBarModel.start_time >= start,
+                MarketBarModel.start_time < end,
+                MarketBarModel.is_current.is_(True),
+            )
+            .order_by(
+                MarketBarModel.start_time,
+                case(
+                    (MarketBarModel.price_component == PriceComponent.BID.value, 0),
+                    (MarketBarModel.price_component == PriceComponent.ASK.value, 1),
+                    else_=2,
+                ),
+            )
+        ).yield_per(_SNAPSHOT_MEMBERSHIP_BATCH_SIZE)
+        yield from rows
 
     def missing_ranges(
         self,
@@ -270,17 +333,19 @@ class MarketDataRepository:
         timeframe: Timeframe = Timeframe.M1,
     ) -> tuple[BarRange, ...]:
         wanted = tuple(sorted(set(components), key=lambda c: c.value))
-        existing = self.current_bars(
+        existing = self.current_bar_rows_stream(
             session, venue_instrument_id, start, end, wanted, timeframe
         )
-        by_minute: dict[datetime, set[PriceComponent]] = {}
-        for bar in existing:
-            by_minute.setdefault(bar.start_time, set()).add(bar.price_component)
+        current = next(iter(existing), None)
         ranges: list[BarRange] = []
         step = timedelta(minutes=1 if timeframe is Timeframe.M1 else 15)
         cursor = start
         while cursor < end:
-            missing = tuple(c for c in wanted if c not in by_minute.get(cursor, set()))
+            present = set()
+            while current is not None and current.start_time == cursor:
+                present.add(PriceComponent(current.price_component))
+                current = next(existing, None)
+            missing = tuple(c for c in wanted if c not in present)
             if missing:
                 if (
                     ranges
@@ -293,24 +358,57 @@ class MarketDataRepository:
             cursor += step
         return tuple(ranges)
 
-    def acquired_windows(self, session, venue_instrument_id, resolution, components, start, end):
+    def acquired_windows(
+        self, session, venue_instrument_id, resolution, components, start, end
+    ):
+        # Sparse acquisition reuse is deliberately an M1 execution rule. Native
+        # M15 gaps remain observable/strict even after a successful request.
+        if resolution is not Timeframe.M1:
+            return ()
         key = ",".join(sorted(c.value for c in components))
-        return tuple(session.scalars(select(HistoricalAcquisitionWindowModel).where(
-            HistoricalAcquisitionWindowModel.venue_instrument_id == venue_instrument_id,
-            HistoricalAcquisitionWindowModel.resolution == _encode_resolution(resolution),
-            HistoricalAcquisitionWindowModel.components == key,
-            HistoricalAcquisitionWindowModel.outcome == "SUCCESS_EMPTY_OR_SPARSE",
-            HistoricalAcquisitionWindowModel.start_time >= start,
-            HistoricalAcquisitionWindowModel.end_time <= end,
-        ).order_by(HistoricalAcquisitionWindowModel.start_time)).all())
+        return session.scalars(
+                select(HistoricalAcquisitionWindowModel)
+                .where(
+                    HistoricalAcquisitionWindowModel.venue_instrument_id
+                    == venue_instrument_id,
+                    HistoricalAcquisitionWindowModel.resolution
+                    == _encode_resolution(resolution),
+                    HistoricalAcquisitionWindowModel.components == key,
+                    HistoricalAcquisitionWindowModel.outcome
+                    == "SUCCESS_EMPTY_OR_SPARSE",
+                    HistoricalAcquisitionWindowModel.start_time < end,
+                    HistoricalAcquisitionWindowModel.end_time > start,
+                )
+                .order_by(HistoricalAcquisitionWindowModel.start_time)
+            ).yield_per(_SNAPSHOT_MEMBERSHIP_BATCH_SIZE)
 
-    def record_acquisition_window(self, session, venue_instrument_id, resolution, components, start, end, outcome, returned_count=0):
+    def record_acquisition_window(
+        self,
+        session,
+        venue_instrument_id,
+        resolution,
+        components,
+        start,
+        end,
+        outcome,
+        returned_count=0,
+    ):
         key = ",".join(sorted(c.value for c in components))
-        identity = sha256(f"{venue_instrument_id}|{_encode_resolution(resolution)}|{key}|{start.isoformat()}|{end.isoformat()}".encode()).hexdigest()
-        session.merge(HistoricalAcquisitionWindowModel(
-            venue_instrument_id=venue_instrument_id, resolution=_encode_resolution(resolution), components=key,
-            start_time=start, end_time=end, outcome=outcome, request_identity=identity, returned_count=returned_count,
-        ))
+        identity = sha256(
+            f"{venue_instrument_id}|{_encode_resolution(resolution)}|{key}|{start.isoformat()}|{end.isoformat()}".encode()
+        ).hexdigest()
+        session.merge(
+            HistoricalAcquisitionWindowModel(
+                venue_instrument_id=venue_instrument_id,
+                resolution=_encode_resolution(resolution),
+                components=key,
+                start_time=start,
+                end_time=end,
+                outcome=outcome,
+                request_identity=identity,
+                returned_count=returned_count,
+            )
+        )
 
     def apply_bar_batch(
         self,
@@ -481,7 +579,7 @@ class DatasetSnapshotRepository:
             select(DatasetSnapshotModel).order_by(
                 DatasetSnapshotModel.created_at, DatasetSnapshotModel.id
             )
-        ).all()
+        ).yield_per(_SNAPSHOT_MEMBERSHIP_BATCH_SIZE)
         return tuple(self._to_domain(session, row) for row in rows)
 
     def create_validated(
@@ -582,14 +680,15 @@ class DatasetSnapshotRepository:
         )
         session.add(row)
         session.flush()
-        session.add_all(
-            [
-                DatasetSnapshotBarModel(
-                    dataset_snapshot_id=row.id, market_bar_id=bar_id
-                )
-                for bar_id in ids
-            ]
-        )
+        for offset in range(0, len(ids), _SNAPSHOT_MEMBERSHIP_BATCH_SIZE):
+            session.add_all(
+                [
+                    DatasetSnapshotBarModel(
+                        dataset_snapshot_id=row.id, market_bar_id=bar_id
+                    )
+                    for bar_id in ids[offset : offset + _SNAPSHOT_MEMBERSHIP_BATCH_SIZE]
+                ]
+            )
         session.flush()
         return snapshot
 
@@ -597,9 +696,11 @@ class DatasetSnapshotRepository:
         self,
         session: Session,
         snapshot: DatasetSnapshot,
-        analytical: Sequence[Bar],
-        execution: Sequence[tuple[MarketBarModel, Bar]],
-        gaps: Sequence[dict[str, object]],
+        analytical: Iterable[Bar],
+        execution: Iterable[tuple[MarketBarModel, Bar]],
+        gaps: Iterable[dict[str, object]] | None = None,
+        *,
+        metadata: dict[str, object] | None = None,
     ) -> DatasetSnapshot:
         """Persist one immutable V2 snapshot and its provider memberships."""
         if snapshot.snapshot_schema != "ATLAS_HISTORICAL_SIMULATION_SNAPSHOT_V2":
@@ -653,10 +754,44 @@ class DatasetSnapshotRepository:
         # objects and made a month-long load spend most of its time in the
         # post-persistence snapshot phase.  Explicit values retain the same
         # database checks/triggers and make the operation one bounded unit.
-        analytical_rows = [
-                {
+        def insert_batches(table, values):
+            batch = []
+            for value in values:
+                batch.append(value)
+                if len(batch) == _SNAPSHOT_MEMBERSHIP_BATCH_SIZE:
+                    session.execute(insert(table), batch)
+                    batch = []
+            if batch:
+                session.execute(insert(table), batch)
+
+        fingerprint = V2FingerprintBuilder(metadata or {})
+        analytical_count = 0
+        previous_start = None
+
+        def analytical_rows():
+            nonlocal analytical_count, previous_start
+            for bar in analytical:
+                if (
+                    bar.timeframe is not Timeframe.M15
+                    or bar.price_component is not PriceComponent.MID
+                    or not bar.complete
+                    or bar.start_time < snapshot.coverage_start
+                    or bar.end_time > snapshot.coverage_end
+                    or (previous_start is not None and bar.start_time <= previous_start)
+                ):
+                    raise ValueError("V2 analytical membership is invalid or unordered")
+                previous_start = bar.start_time
+                analytical_count += 1
+                value = {
+                    "sequence": analytical_count,
+                    "start_time": bar.start_time.isoformat(),
+                    "end_time": bar.end_time.isoformat(),
+                    "content_fingerprint": bar_content_fingerprint(bar),
+                }
+                fingerprint.add("analytical", value)
+                yield {
                     "dataset_snapshot_id": row.id,
-                    "sequence": sequence,
+                    "sequence": analytical_count,
                     "start_time": bar.start_time,
                     "end_time": bar.end_time,
                     "open_price": bar.open,
@@ -665,55 +800,119 @@ class DatasetSnapshotRepository:
                     "close_price": bar.close,
                     "volume": bar.volume,
                     "complete": True,
-                    "content_fingerprint": bar_content_fingerprint(bar),
+                    "content_fingerprint": value["content_fingerprint"],
                     "retrieved_at": snapshot.created_at,
                 }
-                for sequence, bar in enumerate(analytical, 1)
-            ]
-        if analytical_rows:
-            # Keep the immutable snapshot transaction atomic, but bound each
-            # PostgreSQL executemany payload.  A full-year native-M15 product
-            # can contain tens of thousands of rows; one unbounded payload
-            # exceeds the practical driver/server statement limits.
-            for offset in range(
-                0, len(analytical_rows), _SNAPSHOT_MEMBERSHIP_BATCH_SIZE
-            ):
-                session.execute(
-                    insert(DatasetSnapshotAnalyticalBarModel.__table__),
-                    analytical_rows[offset : offset + _SNAPSHOT_MEMBERSHIP_BATCH_SIZE],
-                )
-        execution_rows = [
-                {
+
+        insert_batches(DatasetSnapshotAnalyticalBarModel.__table__, analytical_rows())
+        execution_count = 0
+        last_execution_by_component = {}
+
+        def execution_rows():
+            nonlocal execution_count
+            for market_bar, bar in execution:
+                component = bar.price_component.value
+                if (
+                    component in last_execution_by_component
+                    and bar.start_time <= last_execution_by_component[component]
+                ):
+                    raise ValueError("V2 execution membership is invalid or unordered")
+                if (
+                    market_bar.venue_instrument_id != mapping.id
+                    or not market_bar.is_current
+                ):
+                    raise ValueError(
+                        "V2 execution membership must contain current bars"
+                    )
+                last_execution_by_component[component] = bar.start_time
+                execution_count += 1
+                content = bar_content_fingerprint(bar)
+                value = {
+                    "sequence": execution_count,
+                    "market_bar_id": str(market_bar.id),
+                    "price_component": bar.price_component.value,
+                    "start_time": bar.start_time.isoformat(),
+                    "observation_fingerprint": content,
+                }
+                fingerprint.add("execution", value)
+                yield {
                     "dataset_snapshot_id": row.id,
-                    "sequence": sequence,
+                    "sequence": execution_count,
                     "market_bar_id": market_bar.id,
                     "price_component": bar.price_component.value,
                     "start_time": bar.start_time,
                     "end_time": bar.end_time,
-                    "observation_fingerprint": bar_content_fingerprint(bar),
+                    "observation_fingerprint": content,
                 }
-                for sequence, (market_bar, bar) in enumerate(execution, 1)
-            ]
-        if execution_rows:
-            for offset in range(
-                0, len(execution_rows), _SNAPSHOT_MEMBERSHIP_BATCH_SIZE
-            ):
-                session.execute(
-                    insert(DatasetSnapshotExecutionObservationModel.__table__),
-                    execution_rows[offset : offset + _SNAPSHOT_MEMBERSHIP_BATCH_SIZE],
-                )
-        gap_rows = [
-                {"dataset_snapshot_id": row.id, "sequence": sequence, **gap}
-                for sequence, gap in enumerate(gaps, 1)
-            ]
-        if gap_rows:
-            for offset in range(0, len(gap_rows), _SNAPSHOT_MEMBERSHIP_BATCH_SIZE):
-                session.execute(
-                    insert(DatasetSnapshotGapModel.__table__),
-                    gap_rows[offset : offset + _SNAPSHOT_MEMBERSHIP_BATCH_SIZE],
-                )
-        session.flush()
-        return snapshot
+
+        insert_batches(
+            DatasetSnapshotExecutionObservationModel.__table__, execution_rows()
+        )
+        if gaps is None:
+            analytical_rows_for_gaps = session.scalars(
+                select(DatasetSnapshotAnalyticalBarModel)
+                .where(DatasetSnapshotAnalyticalBarModel.dataset_snapshot_id == row.id)
+                .order_by(DatasetSnapshotAnalyticalBarModel.sequence)
+            ).yield_per(_SNAPSHOT_MEMBERSHIP_BATCH_SIZE)
+
+            def generated_gaps():
+                cursor = snapshot.coverage_start
+                for member in analytical_rows_for_gaps:
+                    while cursor < member.start_time:
+                        yield {
+                            "start_time": cursor,
+                            "end_time": cursor + timedelta(minutes=15),
+                            "price_component": "MID",
+                            "resolution": "M15",
+                            "source": "OANDA",
+                            "reason": "MISSING_NATIVE_COMPLETED_CANDLE",
+                            "classification": "NON_BLOCKING",
+                            "affected_state": None,
+                            "affected_event": None,
+                            "policy_version": "GAP_POLICY_V1",
+                            "blocked": False,
+                        }
+                        cursor += timedelta(minutes=15)
+                    cursor = member.start_time + timedelta(minutes=15)
+                while cursor < snapshot.coverage_end:
+                    yield {
+                        "start_time": cursor,
+                        "end_time": cursor + timedelta(minutes=15),
+                        "price_component": "MID",
+                        "resolution": "M15",
+                        "source": "OANDA",
+                        "reason": "MISSING_NATIVE_COMPLETED_CANDLE",
+                        "classification": "NON_BLOCKING",
+                        "affected_state": None,
+                        "affected_event": None,
+                        "policy_version": "GAP_POLICY_V1",
+                        "blocked": False,
+                    }
+                    cursor += timedelta(minutes=15)
+
+            gap_values = generated_gaps()
+        else:
+            gap_values = gaps
+
+        def gap_rows():
+            for sequence, gap in enumerate(gap_values, 1):
+                fingerprint.add("gap", gap)
+                yield {"dataset_snapshot_id": row.id, "sequence": sequence, **gap}
+
+        insert_batches(DatasetSnapshotGapModel.__table__, gap_rows())
+        actual_fingerprint = fingerprint.hexdigest()
+        if metadata is not None and (
+            snapshot.fingerprint not in ("", "0" * 64)
+            and actual_fingerprint != snapshot.fingerprint
+        ):
+            raise ValueError("snapshot fingerprint does not match membership")
+        summary = dict(snapshot.integrity_summary)
+        summary.update(
+            analytical_count=analytical_count, execution_count=execution_count
+        )
+        return replace(
+            snapshot, fingerprint=actual_fingerprint, integrity_summary=summary
+        )
 
     def members(self, session: Session, snapshot_id: UUID) -> tuple[Bar, ...]:
         return tuple(
@@ -733,11 +932,9 @@ class DatasetSnapshotRepository:
         venue, _instrument = self._snapshot_venue_rows(session, snapshot)
         rows = session.scalars(
             select(DatasetSnapshotAnalyticalBarModel)
-            .where(
-                DatasetSnapshotAnalyticalBarModel.dataset_snapshot_id == snapshot_id
-            )
+            .where(DatasetSnapshotAnalyticalBarModel.dataset_snapshot_id == snapshot_id)
             .order_by(DatasetSnapshotAnalyticalBarModel.sequence)
-        ).all()
+        ).yield_per(_SNAPSHOT_MEMBERSHIP_BATCH_SIZE)
         return tuple(
             Bar(
                 venue.instrument,
@@ -805,7 +1002,7 @@ class DatasetSnapshotRepository:
                 MarketBarModel.price_component.in_([item.value for item in wanted]),
             )
             .order_by(MarketBarModel.start_time, MarketBarModel.price_component)
-        ).all()
+        ).yield_per(_SNAPSHOT_MEMBERSHIP_BATCH_SIZE)
         return tuple(
             SnapshotBar(
                 _bar(row, _venue(venue, instrument)),

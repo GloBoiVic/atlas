@@ -28,6 +28,7 @@ from backend.persistence.models import (
     DatasetSnapshotExecutionObservationModel,
     DatasetSnapshotGapModel,
     DatasetSnapshotModel,
+    HistoricalAcquisitionWindowModel,
     InstrumentModel,
     MarketBarModel,
     StrategyVersionModel,
@@ -45,6 +46,21 @@ from backend.strategies.registry import (
 RISK_SCHEMA_VERSION = "PHASE5_RISK_CONFIG_V1"
 SIMULATION_SCHEMA_VERSION = "PHASE5_SIMULATION_CONFIG_V1"
 MODEL_VERSION = "PHASE5_HISTORICAL_EXECUTION_V2"
+
+
+def _execution_coverage_valid(report, successful_windows) -> bool:
+    """Accept only fully absent minutes covered by successful M1 acquisition."""
+    if report.closure_anomalies or report.unexpected_observations:
+        return False
+    return all(
+        len(missing.components) == 2
+        and any(
+            window.start_time <= missing.start
+            and window.end_time >= missing.start + timedelta(minutes=1)
+            for window in successful_windows
+        )
+        for missing in report.missing
+    )
 
 
 def simulation_config(
@@ -377,12 +393,29 @@ class ExperimentConfigurationService:
             )
         ).all()
         execution_bars = tuple(_execution_bar(row) for row in execution_rows)
-        if not validate_coverage(
+        execution_report = validate_coverage(
             trading_start,
             trading_end,
             execution_bars,
             (PriceComponent.BID, PriceComponent.ASK),
-        ).valid:
+        )
+        successful_m1_windows = tuple(
+            session.scalars(
+                select(HistoricalAcquisitionWindowModel).where(
+                    HistoricalAcquisitionWindowModel.venue_instrument_id
+                    == snapshot.venue_instrument_id,
+                    HistoricalAcquisitionWindowModel.resolution == "M1",
+                    HistoricalAcquisitionWindowModel.components == "ASK,BID",
+                    HistoricalAcquisitionWindowModel.outcome
+                    == "SUCCESS_EMPTY_OR_SPARSE",
+                    HistoricalAcquisitionWindowModel.start_time < trading_end,
+                    HistoricalAcquisitionWindowModel.end_time > trading_start,
+                )
+            ).all()
+        )
+        # A successful sparse request may legitimately contain no M1 rows. It
+        # cannot, however, turn a one-sided BID/ASK observation into valid data.
+        if not _execution_coverage_valid(execution_report, successful_m1_windows):
             reasons.append("INCOMPLETE_EXECUTION_DATA")
 
         blocked_gaps = session.scalars(

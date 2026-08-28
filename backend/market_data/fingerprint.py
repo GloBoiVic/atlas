@@ -147,6 +147,24 @@ def dataset_fingerprint_v2(
     return digest.hexdigest()
 
 
+class V2FingerprintBuilder:
+    """Incremental V2 hasher; callers may feed database rows in bounded batches."""
+
+    def __init__(self, metadata: dict[str, Any]) -> None:
+        self._digest = hashlib.sha256()
+        header = dict(metadata)
+        header["schema"] = FINGERPRINT_SCHEMA_V2
+        self._digest.update(_line({"kind": "header", "value": header}))
+
+    def add(self, kind: str, value: dict[str, Any]) -> None:
+        if kind not in {"analytical", "execution", "gap"}:
+            raise ValueError("invalid V2 fingerprint section")
+        self._digest.update(_line({"kind": kind, "value": value}))
+
+    def hexdigest(self) -> str:
+        return self._digest.hexdigest()
+
+
 def bar_content_fingerprint(bar: Bar) -> str:
     """Stable provider-observation fingerprint shared by V2 memberships."""
     value = {"bar": bar.to_json(), "content_schema": "ATLAS_BAR_CONTENT_SHA256_V1"}

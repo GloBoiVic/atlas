@@ -1,4 +1,6 @@
 from datetime import UTC, datetime, timedelta
+import ast
+import inspect
 from types import SimpleNamespace
 
 # ruff: noqa: E501
@@ -13,6 +15,7 @@ from backend.domain.market_data import (
 from backend.integrations.oanda.source import FetchDiagnostics, FetchResult
 from backend.market_data.freeze03_benchmark import run_fixture_benchmarks
 from backend.market_data.ingestion import MarketDataService
+import backend.market_data.ingestion as ingestion_module
 
 START = datetime(2026, 1, 5, 12, tzinfo=UTC)
 
@@ -117,6 +120,45 @@ def test_v2_requires_both_native_provider_products() -> None:
         service.load_v2(START, START + timedelta(minutes=15))
 
 
+def test_v2_authoritative_reads_do_not_use_full_range_or_compatibility_materialization() -> None:
+    source = inspect.getsource(ingestion_module.MarketDataService)
+    tree = ast.parse(source)
+    coverage = next(
+        node for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "_coverage_product"
+    )
+    assert not any(
+        isinstance(node, ast.Attribute) and node.attr == "current_bars"
+        for node in ast.walk(coverage)
+    )
+    snapshot = next(
+        node for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "create_snapshot_v2"
+    )
+    assert not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in {"tuple", "list", "set"}
+        for node in ast.walk(snapshot)
+    )
+    plans = next(
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "plans"
+    )
+    authoritative = (*ast.walk(snapshot), *ast.walk(plans))
+    assert not any(
+        isinstance(node, ast.Call)
+        and (
+            (isinstance(node.func, ast.Name) and node.func.id in {"tuple", "list", "set"})
+            or (isinstance(node.func, ast.Attribute) and node.func.attr == "all")
+        )
+        for node in authoritative
+    )
+    assert not any(isinstance(node, ast.AugAssign) for node in ast.walk(plans))
+
+
 def test_covered_v2_request_makes_no_provider_calls(monkeypatch) -> None:
     source = NativeSource()
     service = MarketDataService(lambda: Session(), source, repository=EmptyRepository())
@@ -186,7 +228,16 @@ def test_successful_empty_window_is_acquisition_coverage_not_continuity(monkeypa
     service.load_v2(START, START + timedelta(minutes=15))
     first_calls = len(source.calls)
     service.load_v2(START, START + timedelta(minutes=15))
-    assert len(source.calls) == first_calls
+    assert len(source.calls) == first_calls + 1
+    assert [call[0] for call in source.calls].count("m1") == 1
+
+
+def test_acquisition_reuse_subtracts_smaller_request_inside_larger_window() -> None:
+    from backend.market_data.ingestion import _subtract_acquisition_windows
+
+    missing = (SimpleNamespace(start=START, end=START + timedelta(minutes=30), components=(PriceComponent.BID, PriceComponent.ASK)),)
+    acquired = (SimpleNamespace(start_time=START - timedelta(minutes=15), end_time=START + timedelta(minutes=45)),)
+    assert _subtract_acquisition_windows(missing, acquired) == ()
 
 
 def test_benchmark_harness_reports_all_required_recovery_scenarios() -> None:
@@ -201,3 +252,7 @@ def test_benchmark_harness_reports_all_required_recovery_scenarios() -> None:
     assert results["repeat_covered_one_year"].m1_calls == 0
     assert results["repeat_covered_one_year"].reused > 0
     assert results["interrupted_resumed_one_year"].repeat_calls > 0
+    assert results["repeat_covered_one_year"].fingerprint == results["fresh_one_year"].fingerprint
+    assert results["fresh_one_year"].max_batch_size <= 4000
+    assert results["fresh_one_year"].max_progress_payload_bytes < 4096
+    assert results["fresh_one_year"].peak_rss_bytes > 0

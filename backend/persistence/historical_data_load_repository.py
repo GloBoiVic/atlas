@@ -104,13 +104,17 @@ class HistoricalDataLoadRepository:
         )
         if row is None or row.status != "RUNNING":
             return False
-        row.fetched_ranges = _ranges(fetched_ranges)
-        row.committed_ranges = _ranges(committed_ranges)
+        # These legacy columns are retained for schema compatibility, but a
+        # progress update must never copy the request-sized window history into
+        # JSON.  The durable acquisition-window table is the resume authority;
+        # progress stores only bounded counters and the latest window below.
+        row.fetched_ranges = []
+        row.committed_ranges = []
         row.inserted, row.reactivated, row.unchanged = inserted, reactivated, unchanged
         row.incomplete_minute_count = len(incomplete_minutes)
         previous_progress = (row.coverage_summary or {}).get("progress", {})
         if completed_units is None:
-            completed_units = len(committed_ranges)
+            completed_units = 0
         if previous_progress.get("completed_units") is not None:
             completed_units = max(completed_units, previous_progress["completed_units"])
         progress = {
@@ -118,8 +122,8 @@ class HistoricalDataLoadRepository:
             "completed_units": completed_units,
             "total_units": total_units,
             "unit": unit,
-            "fetched_range_count": len(fetched_ranges),
-            "committed_range_count": len(committed_ranges),
+            "fetched_range_count": 0,
+            "committed_range_count": 0,
         }
         if product is not None:
             products = dict(previous_progress.get("products", {}))

@@ -28,12 +28,16 @@ from backend.domain.market_data import (
     Timeframe,
     VenueInstrument,
 )
-from backend.market_data.fingerprint import dataset_fingerprint
+from backend.market_data.fingerprint import (
+    bar_content_fingerprint,
+    dataset_fingerprint,
+    dataset_fingerprint_v2,
+)
 from backend.persistence.database import configure_utc_session_timezone
 from backend.persistence.market_data_repository import (
+    _SNAPSHOT_MEMBERSHIP_BATCH_SIZE,
     BarBatchItem,
     BarBatchResult,
-    _SNAPSHOT_MEMBERSHIP_BATCH_SIZE,
     DatasetSnapshotRepository,
     MarketDataRepository,
 )
@@ -286,7 +290,11 @@ def test_v2_bulk_memberships_persist_representative_large_batch(
     # payloads must stay well below the live 740k-row membership while not
     # regressing to the former ~740 round trips.
     assert _SNAPSHOT_MEMBERSHIP_BATCH_SIZE == 10_000
-    assert (740_226 + _SNAPSHOT_MEMBERSHIP_BATCH_SIZE - 1) // _SNAPSHOT_MEMBERSHIP_BATCH_SIZE == 75
+    assert (
+        (740_226 + _SNAPSHOT_MEMBERSHIP_BATCH_SIZE - 1)
+        // _SNAPSHOT_MEMBERSHIP_BATCH_SIZE
+        == 75
+    )
     session, _ = repository_session
     _mapping(session)
     start = datetime(2026, 1, 5, 10, tzinfo=UTC)
@@ -325,6 +333,20 @@ def test_v2_bulk_memberships_persist_representative_large_batch(
         }
         for index in range(100)
     )
+    expected_fingerprint = dataset_fingerprint_v2(
+        metadata={},
+        analytical_members=(
+            {
+                "sequence": sequence,
+                "start_time": bar.start_time.isoformat(),
+                "end_time": bar.end_time.isoformat(),
+                "content_fingerprint": bar_content_fingerprint(bar),
+            }
+            for sequence, bar in enumerate(analytical, 1)
+        ),
+        execution_members=(),
+        gaps=gaps,
+    )
     snapshot = DatasetSnapshot(
         uuid4(),
         VenueInstrument(Instrument.EUR_USD, Provider.OANDA, "EUR_USD"),
@@ -335,13 +357,18 @@ def test_v2_bulk_memberships_persist_representative_large_batch(
         ALIGNMENT_CONVENTION,
         SESSION_POLICY,
         FINGERPRINT_SCHEMA_V2,
-        "b" * 64,
-        {"status": "VALID", "policy_version": GAP_POLICY_V1},
+            expected_fingerprint,
+            {
+                "status": "VALID",
+                "policy_version": GAP_POLICY_V1,
+                "analytical_count": len(analytical),
+                "execution_count": 0,
+            },
         start + timedelta(days=1),
         SNAPSHOT_SCHEMA_V2,
     )
     stored = DatasetSnapshotRepository().create_v2_validated(
-        session, snapshot, analytical, (), gaps
+        session, snapshot, iter(analytical), iter(()), iter(gaps)
     )
     assert stored.id == snapshot.id
     assert (

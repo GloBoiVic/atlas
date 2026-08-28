@@ -12,6 +12,7 @@ from backend.experiments.configuration import (
     SIMULATION_SCHEMA_VERSION,
     ConfigurationError,
     _execution_bar,
+    _execution_coverage_valid,
     risk_config,
     simulation_config,
 )
@@ -67,6 +68,22 @@ def test_execution_bar_normalization_preserves_canonical_constructor_contract() 
     assert bar.provider is Provider.OANDA
     assert bar.timeframe is Timeframe.M1
     assert bar.price_component is PriceComponent.BID
+
+
+def test_sparse_execution_requires_provenance_and_rejects_one_sided_absence() -> None:
+    minute = datetime(2026, 1, 5, tzinfo=UTC)
+    window = SimpleNamespace(start_time=minute, end_time=minute + timedelta(minutes=1))
+    fully_absent = SimpleNamespace(
+        missing=(SimpleNamespace(start=minute, components=(PriceComponent.BID, PriceComponent.ASK)),),
+        closure_anomalies=(), unexpected_observations=(),
+    )
+    one_sided = SimpleNamespace(
+        missing=(SimpleNamespace(start=minute, components=(PriceComponent.BID,)),),
+        closure_anomalies=(), unexpected_observations=(),
+    )
+    assert _execution_coverage_valid(fully_absent, (window,))
+    assert not _execution_coverage_valid(fully_absent, ())
+    assert not _execution_coverage_valid(one_sided, (window,))
 
 
 def test_production_registration_archives_once_and_evaluation_has_no_path_input() -> (

@@ -17,6 +17,7 @@ from backend.domain.market_data import (
     VenueInstrument,
 )
 from backend.market_data.fingerprint import dataset_fingerprint_v2
+from backend.persistence.market_data_repository import MarketDataRepository
 
 
 def test_v2_snapshot_accepts_native_m15_contract() -> None:
@@ -134,3 +135,48 @@ def test_v2_fingerprint_canonicalizes_nested_utc_gap_datetimes() -> None:
             }
         ],
     )
+
+
+def test_v2_fingerprint_is_independent_of_producer_batch_size() -> None:
+    metadata = {"provider": "OANDA", "coverage_start": "2026-01-01T00:00:00Z"}
+    analytical = tuple({"sequence": i, "value": i * 2} for i in range(1, 1001))
+    execution = tuple({"sequence": i, "market_bar_id": str(i)} for i in range(1, 1001))
+
+    def batches(values, size):
+        for offset in range(0, len(values), size):
+            yield from values[offset : offset + size]
+
+    expected = dataset_fingerprint_v2(
+        metadata=metadata, analytical_members=analytical,
+        execution_members=execution, gaps=(),
+    )
+    for analytical_size, execution_size in ((1, 7), (37, 113), (10_000, 3)):
+        assert dataset_fingerprint_v2(
+            metadata=metadata,
+            analytical_members=batches(analytical, analytical_size),
+            execution_members=batches(execution, execution_size),
+            gaps=(),
+        ) == expected
+
+
+def test_current_bar_snapshot_read_uses_bounded_result_stream(monkeypatch) -> None:
+    class Result:
+        def yield_per(self, size):
+            assert size == 10_000
+            return iter(())
+
+        def all(self):  # pragma: no cover - proves the forbidden path is unused
+            raise AssertionError("snapshot read must not call ORM all()")
+
+    class Session:
+        def scalars(self, _statement):
+            return Result()
+
+    repository = MarketDataRepository()
+    monkeypatch.setattr(
+        repository, "_venue_rows", lambda _session, _venue_id: (object(), object())
+    )
+    assert repository.current_bars(
+        Session(), uuid4(), datetime(2026, 1, 1, tzinfo=UTC),
+        datetime(2026, 1, 2, tzinfo=UTC), (PriceComponent.MID,),
+    ) == ()

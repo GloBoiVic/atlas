@@ -1,6 +1,6 @@
 # Foundation Freeze 03 — Historical Data Foundation
 
-Status: `READY FOR MERGE APPROVAL`
+Status: `VALIDATION BLOCKED BY OANDA ACCOUNT CONFIGURATION`
 Classification: `Critical`
 Workstream: `foundation-freeze-03-historical-data-foundation`
 Branch: `solo/foundation-freeze-03-historical-data-foundation`
@@ -69,6 +69,42 @@ resume, immutable membership/fingerprints, and stale-path quarantine. Its requir
 tests and benchmark evidence are binding.
 
 ## Task state
+
+Latest validation found request-sized V2 coverage/metadata collections and fixture
+repeat-equivalence telemetry gaps despite a green backend suite. T020 is opened to
+resolve those boundedness/equivalence findings before genuine benchmarking.
+
+T018 fixed the generator-factory iterator defect. Fresh validation is required to
+verify the remaining immutability-trigger suite failures, bounded behavior, and the
+Intel Mac benchmark gates; OANDA account configuration remains an environment gate.
+
+T014 architecture remediation is approved. T017 implemented sparse validation,
+strict native M15 semantics, canonical warm-up, and overlapping-window reuse.
+
+The API-path validation correctly planned the completed-bar warm-up and is making
+durable progress on `atlas_test`; successive sessions have persisted native M15 and
+M1 units but have not reached snapshot creation. Resume/full-year completion, coverage
+validation, and repeat evidence remain required. An accidental unusable process
+against local `atlas` was disclosed and is excluded from evidence.
+
+T001–T016 are complete with concerns. External review requires a narrow correction to
+sparse M1 validity, strict M15 semantics, warm-up authority, and overlapping
+acquisition-window reuse. ARCHITECTURE.md must be updated and approved before
+implementation. Developer opened a final performance remediation: bound progress,
+PostgreSQL reads, fingerprinting, membership insertion, and covered-repeat planning
+with Intel Mac RSS/timing evidence. Developer approved the performance architecture;
+T018's first slice removed per-window whole-range scans and bounded progress, but left
+request-sized snapshot ORM collections and lacks real Intel Mac benchmark evidence.
+T018 continuation finished bounded reads/chunked membership and deterministic
+regressions but still requires profile-guided market_bars persistence review and
+genuine benchmark evidence. The stopped full-year load is pre-remediation evidence and
+must not be resumed unchanged; validation waits until optimization is complete. T019
+is opened for the append-only snapshot update, ordered execution stream, and remaining
+request-sized collection defects found by validation. T019 fixed these defects and the
+full backend suite is green; fresh validation still finds authoritative V2
+`current_bars` tuple materialization and tuple-accumulated planning plus an
+inconsistent compatibility fallback. T020 is reopened for this narrow source-audit
+remediation before any further long live run.
 
 T001–T012 are complete with concerns. T008 repaired the stale API fixture but its
 full-calendar-year durable run exposed a live schema constraint still enforcing
@@ -146,6 +182,12 @@ OANDA are available and must be validated without exposing secrets.
   full-year snapshot/repeat evidence without changing semantics.
 - `T016-suite-reconciliation`: reconcile stale migration/frontier assertions and safe
   disposable migration teardown, then rerun the full suite.
+- `T017-sparse-reuse-and-warmup-remediation`: implement approved sparse execution,
+  strict analytical, canonical warm-up, and overlapping-window semantics.
+- `T019-performance-validation-remediation`: fix append-only snapshot finalization,
+  ordered execution streams, and remaining V2 request-sized collections.
+- `T020-final-bounded-v2-path`: eliminate remaining authoritative V2 request-sized
+  collections and prove deterministic repeat equivalence/telemetry.
 
 Dependency order: T001 and T002 may proceed independently after approval; T003 depends
 on both; T004 depends on T001–T003; T005 follows the implementation and is the final
@@ -159,4 +201,14 @@ and `frontend/.env.local` are intentionally untouched. T015 is complete with con
 fresh validation proved live snapshot/repeat semantics but found stale suite assertions
 and guarded teardown. T016 reconciled those assertions and teardown; fresh validation
 now passes the full backend suite and confirms genuine full-year sparse
-snapshot/repeat evidence with zero repeat provider calls. Await explicit merge approval.
+snapshot/repeat evidence with zero repeat provider calls. External review corrections
+are reconciled into ARCHITECTURE.md; T017 is complete with concerns and T018
+performance continuation completed bounded V2 streaming, incremental fingerprinting,
+Core batch membership writes, and bounded gap generation. Multi-hour validation is now
+authorized; T018's iterator remediation is complete with concerns. Fresh validation
+must load root `.env`, verify immutability-trigger behavior, profile the actual Intel
+Mac/PostgreSQL/OANDA path, and report any unavailable credential gate. T019 is complete
+with concerns; T020 validation remediation is complete. Final validation passes the
+full backend suite and authoritative bounded-path audit, but the genuine full-year
+benchmark is blocked because root `.env` lacks an OANDA account ID. No review/merge
+readiness is claimed until that evidence is supplied.

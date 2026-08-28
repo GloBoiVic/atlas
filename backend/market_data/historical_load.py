@@ -217,34 +217,6 @@ class HistoricalDataLoadCoordinator:
                     )
                     return
                 new_load_start = plan.load_start
-                incremental = getattr(self.ingestion, "load_v2_incremental", None)
-                if incremental is not None:
-                    try:
-                        snapshot_report = incremental(
-                            new_load_start,
-                            row.load_end,
-                            previous_snapshot_id=snapshot.id,
-                            previous_start=load_start,
-                            progress=lambda report: self._progress(request_id, report),
-                        )
-                        snapshot = snapshot_report.snapshot
-                        windows += 1
-                        eligible = self._v2_warmup_count(
-                            snapshot.id, row.trading_start, snapshot_report
-                        )
-                        plan = _warmup_plan(
-                            row.trading_start,
-                            row.trading_end,
-                            new_load_start,
-                            eligible,
-                            windows,
-                            required_context,
-                        )
-                        if plan.outcome == "READY":
-                            break
-                    except TypeError as error:
-                        if "previous_snapshot_id" not in str(error):
-                            raise
                 load_start = new_load_start
             if eligible < required_context:
                 self._fail(
@@ -299,6 +271,9 @@ class HistoricalDataLoadCoordinator:
                     coverage_summary=coverage,
                     product=getattr(report, "product", None),
                     window=getattr(report, "window", None),
+                    completed_units=(
+                        getattr(report, "window", {}) or {}
+                    ).get("committed_count"),
                 )
 
     def _required_context_bars(self, row) -> int:

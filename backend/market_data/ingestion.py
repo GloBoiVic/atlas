@@ -5,9 +5,10 @@ separate steps.  Repositories own persistence details; the application layer
 only coordinates canonical bars, coverage, and immutable snapshots.
 """
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from hashlib import sha256
 from types import SimpleNamespace
 from typing import Any, Protocol
 from uuid import UUID, uuid4
@@ -46,7 +47,7 @@ from .coverage import CoverageReport, diagnostic_payloads, validate_coverage
 from .fingerprint import (
     bar_content_fingerprint,
     dataset_fingerprint,
-    dataset_fingerprint_v2,
+    dataset_fingerprint_v2,  # noqa: F401 - benchmark instrumentation seam
 )
 from .session_policy import EXPECTED_DATA, OANDA_EUR_USD_POLICY
 
@@ -187,21 +188,116 @@ def _coalesce_expected_ranges(
     step: timedelta = timedelta(minutes=1),
 ) -> tuple[tuple[datetime, datetime], ...]:
     """Coalesce only adjacent missing session-open intervals."""
-    minutes: set[datetime] = set()
-    for item in ranges:
-        cursor = item.start
-        while cursor < item.end:
-            if OANDA_EUR_USD_POLICY.classify_minute(cursor)[0] == EXPECTED_DATA:
-                minutes.add(cursor)
-            cursor += step
-    ordered = sorted(minutes)
     result: list[tuple[datetime, datetime]] = []
-    for minute in ordered:
-        if result and result[-1][1] == minute:
-            result[-1] = (result[-1][0], minute + step)
-        else:
-            result.append((minute, minute + step))
+    for item in ranges:
+        item_start = item.start if hasattr(item, "start") else item[0]
+        item_end = item.end if hasattr(item, "end") else item[1]
+        cursor = item_start
+        while cursor < item_end:
+            if OANDA_EUR_USD_POLICY.classify_minute(cursor)[0] == EXPECTED_DATA:
+                if result and result[-1][1] == cursor:
+                    result[-1] = (result[-1][0], cursor + step)
+                else:
+                    result.append((cursor, cursor + step))
+            cursor += step
     return tuple(result)
+
+
+def _subtract_acquisition_windows(
+    missing: Sequence[BarRange],
+    acquired: Sequence[object],
+) -> tuple[BarRange, ...]:
+    """Remove the union of successful provider coverage from missing spans."""
+    result: list[BarRange] = []
+    for item in missing:
+        item_start = item.start if hasattr(item, "start") else item[0]
+        item_end = item.end if hasattr(item, "end") else item[1]
+        item_components = getattr(item, "components", ())
+        pieces = [(item_start, item_end)]
+        for window in sorted(acquired, key=lambda value: value.start_time):
+            next_pieces: list[tuple[datetime, datetime]] = []
+            for left, right in pieces:
+                if window.end_time <= left or window.start_time >= right:
+                    next_pieces.append((left, right))
+                    continue
+                if left < window.start_time:
+                    next_pieces.append((left, min(right, window.start_time)))
+                if window.end_time < right:
+                    next_pieces.append((max(left, window.end_time), right))
+            pieces = next_pieces
+        result.extend(
+            BarRange(left, right, item_components)
+            for left, right in pieces
+            if left < right
+        )
+    return tuple(result)
+
+
+def _uncovered_range(
+    start: datetime, end: datetime, acquired: Iterable[object]
+) -> tuple[tuple[datetime, datetime], ...]:
+    """Subtract an ordered acquisition stream without retaining its history."""
+    cursor = start
+    merged_end = start
+    for window in acquired:
+        left = max(start, window.start_time)
+        right = min(end, window.end_time)
+        if right <= left:
+            continue
+        if left > merged_end:
+            # The caller only needs the uncovered request pieces; the current
+            # merged frontier is enough to emit each piece incrementally.
+            yield_piece = (cursor, left)
+            if yield_piece[0] < yield_piece[1]:
+                yield yield_piece
+            cursor = right
+            merged_end = right
+        else:
+            if right > merged_end:
+                merged_end = right
+                cursor = max(cursor, merged_end)
+    if cursor < end:
+        yield (cursor, end)
+
+
+def _acquisition_union(
+    start: datetime, end: datetime, acquired: Iterable[object]
+) -> tuple[tuple[datetime, datetime], ...]:
+    """Return the canonical clipped union, retaining intervals not requests."""
+    merged: list[tuple[datetime, datetime]] = []
+    for window in acquired:
+        left, right = max(start, window.start_time), min(end, window.end_time)
+        if right <= left:
+            continue
+        if merged and left <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], right))
+        else:
+            merged.append((left, right))
+    return tuple(merged)
+
+
+def _acquisition_coverage_digest(
+    start: datetime, end: datetime, acquired: Iterable[object]
+) -> tuple[int, str]:
+    """Digest the ordered coverage union without retaining its intervals."""
+    digest = sha256()
+    count = 0
+    frontier: tuple[datetime, datetime] | None = None
+    for window in acquired:
+        left, right = max(start, window.start_time), min(end, window.end_time)
+        if right <= left:
+            continue
+        if frontier is not None and left <= frontier[1]:
+            frontier = (frontier[0], max(frontier[1], right))
+            continue
+        if frontier is not None:
+            digest.update(f"{frontier[0].isoformat()}|{frontier[1].isoformat()}\n".encode())
+            count += 1
+        frontier = (left, right)
+    if frontier is not None:
+        digest.update(f"{frontier[0].isoformat()}|{frontier[1].isoformat()}\n".encode())
+        count += 1
+    return count, digest.hexdigest()
 
 
 class MarketDataService:
@@ -253,7 +349,7 @@ class MarketDataService:
         session = self._session_factory()
         try:
             with session.begin():
-                bars = self._repository.current_bars(
+                bars = self._repository.current_bars_stream(
                     session, mapping_id, start, end, REQUIRED_COMPONENTS
                 )
                 return validate_coverage(start, end, bars, REQUIRED_COMPONENTS)
@@ -448,7 +544,7 @@ class MarketDataService:
         start: datetime,
         end: datetime,
         *,
-        analytical: Sequence[Bar],
+        analytical: Iterable[Bar] | None,
         execution_components: tuple[PriceComponent, ...] = (
             PriceComponent.BID,
             PriceComponent.ASK,
@@ -470,63 +566,28 @@ class MarketDataService:
         session = self._session_factory()
         try:
             with session.begin():
-                rows = tuple(
-                    session.scalars(
-                        select(MarketBarModel)
-                        .where(
-                            MarketBarModel.venue_instrument_id == mapping_id,
-                            MarketBarModel.resolution == "M1",
-                            MarketBarModel.is_current.is_(True),
-                            MarketBarModel.start_time >= start,
-                            MarketBarModel.start_time < end,
-                            MarketBarModel.price_component.in_(
-                                [c.value for c in execution_components]
-                            ),
+                if analytical is None:
+                    def analytical_source():
+                        return self._repository.current_bars_stream(
+                            session, mapping_id, start, end,
+                            (PriceComponent.MID,), Timeframe.M15,
                         )
-                        .order_by(
-                            MarketBarModel.start_time, MarketBarModel.price_component
-                        )
-                    ).all()
-                )
-                execution = tuple(
-                    (
-                        row,
-                        Bar(
-                            Instrument.EUR_USD,
-                            Timeframe.M1,
-                            PriceComponent(row.price_component),
-                            row.start_time,
-                            row.end_time,
-                            row.open_price,
-                            row.high_price,
-                            row.low_price,
-                            row.close_price,
-                            volume=row.volume,
-                        ),
+                else:
+                    analytical_source = lambda: analytical
+                row_stream = getattr(self._repository, "current_bar_rows_stream", None)
+                if row_stream is None:
+                    raise ValueError("V2 repository must provide ordered row streaming")
+                execution = (
+                    (row, Bar(
+                        Instrument.EUR_USD, Timeframe.M1,
+                        PriceComponent(row.price_component), row.start_time,
+                        row.end_time, row.open_price, row.high_price, row.low_price,
+                        row.close_price, volume=row.volume,
+                    ))
+                    for row in row_stream(
+                        session, mapping_id, start, end, execution_components
                     )
-                    for row in rows
                 )
-                ordered_analytical = tuple(
-                    sorted(analytical, key=lambda b: b.start_time)
-                )
-                if any(
-                    bar.timeframe is not Timeframe.M15
-                    or bar.price_component is not PriceComponent.MID
-                    or not bar.complete
-                    or bar.start_time < start
-                    or bar.end_time > end
-                    for bar in ordered_analytical
-                ):
-                    raise ValueError("V2 analytical membership must be native M15 MID")
-                if len({bar.start_time for bar in ordered_analytical}) != len(
-                    ordered_analytical
-                ):
-                    raise ValueError("V2 analytical membership contains duplicates")
-                execution_keys = {
-                    (bar.start_time, bar.price_component) for _, bar in execution
-                }
-                if len(execution_keys) != len(execution):
-                    raise ValueError("V2 execution membership contains duplicates")
                 if not coverage.execution_valid:
                     return SnapshotReport(
                         start,
@@ -534,48 +595,6 @@ class MarketDataService:
                         coverage,
                         None,
                         "execution coverage is invalid",
-                    )
-                analytical_members = tuple(
-                    {
-                        "sequence": i,
-                        "start_time": bar.start_time.isoformat(),
-                        "end_time": bar.end_time.isoformat(),
-                        "content_fingerprint": bar_content_fingerprint(bar),
-                    }
-                    for i, bar in enumerate(ordered_analytical, 1)
-                )
-                execution_members = tuple(
-                    {
-                        "sequence": i,
-                        "market_bar_id": str(row.id),
-                        "price_component": bar.price_component.value,
-                        "start_time": bar.start_time.isoformat(),
-                        "observation_fingerprint": bar_content_fingerprint(bar),
-                    }
-                    for i, (row, bar) in enumerate(execution, 1)
-                )
-                gaps: list[dict[str, object]] = []
-                expected_m15 = set(
-                    start + timedelta(minutes=15 * i)
-                    for i in range(int((end - start).total_seconds() // 900))
-                )
-                for gap_start in sorted(
-                    expected_m15 - {bar.start_time for bar in ordered_analytical}
-                ):
-                    gaps.append(
-                        {
-                            "start_time": gap_start,
-                            "end_time": gap_start + timedelta(minutes=15),
-                            "price_component": "MID",
-                            "resolution": "M15",
-                            "source": "OANDA",
-                            "reason": "MISSING_NATIVE_COMPLETED_CANDLE",
-                            "classification": "NON_BLOCKING",
-                            "affected_state": None,
-                            "affected_event": None,
-                            "policy_version": GAP_POLICY_V1,
-                            "blocked": False,
-                        }
                     )
                 metadata = {
                     "provider": "OANDA",
@@ -590,35 +609,72 @@ class MarketDataService:
                     "gap_policy": GAP_POLICY_V1,
                 }
                 acquired_method = getattr(self._repository, "acquired_windows", None)
-                acquired_windows = () if acquired_method is None else acquired_method(
-                    session, mapping_id, Timeframe.M1,
-                    (PriceComponent.BID, PriceComponent.ASK), start, end
-                )
-                metadata["successful_execution_windows"] = [
-                    {
-                        "start": window.start_time.isoformat(),
-                        "end": window.end_time.isoformat(),
-                        "outcome": window.outcome,
-                        "request_identity": window.request_identity,
-                    }
-                    for window in acquired_windows
-                ]
-                fingerprint = dataset_fingerprint_v2(
-                    metadata=metadata,
-                    analytical_members=analytical_members,
-                    execution_members=execution_members,
-                    gaps=gaps,
-                )
+                if acquired_method is None:
+                    coverage_count, coverage_digest = 0, sha256(b"").hexdigest()
+                else:
+                    coverage_count, coverage_digest = _acquisition_coverage_digest(
+                        start, end, acquired_method(
+                            session, mapping_id, Timeframe.M1,
+                            (PriceComponent.BID, PriceComponent.ASK), start, end,
+                        )
+                    )
+                metadata["successful_execution_coverage_count"] = coverage_count
+                metadata["successful_execution_coverage_digest"] = coverage_digest
                 summary = {
                     "status": "VALID",
                     "policy_version": GAP_POLICY_V1,
-                    "analytical_count": len(ordered_analytical),
-                    "execution_count": len(execution),
-                    "gap_count": len(gaps),
                     "analytical_contract": NATIVE_M15_CONTRACT_V1,
                     "execution_observation_continuity": "SPARSE_ALLOWED",
-                    "successful_execution_window_count": len(acquired_windows),
+                    "successful_execution_window_count": coverage_count,
                 }
+                # The append-only snapshot row must be born with its final
+                # identity.  Build the digest from bounded, repeatable DB
+                # streams before inserting memberships; the streams are then
+                # opened again for the atomic membership insert.
+                def execution_members():
+                    rows = row_stream(
+                        session, mapping_id, start, end, execution_components
+                    )
+                    for sequence, row in enumerate(rows, 1):
+                        bar = Bar(
+                            Instrument.EUR_USD,
+                            Timeframe.M1,
+                            PriceComponent(row.price_component),
+                            row.start_time,
+                            row.end_time,
+                            row.open_price,
+                            row.high_price,
+                            row.low_price,
+                            row.close_price,
+                            volume=row.volume,
+                        )
+                        yield {
+                            "sequence": sequence,
+                            "market_bar_id": str(row.id),
+                            "price_component": bar.price_component.value,
+                            "start_time": bar.start_time.isoformat(),
+                            "observation_fingerprint": bar_content_fingerprint(bar),
+                        }
+
+                def analytical_members():
+                    for sequence, bar in enumerate(analytical_source(), 1):
+                        yield {
+                            "sequence": sequence,
+                            "start_time": bar.start_time.isoformat(),
+                            "end_time": bar.end_time.isoformat(),
+                            "content_fingerprint": bar_content_fingerprint(bar),
+                        }
+
+                snapshot_fingerprint = dataset_fingerprint_v2(
+                    metadata={
+                        **metadata,
+                        "successful_execution_coverage_count": coverage_count,
+                        "successful_execution_coverage_digest": coverage_digest,
+                    },
+                    analytical_members=analytical_members(),
+                    execution_members=execution_members(),
+                    gaps=(),
+                )
                 snapshot = DatasetSnapshot(
                     uuid4(),
                     VENUE,
@@ -629,13 +685,14 @@ class MarketDataService:
                     ALIGNMENT_CONVENTION,
                     SESSION_POLICY,
                     FINGERPRINT_SCHEMA_V2,
-                    fingerprint,
+                    snapshot_fingerprint,
                     summary,
                     self._clock(),
                     SNAPSHOT_SCHEMA_V2,
                 )
                 stored = self._snapshots.create_v2_validated(
-                    session, snapshot, ordered_analytical, execution, gaps
+                    session, snapshot, analytical_source(), execution, None,
+                    metadata=metadata,
                 )
                 return SnapshotReport(start, end, coverage, stored)
         finally:
@@ -653,7 +710,7 @@ class MarketDataService:
         session = self._session_factory()
         try:
             with session.begin():
-                bars = self._repository.current_bars(
+                bars = self._repository.current_bars_stream(
                     session, mapping_id, start, end, components, resolution
                 )
                 return validate_coverage(start, end, bars, components)
@@ -684,49 +741,77 @@ class MarketDataService:
             session = self._session_factory()
             try:
                 with session.begin():
-                    missing = _coalesce_expected_ranges(
-                        self._repository.missing_ranges(
-                            session, mapping_id, start, end, components, resolution
-                        ),
-                        step=timedelta(
-                            minutes=15 if resolution is Timeframe.M15 else 1
-                        ),
+                    acquired_method = getattr(
+                        self._repository, "acquired_windows", None
                     )
-                    acquired_method = getattr(self._repository, "acquired_windows", None)
-                    if acquired_method is None:
-                        return missing
-                    acquired = acquired_method(session, mapping_id, resolution, components, start, end)
-                    # A successful provider window covers acquisition, not
-                    # observation continuity.  Remove it from the request plan
-                    # even when it returned zero or sparse candles.
-                    return tuple(
-                        (left, right) for left, right in missing
-                        if not any(window.start_time <= left and window.end_time >= right for window in acquired)
+                    if acquired_method is None or resolution is not Timeframe.M1:
+                        yield from _coalesce_expected_ranges(
+                            self._repository.missing_ranges(
+                                session, mapping_id, start, end, components, resolution
+                            ),
+                            step=timedelta(
+                                minutes=15 if resolution is Timeframe.M15 else 1
+                            ),
+                        )
+                        return
+                    acquired = acquired_method(
+                        session, mapping_id, resolution, components, start, end
                     )
+                    # Coverage is checked before the expensive observation scan.
+                    # Only uncovered remainders consult current M1 rows; sparse
+                    # acquired windows therefore make repeat planning O(windows),
+                    # not O(calendar minutes).
+                    remainder = _uncovered_range(start, end, acquired)
+                    for left, right in remainder:
+                        yield from _coalesce_expected_ranges(
+                            self._repository.missing_ranges(
+                                session, mapping_id, left, right, components, resolution
+                            ),
+                            step=timedelta(minutes=1),
+                        )
             finally:
                 session.close()
 
         totals = [0, 0, 0]
-        all_fetched: list[tuple[datetime, datetime]] = []
-        all_committed: list[tuple[datetime, datetime]] = []
+        # Progress is an O(1) notification.  Durable resume authority is the
+        # observation table plus acquisition-window union, not this callback;
+        # retaining the complete window history here made a full-year load grow
+        # linearly with the number of provider requests.
+        fetched_count = 0
+        committed_count = 0
 
         def acquire(product, fetch, ranges):
+            nonlocal fetched_count, committed_count
             for window in ranges:
                 # No database transaction is held during this provider call.
                 try:
                     result = fetch(*window)
                     if result.incomplete:
-                        raise ValueError("provider returned incomplete historical observations")
+                        raise ValueError(
+                            "provider returned incomplete historical observations"
+                        )
                     applied = self._apply(mapping_id, result)
                 except Exception:
-                    recorder = getattr(self._repository, "record_acquisition_window", None)
+                    recorder = getattr(
+                        self._repository, "record_acquisition_window", None
+                    )
                     if recorder is not None:
                         session = self._session_factory()
                         try:
                             with session.begin():
-                                recorder(session, mapping_id, Timeframe.M15 if product == "analytical" else Timeframe.M1,
-                                         (PriceComponent.MID,) if product == "analytical" else (PriceComponent.BID, PriceComponent.ASK),
-                                         window[0], window[1], "PROVIDER_FAILURE")
+                                recorder(
+                                    session,
+                                    mapping_id,
+                                    Timeframe.M15
+                                    if product == "analytical"
+                                    else Timeframe.M1,
+                                    (PriceComponent.MID,)
+                                    if product == "analytical"
+                                    else (PriceComponent.BID, PriceComponent.ASK),
+                                    window[0],
+                                    window[1],
+                                    "PROVIDER_FAILURE",
+                                )
                         finally:
                             session.close()
                     raise
@@ -735,54 +820,58 @@ class MarketDataService:
                     session = self._session_factory()
                     try:
                         with session.begin():
-                            recorder(session, mapping_id, Timeframe.M15 if product == "analytical" else Timeframe.M1,
-                                     (PriceComponent.MID,) if product == "analytical" else (PriceComponent.BID, PriceComponent.ASK),
-                                     window[0], window[1], "SUCCESS_EMPTY_OR_SPARSE", len(result.bars))
+                            recorder(
+                                session,
+                                mapping_id,
+                                Timeframe.M15
+                                if product == "analytical"
+                                else Timeframe.M1,
+                                (PriceComponent.MID,)
+                                if product == "analytical"
+                                else (PriceComponent.BID, PriceComponent.ASK),
+                                window[0],
+                                window[1],
+                                "SUCCESS_EMPTY_OR_SPARSE",
+                                len(result.bars),
+                            )
                     finally:
                         session.close()
-                all_fetched.append(window)
-                all_committed.append(window)
+                fetched_count += 1
+                committed_count += 1
                 totals[0] += applied.inserted
                 totals[1] += applied.reactivated
                 totals[2] += applied.unchanged
                 if progress:
-                    progress(SimpleNamespace(
-                        operation="load_v2",
-                        requested_start=start, requested_end=end,
-                        fetched_ranges=tuple(all_fetched),
-                        committed_ranges=tuple(all_committed),
-                        inserted=totals[0], reactivated=totals[1], unchanged=totals[2],
-                        incomplete_minutes=(), coverage=self._coverage(start, end),
-                        product=product,
-                        window={
-                            "start": window[0].isoformat(),
-                            "end": window[1].isoformat(),
-                        },
-                    ))
+                    progress(
+                        SimpleNamespace(
+                            operation="load_v2",
+                            requested_start=start,
+                            requested_end=end,
+                            fetched_ranges=(),
+                            committed_ranges=(),
+                            inserted=totals[0],
+                            reactivated=totals[1],
+                            unchanged=totals[2],
+                            incomplete_minutes=(),
+                            coverage=None,
+                            product=product,
+                            window={
+                                "start": window[0].isoformat(),
+                                "end": window[1].isoformat(),
+                                "fetched_count": fetched_count,
+                                "committed_count": committed_count,
+                            },
+                        )
+                    )
 
         native_ranges = plans(Timeframe.M15, (PriceComponent.MID,))
-        execution_ranges = plans(
-            Timeframe.M1, (PriceComponent.BID, PriceComponent.ASK)
-        )
+        execution_ranges = plans(Timeframe.M1, (PriceComponent.BID, PriceComponent.ASK))
         acquire("analytical", native, native_ranges)
         acquire("execution", execution, execution_ranges)
 
         # Snapshot construction consumes the persisted native M15 membership,
         # including work committed by an earlier attempt.
-        session = self._session_factory()
-        try:
-            with session.begin():
-                analytical = self._repository.current_bars(
-                    session,
-                    mapping_id,
-                    start,
-                    end,
-                    (PriceComponent.MID,),
-                    Timeframe.M15,
-                )
-        finally:
-            session.close()
-        return self.create_snapshot_v2(start, end, analytical=analytical)
+        return self.create_snapshot_v2(start, end, analytical=None)
 
     def load_v2_incremental(
         self,
@@ -880,9 +969,7 @@ class MarketDataService:
                 if snapshot.snapshot_schema == SNAPSHOT_SCHEMA_V2:
                     if component is not PriceComponent.MID:
                         raise ValueError("V2 analytical path supports native MID only")
-                    return self._snapshots.v2_analytical_members(
-                        session, snapshot.id
-                    )
+                    return self._snapshots.v2_analytical_members(session, snapshot.id)
                 if component not in snapshot.components:
                     raise ValueError("component is not present in snapshot")
                 self._check_frontier(snapshot.coverage_end)
