@@ -426,7 +426,8 @@ intended `backend/` and `dispatch/` changes; exclude `.codegraph/` and
 ## Closure
 
 Freeze 03 implementation, validation, and independent review are complete. Commit
-`1dd3614` was pushed from `solo/foundation-freeze-03-historical-data-foundation`.
+`1dd3614` was pushed from `solo/foundation-freeze-03-historical-data-foundation` and
+fast-forward merged to `main` at closure commit `84cbd50`.
 The accepted validation-process incident and unrelated full-Ruff findings remain
 documented non-blocking observations. `.codegraph/` and `frontend/.env.local` were
 excluded from the commit.
