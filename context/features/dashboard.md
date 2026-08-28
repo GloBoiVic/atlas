@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Answers: What is Atlas doing right now, and does anything require attention? Reflects deliberately narrow initial scope: OANDA Practice, USD, EUR/USD, EMA Sweep Engulfing.
+Answers: What is Atlas doing right now, and does anything require attention? The target trading scope is OANDA Practice, USD, EUR/USD, EMA Sweep Confirmation Break v2. Current implementation is the historical Experiment workstation; the PAPER/LIVE monitoring surface is future.
 
 ## Primary Hierarchy
 
@@ -10,11 +10,11 @@ Answers: What is Atlas doing right now, and does anything require attention? Ref
 
 ## Header Context
 
-Compact: OANDA Practice · PAPER · EUR/USD · ● Connected. No large system-health panel when healthy.
+Future trading header: OANDA Practice · PAPER · EUR/USD · ● Connected. No large system-health panel when healthy.
 
 ## Summary
 
-Initial: Account Equity (USD, broker-authoritative), Today's P&L (+$125.40, +0.24% — canonical calculation, not dashboard-specific), Current Position (if flat: EUR/USD FLAT; if exposed: direction, units, entry, unrealized P&L, stop, target), Active Deployment (EMA v1, PAPER, RUNNING, EUR/USD, 15m, Risk 1%; actions: Pause/Resume/Stop when valid). Small number of compact groups — not KPI wall.
+Future trading view: Account Equity (USD, broker-authoritative), Today's P&L (+$125.40, +0.24% — canonical calculation, not dashboard-specific), Current Position (if flat: EUR/USD FLAT; if exposed: direction, units, entry, unrealized P&L, stop, target), Active Deployment (EMA Sweep Confirmation Break v2, PAPER, RUNNING, EUR/USD, 15m, Risk 1%; actions: Pause/Resume/Stop when valid). Small number of compact groups — not KPI wall.
 
 ## Deployment State / Current Performance / Recent Trades
 
@@ -30,11 +30,11 @@ Persistent safety issues take visual priority: OANDA disconnected, data stale, r
 
 ## Healthy / No Position / No Deployment / Empty State
 
-When healthy: compact "PAPER · OANDA Connected · Runtime Healthy". Flat: "No open position — Atlas monitoring EUR/USD for next valid setup." No active Deployment: "No active Deployment — Create a PAPER Deployment from a validated StrategyVersion." Before any activity: "Atlas is ready for research. Load EUR/USD data and run your first Experiment." No $0.00 metrics.
+Future trading states: when healthy, compact "PAPER · OANDA Connected · Runtime Healthy". Flat: "No open position — Atlas monitoring EUR/USD for next valid setup." No active Deployment: "No active Deployment — Create a PAPER Deployment from a validated StrategyVersion." Before any activity: "Atlas is ready for research. Load EUR/USD data and run your first Experiment." No $0.00 metrics.
 
 ## PAPER vs LIVE / Navigation / Layout
 
-PAPER mode always obvious. LIVE unmistakable when supported. Shared horizontal navigation from [Design](../design/design.md) — no sidebar. Structure: Top Nav → header + status → compact summary row → Position/Deployment → equity/performance context → recent Trades/Activity. Fewer sections when information doesn't warrant.
+Future PAPER/LIVE mode presentation is always obvious; LIVE is unmistakable when supported. Shared horizontal navigation from [Design](../design/design.md) — no sidebar. Structure: Top Nav → header + status → compact summary row → Position/Deployment → equity/performance context → recent Trades/Activity. Fewer sections when information doesn't warrant.
 
 ## Visual Density / Live Updates / Stale Values
 

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Historical record of Trades. Answers: What happened, why, and what can I learn? Journal is a view over canonical Trade history — do not create a separate trading-history model. Uses Trade, Orders, Fills, StrategyVersion, RiskDecision, TradeIntent. Canonical: [Domain Model](../architecture/domain-model.md).
+Historical record of Trades. Answers: What happened, why, and what can I learn? Current implementation presents persisted historical Experiment Trades; the same Journal is the target view for future PAPER/LIVE Trades. Journal is a view over canonical Trade history — do not create a separate trading-history model. Uses Trade, Orders, Fills, StrategyVersion, RiskDecision, TradeIntent. Canonical: [Domain Model](../architecture/domain-model.md).
 
 ## Primary Views
 
@@ -22,7 +22,7 @@ Initial filters small: date range, direction, win/loss, exit reason. No advanced
 
 ## Trade Chart
 
-Primary analytical surface via TradingView Lightweight Charts. Surrounding price context. For EMA Sweep Engulfing: EMA 100, bearish/bullish reference, sweep, confirmation candles, entry/stop/target/exit with subtle markers. Use rationale captured at TradeIntent creation — do not re-run Strategy logic in frontend.
+Primary analytical surface via TradingView Lightweight Charts. Surrounding price context. For EMA Sweep Confirmation Break v2: EMA 100, bearish/bullish reference, sweep, confirmation candles, entry/stop/target/exit with subtle markers. Use rationale captured at TradeIntent creation — do not re-run Strategy logic in frontend.
 
 ## Entry Rationale / Risk Detail / Execution Detail
 
@@ -30,11 +30,11 @@ Strategy decision-time rationale (trend, reference/sweep/confirmation candles). 
 
 ## Entry/Exit Price / Exit Reason / P&L / Costs / R Multiple
 
-Actual canonical Fill prices (not signal close or theoretical). For Experiments: simulated execution. For PAPER/LIVE: broker truth. Canonical exit reasons: TAKE_PROFIT, STOP_LOSS, END_OF_EXPERIMENT, MANUAL_CLOSE, RISK_EXIT. Not inferred from win/loss. P&L: canonical accounting — not frontend-calculated. Gross + Costs + Net where useful. Costs: spread, slippage, commission, financing. If excluded → label exclusion. R: realized outcome / initial approved risk — consistent with canonical accounting. Not inferred from exit reason alone.
+Actual canonical Fill prices (not signal close or theoretical). For current Experiments: simulated execution. For future PAPER/LIVE: broker truth. Canonical exit reasons: TAKE_PROFIT, STOP_LOSS, END_OF_EXPERIMENT, MANUAL_CLOSE, RISK_EXIT. Not inferred from win/loss. P&L: canonical accounting — not frontend-calculated. Gross + Costs + Net where useful. Costs: spread, slippage, commission, financing. If excluded → label exclusion. R: realized outcome / initial approved risk — consistent with canonical accounting. Not inferred from exit reason alone.
 
 ## Experiment / PAPER / LIVE Trades
 
-Same Trade Detail for all environments. Experiment: identified with EXPERIMENT + originating Experiment. PAPER: PAPER + OANDA Practice + broker-confirmed Fills. LIVE: same Journal, clearly identified. No separate Journal per environment.
+Same Trade Detail is the target for all environments. Current: Experiment Trades are identified with EXPERIMENT + originating Experiment and simulated execution facts. Future: PAPER/LIVE entries show PAPER/LIVE, OANDA context, and broker-confirmed Fills. No separate Journal per environment.
 
 ## Provenance / Notes / Tags / Editing
 
@@ -46,7 +46,7 @@ Simple: notes, tags. No external search infrastructure. Trade Detail navigates t
 
 ## Chart Time Window / Ambiguity / Broker Detail
 
-Default: enough candles before/after to explain setup/outcome. Not entire multi-year dataset. Reasonable adjustment. For Experiment Trades affected by simulation ambiguity: "Intrabar ambiguity — Adverse-first policy applied." Visible in Trade Detail. PAPER/LIVE technical detail (Atlas/external Order IDs, execution timestamps) behind technical section. External IDs not primary identity.
+Default: enough candles before/after to explain setup/outcome. Not entire multi-year dataset. Reasonable adjustment. For Experiment Trades affected by simulation ambiguity: "Intrabar ambiguity — Adverse-first policy applied." Visible in Trade Detail. Future PAPER/LIVE technical detail (Atlas/external Order IDs, execution timestamps) belongs behind the technical section. External IDs are not primary identity.
 
 ## Trade Identity / Journal Metrics / Empty State
 

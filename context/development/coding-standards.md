@@ -4,6 +4,8 @@
 
 Define Atlas implementation standards. Goal: simple, explicit, testable code preserving trading correctness. Prefer clear over clever, explicit over hidden magic, small correct implementations over speculative frameworks.
 
+The current implemented path is historical Experiments and their persisted evidence. PAPER/LIVE execution, monitoring, and broker-confirmed Trade behavior described by these standards are future target contracts unless current status explicitly says otherwise. See [Current status](../../CURRENT.md).
+
 ## General Principles
 
 Code should be: readable, typed, deterministic where required, easy to test/audit, explicit about failure, scoped to active roadmap slice. Avoid unnecessary abstraction.

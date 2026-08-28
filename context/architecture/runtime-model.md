@@ -34,7 +34,7 @@ Critical path: receive/finalize completed bar → load Strategy state → strate
 
 ## Strategy Evaluation Scheduling
 
-Runtime evaluates Strategy only when its required primary bar completes (for EMA Sweep Engulfing: completed 15m bar → one evaluation). Do not evaluate repeatedly against the same completed bar.
+Runtime evaluates Strategy only when its required primary analytical bar completes (for EMA Sweep Confirmation Break v2: completed native M15 MID bar → one evaluation). Sparse native M1 BID/ASK observations are reserved for execution and do not replace the analytical bar. Do not evaluate repeatedly against the same completed bar.
 
 ## Duplicate Evaluation Protection
 

@@ -10,7 +10,7 @@ Strategy: direction, stop, target, entry rationale. Risk: trade eligibility, acc
 
 ## Same Risk Logic Everywhere
 
-Same canonical Risk across Experiment, PAPER, LIVE. Account-state source changes; methodology does not. [Domain Model](../architecture/domain-model.md).
+Same canonical Risk across Experiment, PAPER, LIVE is the target contract. Current implementation applies the canonical Risk path to historical Experiments; PAPER/LIVE account-state integration is future. Account-state source changes; methodology does not. [Domain Model](../architecture/domain-model.md).
 
 ## Risk Inputs / RiskProfile
 
@@ -30,7 +30,7 @@ May require entry/stop prices, units, quote/base currency, account conversion. I
 
 ## Stop Geometry / Target
 
-Long: stop < entry. Short: stop > entry. Invalid → REJECTED. Risk does not choose reference Strategy's target (1.7R for EMA Sweep Engulfing) — may validate internal validity.
+Long: stop < entry. Short: stop > entry. Invalid → REJECTED. Risk does not choose reference Strategy's target (1.7R for EMA Sweep Confirmation Break v2) — may validate internal validity.
 
 ## Two-Stage Risk
 
@@ -51,7 +51,7 @@ No pyramiding. Position exists → OPEN_LONG/OPEN_SHORT → REJECTED. Final quan
 
 ## Margin / Account State / Position State
 
-For PAPER/LIVE: normalized broker margin constraints. Cannot establish → REJECTED. No guessing. Account state: [Accounting Model](../architecture/accounting-model.md). Risk must not depend directly on OANDA. Unknown account/position state → REJECTED per [Safety Model](../architecture/safety-model.md).
+Future PAPER/LIVE behavior: normalized broker margin constraints. Cannot establish → REJECTED. No guessing. Account state: [Accounting Model](../architecture/accounting-model.md). Risk must not depend directly on OANDA. Unknown account/position state → REJECTED per [Safety Model](../architecture/safety-model.md).
 
 ## Max Open Positions / Daily Loss / Max Drawdown
 
@@ -63,7 +63,7 @@ Risk blocks must not trap existing exposure. Safety follow: [Safety Model](../ar
 
 ## PAPER/LIVE / Strategy Independence / Instrument Economics
 
-Same Risk rules for PAPER and LIVE. PAPER must not bypass account-state, stop, sizing, or safety checks — it's the proving environment. Strategy never receives risk_per_trade, balance, equity, margin, drawdown state. Centralize pip-value and currency-conversion calculations — not scattered across Strategy/UI/adapter/Risk.
+Future PAPER/LIVE behavior uses the same Risk rules. PAPER must not bypass account-state, stop, sizing, or safety checks — it's the proving environment. Strategy never receives risk_per_trade, balance, equity, margin, drawdown state. Centralize pip-value and currency-conversion calculations — not scattered across Strategy/UI/adapter/Risk.
 
 ## Currency Conversion / Risk UI / Visibility
 
@@ -87,4 +87,4 @@ TradeIntent → PRE_FLIGHT APPROVED → post-decision executable price → PRE_S
 
 ## Success Criteria
 
-Deterministically: receive TradeIntent → verify eligibility → calculate allowed risk → determine legal quantity → APPROVE or REJECT with reason — using same core Risk in Experiment and OANDA Practice without full institutional Risk platform.
+Current success: deterministically receive a historical Experiment TradeIntent → verify eligibility → calculate allowed risk → determine legal quantity → APPROVE or REJECT with reason. Future PAPER success extends the same core Risk to OANDA Practice without a full institutional Risk platform.

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Convert approved TradeIntent into canonical Orders, submit through broker/simulator adapter, process broker truth, update state from actual Fills. Initial: OANDA Practice, EUR/USD, PAPER. Must remain safe under retries, timeouts, reconnects, partial fills.
+Convert approved TradeIntent into canonical Orders, submit through a simulator or broker adapter, process authoritative results, and update state from actual Fills. Current implementation is historical simulation for EUR/USD; OANDA Practice/PAPER execution is future. The target must remain safe under retries, timeouts, reconnects, and partial fills.
 
 ## Core Flow
 
@@ -34,7 +34,7 @@ Core must tolerate: Order qty 100,000, Fill 40,000 → Order PARTIALLY_FILLED, P
 
 ## Entry Execution / Forex Side
 
-EMA Sweep Engulfing: completed 15m confirmation → OPEN_LONG/SHORT → Risk → MARKET entry Order. Entry only on first eligible post-decision observation. No retrospective fill at signal close. Long entry BUY→ASK, exit SELL→BID. Short entry SELL→BID, exit BUY→ASK. Canonical pricing: [Market Data Model](../architecture/market-data-model.md).
+EMA Sweep Confirmation Break v2: completed 15m confirmation → OPEN_LONG/SHORT → Risk → MARKET entry Order. Entry only on first eligible post-decision observation. No retrospective fill at signal close. Long entry BUY→ASK, exit SELL→BID. Short entry SELL→BID, exit BUY→ASK. Canonical pricing: [Market Data Model](../architecture/market-data-model.md).
 
 ## Stop / Target Reference
 
@@ -42,7 +42,7 @@ Long stop: confirmation low - 0.5 ATR. Short stop: confirmation high + 0.5 ATR. 
 
 ## Broker-Hosted Protection
 
-For PAPER/LIVE: use broker-hosted protection where OANDA supports it. Safety must not depend solely on Atlas uptime. Required: Stop Loss + Take Profit. Establish as close to entry as broker semantics permit. Prefer atomic/attached mechanisms. If protection requires follow-up → explicitly handle interval between entry and confirmed protection.
+Future PAPER/LIVE behavior: use broker-hosted protection where OANDA supports it. Safety must not depend solely on Atlas uptime. Required: Stop Loss + Take Profit. Establish as close to entry as broker semantics permit. Prefer atomic/attached mechanisms. If protection requires follow-up → explicitly handle interval between entry and confirmed protection.
 
 ## Protection Failure / Confirmation / Cancellation
 
@@ -58,7 +58,7 @@ Request cancel → broker confirms → CANCELED. Uncertain broker state → UNKN
 
 ## Broker Error Mapping / Unknown State / OANDA Practice
 
-Map: AUTHENTICATION_ERROR, INVALID_ORDER, INSUFFICIENT_MARGIN, MARKET_UNAVAILABLE, RATE_LIMITED, NETWORK_ERROR, BROKER_REJECTED. No enormous taxonomy. UNKNOWN → reconcile per Safety Model. PAPER uses actual OANDA Practice API — not fake engine. Historical → SimulatedExecutionAdapter. Live → same OANDA path; environment config determines destination.
+Map: AUTHENTICATION_ERROR, INVALID_ORDER, INSUFFICIENT_MARGIN, MARKET_UNAVAILABLE, RATE_LIMITED, NETWORK_ERROR, BROKER_REJECTED. No enormous taxonomy. UNKNOWN → reconcile per Safety Model. Future PAPER uses the actual OANDA Practice API — not a fake engine. Historical Experiments use SimulatedExecutionAdapter. Future LIVE uses the same OANDA path; environment configuration determines destination.
 
 ## Manual Close / Execution & Risk / Adapters
 
@@ -82,8 +82,8 @@ Canonical Order creation, stable correlation ID, PENDING_SUBMISSION persistence,
 
 ## Acceptance Flow
 
-Completed live 15m bar → TradeIntent → PRE_FLIGHT → executable context → PRE_SUBMISSION → canonical ENTRY Order persisted → OANDA submission → normalized response → Fill → Position → broker-hosted stop+target confirmed → protective exit Fill → Position FLAT → Trade closed.
+Future PAPER flow: completed live 15m bar → TradeIntent → PRE_FLIGHT → executable context → PRE_SUBMISSION → canonical ENTRY Order persisted → OANDA submission → normalized response → Fill → Position → broker-hosted stop+target confirmed → protective exit Fill → Position FLAT → Trade closed.
 
 ## Success Criteria
 
-For first PAPER milestone: safely convert approved TradeIntent into real OANDA Practice Trade, derive exposure only from broker-confirmed Fills, maintain broker-hosted protection, survive submission uncertainty without creating duplicate exposure.
+Future first PAPER milestone: safely convert approved TradeIntent into a real OANDA Practice Trade, derive exposure only from broker-confirmed Fills, maintain broker-hosted protection, and survive submission uncertainty without creating duplicate exposure.

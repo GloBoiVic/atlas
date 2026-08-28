@@ -34,7 +34,7 @@ v1: keep methodology source self-contained. Typed parameters: integer, decimal, 
 
 ## Strategy State / Reference Strategy
 
-Atlas persists minimum deterministic state across runtime restart. State semantics: [Strategy Contract](../architecture/strategy-contract.md). No raw internal state prominently in UI. Reference Strategy (EMA Sweep Engulfing) uses only the public contract. No strategy-specific handling in generic infrastructure.
+Atlas persists minimum deterministic state across runtime restart. State semantics: [Strategy Contract](../architecture/strategy-contract.md). No raw internal state prominently in UI. Reference Strategy (EMA Sweep Confirmation Break v2) uses only the public contract. Legacy EMA Sweep Engulfing references are historical compatibility text, not the current methodology. No strategy-specific handling in generic infrastructure.
 
 ## Acceptance Flow
 

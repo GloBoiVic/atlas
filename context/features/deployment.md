@@ -2,7 +2,7 @@
 
 ## Purpose
 
-A Deployment runs one immutable StrategyVersion against one Instrument and one TradingAccount in PAPER or LIVE. Initial: EMA Sweep Engulfing, EUR/USD, OANDA Practice, PAPER. A Deployment is persistent trading configuration — not a Bot, Worker, or runtime process.
+A Deployment is the target configuration for running one immutable StrategyVersion against one Instrument and one TradingAccount in PAPER or LIVE. Initial target: EMA Sweep Confirmation Break v2, EUR/USD, OANDA Practice, PAPER. The current implementation is historical Experiments only; PAPER/LIVE Deployment execution is future behavior. A Deployment is persistent trading configuration — not a Bot, Worker, or runtime process.
 
 ## Core Model
 
@@ -30,7 +30,7 @@ atlas-runtime owns active execution. Browser/Next.js do not — closing browser 
 
 ## Market Data / Duplicate Evaluation Protection
 
-RUNNING Deployment receives canonical data: OANDA EUR/USD → 1m → 15m MID → Strategy. Only completed bars trigger evaluation. Duplicate evaluation protection: persist enough state (last processed/evaluated bar) to prevent same bar from causing duplicate TradeIntent after restart. Trading correctness invariant.
+Future RUNNING Deployment receives native OANDA EUR/USD M15 MID analysis data plus sparse native M1 BID/ASK execution observations; M1 does not substitute for or derive the authoritative M15 analysis product. Only completed bars trigger evaluation. Duplicate evaluation protection: persist enough state (last processed/evaluated bar) to prevent same bar from causing duplicate TradeIntent after restart. Trading correctness invariant.
 
 ## Warm-Up / Strategy State / Catch-Up
 
@@ -58,8 +58,8 @@ Valid creation, invalid rejection, TradingAccount+Instrument uniqueness, desired
 
 ## Acceptance Flow
 
-Create deployment (EMA v1, OANDA Practice, EUR/USD, Risk config) → START → runtime validates → broker reconciled → warm-up loaded → data healthy → RUNNING → bars processed → Strategy evaluated once per bar → state persisted → PAUSE/RESUME safely → restart → state restored without duplicate evaluation.
+Future PAPER acceptance flow: Create Deployment (EMA Sweep Confirmation Break v2, OANDA Practice, EUR/USD, Risk config) → START → runtime validates → broker reconciled → warm-up loaded → data healthy → RUNNING → bars processed → Strategy evaluated once per bar → state persisted → PAUSE/RESUME safely → restart → state restored without duplicate evaluation.
 
 ## Success Criteria
 
-Trader safely runs same StrategyVersion as Experiments against live OANDA Practice market data, with persistent state, correct completed-bar evaluation, clear START/PAUSE/RESUME/STOP behavior — without Bot or supervisor architecture.
+Target success: trader safely runs the same StrategyVersion as Experiments against live OANDA Practice market data, with persistent state, correct completed-bar evaluation, and clear START/PAUSE/RESUME/STOP behavior — without Bot or supervisor architecture. This target is not currently implemented.

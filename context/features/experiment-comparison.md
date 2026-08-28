@@ -18,7 +18,7 @@ Clearly identify important differences between compared Experiments: StrategyVer
 
 ## Comparison Header / Config Differences
 
-Identify each Experiment with meaningful labels (e.g., "Experiment A: EMA Sweep Engulfing v1, ATR Buffer 0.5"). No raw UUIDs. Show config differences before performance. Prioritize: StrategyVersion, parameters, date range, DatasetSnapshot, Risk config, simulation assumptions. Unchanged config visually de-emphasized. Trader understands "What changed?" before "What performed better?"
+Identify each Experiment with meaningful labels (e.g., "Experiment A: EMA Sweep Confirmation Break v2, ATR Buffer 0.5"). No raw UUIDs. Show config differences before performance. Prioritize: StrategyVersion, parameters, date range, DatasetSnapshot, Risk config, simulation assumptions. Unchanged config visually de-emphasized. Trader understands "What changed?" before "What performed better?"
 
 ## Metric Comparison
 

@@ -14,7 +14,7 @@ Full results only for COMPLETED Experiments. FAILED shows failure, not partial o
 
 ## Experiment Header
 
-Identify: Strategy, StrategyVersion, Instrument, tested period, status. Example: "EMA Sweep Engulfing v1 · EUR/USD · Jan 1 – Dec 31, 2025 · COMPLETED". No raw internal IDs.
+Identify: Strategy, StrategyVersion, Instrument, tested period, status. Example: "EMA Sweep Confirmation Break v2 · EUR/USD · Jan 1 – Dec 31, 2025 · COMPLETED". No raw internal IDs.
 
 ## Primary Metrics (shown first)
 
@@ -38,7 +38,7 @@ Equity over time via TradingView Lightweight Charts. Drawdown visualization subo
 
 ## Trade Inspection
 
-Trade Detail: direction, entry/exit times/prices, initial stop, target, exit reason, P&L, R multiple, Strategy rationale, execution info. Focused candlestick chart for EMA Sweep Engulfing: EMA 100, reference/sweep/confirmation candles, entry/stop/target/exit annotations. Strategy rationale captured at decision time. Do not re-implement Strategy pattern detection in UI. Progressive disclosure for execution lineage: TradeIntent → RiskDecision → Order → Fill → Trade.
+Trade Detail: direction, entry/exit times/prices, initial stop, target, exit reason, P&L, R multiple, Strategy rationale, execution info. Focused candlestick chart for EMA Sweep Confirmation Break v2: EMA 100, reference/sweep/confirmation candles, entry/stop/target/exit annotations. Strategy rationale captured at decision time. Do not re-implement Strategy pattern detection in UI. Progressive disclosure for execution lineage: TradeIntent → RiskDecision → Order → Fill → Trade.
 
 ## Ambiguous Outcomes / Assumptions / Provenance
 
@@ -55,6 +55,10 @@ Failed Experiment: failure reason, stage, config, actionable next step. No misle
 ## Result Immutability / Comparison Boundary / UI
 
 Completed results reflect immutable inputs. UI must not recalculate using current defaults, RiskProfile, or changed DatasetSnapshot. Metrics may be recomputed from Experiment's own facts when compatible. Cross-Experiment comparison: [Experiment Comparison](experiment-comparison.md). UI hierarchy: identity/status → headline metrics → equity curve → drawdown → Trades → assumptions → provenance. Trade inspection opens focused detail view.
+
+## Current vs Future Scope
+
+Current implementation persists and presents completed historical Experiment evidence, including simulated Orders, Fills, Positions, and Trades. PAPER/LIVE broker Trades and broker-confirmed execution are future deployment behavior, not current Experiment Results capability. See [Current status](../../CURRENT.md) and the [Accounting Model](../architecture/accounting-model.md).
 
 ## Design
 

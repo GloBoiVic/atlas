@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Atlas should feel like a focused trading workstation — not a dense institutional terminal, not a generic SaaS dashboard. Optimize for clarity, speed, confidence, low visual noise, obvious trading state. Initial scope: OANDA, EUR/USD, EMA Sweep Engulfing. The UI should reflect that simplicity.
+Atlas should feel like a focused trading workstation — not a dense institutional terminal, not a generic SaaS dashboard. Optimize for clarity, speed, confidence, low visual noise, obvious trading state. Initial target scope: OANDA Practice, EUR/USD, EMA Sweep Confirmation Break v2. The current UI implementation is historical Experiments; PAPER/LIVE screens are future target references and must not be read as implemented behavior.
 
 ## Core Design Principle
 
@@ -50,7 +50,7 @@ Very simple with one Instrument and one account. Show StrategyVersion, status, I
 
 ## Journal / Trade Detail
 
-Two screens: Trade List (date, direction, entry, exit, P&L, R multiple, result) and Trade Detail (summary, candlestick chart, entry/stop/target/exit, rationale, execution lineage, notes/tags). Journal mockups reflect current scope: EUR/USD, EMA Sweep Engulfing, USD, OANDA Practice.
+Two screens: Trade List (date, direction, entry, exit, P&L, R multiple, result) and Trade Detail (summary, candlestick chart, entry/stop/target/exit, rationale, execution lineage, notes/tags). Journal mockups may depict the future trading scope: EUR/USD, EMA Sweep Confirmation Break v2, USD, OANDA Practice. They do not imply that PAPER/LIVE trading is currently implemented.
 
 ## Data / Settings
 
@@ -58,7 +58,7 @@ Data answers: Can Atlas run the Experiment I want? Shows EUR/USD, OANDA, 1m, cov
 
 ## Charts
 
-TradingView Lightweight Charts for candles, trade visualization, equity curves, drawdown. Not dozens of indicators, drawing tools, or TradingView-terminal functionality. For EMA Sweep Engulfing: EMA 100, reference candle, sweep candle, confirmation candle, entry/stop/target/exit annotations — subtle, not overwhelming.
+TradingView Lightweight Charts for candles, trade visualization, equity curves, drawdown. Not dozens of indicators, drawing tools, or TradingView-terminal functionality. For EMA Sweep Confirmation Break v2: EMA 100, reference candle, sweep candle, confirmation candle, entry/stop/target/exit annotations — subtle, not overwhelming.
 
 ## Color / PAPER vs LIVE / Connection State
 
