@@ -1,5 +1,8 @@
 # Vision
 
+The product North Star is authoritative for long-term direction:
+[context/product/north-star.md](north-star.md).
+
 ## What Atlas Is
 
 Atlas is an opinionated, strategy-first algorithmic trading workstation for independent systematic traders. It is intended as a proprietary, licensed, local-first product: the application, runtime, and durable product state operate under the customer's control, with broker and market-data integrations remaining external dependencies. Core lifecycle: Build → Experiment → PAPER → LIVE → Monitor → Improve. One immutable StrategyVersion should move from historical research to paper trading to live trading without changing its trading methodology.
@@ -18,7 +21,12 @@ The Strategy is the center of Atlas. A StrategyVersion moves through Experiment 
 
 ## Initial Market / Future
 
-Begins with Forex, EUR/USD, OANDA. OANDA is the first adapter, not the definition of Atlas. Future expansion may include crypto derivatives. Market-specific economics modeled explicitly. Atlas should remain market agnostic but market aware.
+Begins with Forex, EUR/USD, OANDA, and the EMA Sweep Confirmation Break v2
+Strategy. The authoritative historical analysis product is native M15 MID with
+sparse native M1 BID/ASK execution observations. OANDA is the first adapter, not
+the definition of Atlas. Future expansion may include crypto derivatives.
+Market-specific economics modeled explicitly. Atlas should remain market
+agnostic but market aware.
 
 ## Out of Scope (initially)
 

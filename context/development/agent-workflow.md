@@ -32,7 +32,7 @@ For nontrivial work: concise plan identifying files to change, code to reuse, da
 
 ## Vertical Slice Rule / Golden Path
 
-Move a real workflow forward end-to-end. Bad: every repository → every engine → every API → every UI shell → eventually connect. Good: minimum domain behavior → persistence → application flow → API/UI where required → integration test → usable workflow. All implementation should ultimately advance: Load EUR/USD data → deterministic 15m bars → EMA Sweep Engulfing → long/short Trades → reproduce Experiment → inspect results → OANDA Practice → live bars → same StrategyVersion → TradeIntent → Risk → Order → Fill → Position → protection → restart → reconcile.
+Move a real workflow forward end-to-end. Bad: every repository → every engine → every API → every UI shell → eventually connect. Good: minimum domain behavior → persistence → application flow → API/UI where required → integration test → usable workflow. All implementation should ultimately advance: Load EUR/USD native M15/M1 data → EMA Sweep Confirmation Break v2 → long/short Trades → reproduce Experiment → inspect results → OANDA Practice → live bars → same StrategyVersion → TradeIntent → Risk → Order → Fill → Position → protection → restart → reconcile.
 
 ## Build Proof, Not Infrastructure
 

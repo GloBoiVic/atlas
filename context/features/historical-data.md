@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Trustworthy market data for deterministic Experiments. Initial: OANDA, EUR/USD, 1m stored base resolution, 15m Strategy resolution, MID analysis price. Historical data must be reproducible, inspectable, free from silent data repair. Canonical semantics: [Market Data Model](../architecture/market-data-model.md).
+Trustworthy market data for deterministic Experiments. Initial: OANDA EUR/USD, provider-native M15 MID for analysis, and provider-native M1 BID/ASK for sparse execution. Historical data must be reproducible, inspectable, and free from silent data repair. Canonical semantics: [Market Data Model](../architecture/market-data-model.md).
 
 ## Initial Source / Instrument Mapping
 
@@ -10,7 +10,7 @@ OANDA as initial Forex data provider. OANDA-specific (symbols, requests, paginat
 
 ## Base Resolution / Price Components / Candle Model
 
-Persist at 1m; higher timeframes derived deterministically. Do not download separate 15m history. Preserve MID, BID, ASK. MID for analysis; ASK for buys, BID for sells for simulated execution. Do not approximate spread from constant when actual BID/ASK available. Canonical bars: Instrument, provider, resolution, timestamp, OHLC, price components, completion/provenance. Provider response objects not in Strategy code. Only completed candles enter canonical data.
+Persist provider-native M15 MID and M1 BID/ASK products separately. Do not derive M15 analytical candles from M1 in the authoritative Experiment path. M1 BID/ASK observations may be sparse, but a missing execution observation is explicit and never fabricated. Preserve price components and provenance; MID is for analysis, ASK for buys, and BID for sells. Only completed observations enter canonical data.
 
 ## UTC / Ingestion / Idempotency
 
@@ -24,9 +24,9 @@ Adapter responsible for provider request limits, pagination, rate limits, respon
 
 Detect missing observations. Distinguish expected closure vs unexpected gap. Material unexpected gaps → block Experiment unless policy explicitly permits. UI explains what's missing. Never synthesize candles by forward-filling. Expected closed-market periods via market-session semantics, not fabricated candles.
 
-## 15-Minute Aggregation / Incomplete / Deterministic
+## Derived Timeframes / Incomplete / Deterministic
 
-1m→15m follows [Market Data Model](../architecture/market-data-model.md): half-open [start, end) intervals. Open = first open, high = max high, low = min low, close = last close. Never cross boundaries. Do not create completed 15m bar when constituent data unexpectedly incomplete. Same canonical 1m → same 15m always. Same aggregation for historic and live — no separate Experiment vs PAPER definitions.
+Any future derived timeframe follows [Market Data Model](../architecture/market-data-model.md): half-open intervals and completed constituents only. This is not the current authoritative M15 acquisition path; native M15 MID remains strict and cannot be replaced by M1 aggregation.
 
 ## DatasetSnapshot / Fingerprint / Provider Corrections
 
@@ -34,11 +34,11 @@ DatasetSnapshot identifies exact data view. Provenance: [Domain Model](../archit
 
 ## Data Screen / Load Data Flow / Experiment Integration
 
-Simple Data page: EUR/USD, OANDA, 1m, MID/BID/ASK, Coverage, Integrity, Last Updated. Actions: Load Data, Update Data, Inspect Coverage. User chooses date range → inspect coverage → identify missing → fetch OANDA → validate → persist → refresh. Before Experiment: validate StrategyVersion requirements + dates + warm-up + coverage + price components + integrity. Validation failure blocks Experiment.
+Simple Data page: EUR/USD, OANDA, native M15 MID plus sparse native M1 BID/ASK, Coverage, Integrity, Last Updated. Actions: Load Data, Update Data, Inspect Coverage. User chooses date range → inspect coverage → identify missing → fetch OANDA → validate → persist → refresh. Before Experiment: validate StrategyVersion requirements + dates + warm-up + coverage + price components + integrity. Validation failure blocks Experiment.
 
 ## Bounded Load Command / Lifecycle
 
-Experiment setup exposes one narrow "Load missing historical data" action for EUR/USD OANDA Practice M1 MID/BID/ASK. A POST commits a durable `historical_data_load_requests` row in `PENDING`, then an in-process coordinator runs `PENDING -> RUNNING -> COMPLETED|FAILED`. It is a bounded command, not a generic Job/worker/queue. Only one request is active at a time (enforced by a DB partial unique index). An interrupted request left by a prior process is failed at startup (`LOAD_INTERRUPTED_BEFORE_START` for `PENDING`, `LOAD_INTERRUPTED` for `RUNNING`); it is never resumed or auto-reissued. Retry is an explicit user action that creates a new row.
+Experiment setup exposes one narrow "Load missing historical data" action for EUR/USD OANDA Practice native M15 MID plus sparse native M1 BID/ASK. A POST commits a durable `historical_data_load_requests` row in `PENDING`, then an in-process coordinator runs `PENDING -> RUNNING -> COMPLETED|FAILED`. It is a bounded command, not a generic Job/worker/queue. Only one request is active at a time (enforced by a DB partial unique index). An interrupted `PENDING`/`RUNNING` request remains inspectable and may be explicitly resumed only after durable successful acquisition-window coverage and canonical rows are recomputed; successful windows are not reissued merely for sparse or empty results, and no second active request is created. Retry/resume is an explicit coordinator action, not automatic startup recovery.
 
 **Server-only OANDA boundary:** the Practice credential is composed server-side only; it is never in a client bundle, HTTP payload, URL, log, or durable diagnostic. If no server token is configured the app still starts but `POST` returns `503` and creates no row; an invalid configured credential yields a terminal `MARKET_DATA / OANDA_AUTHORIZATION_FAILED` without provider text.
 
@@ -54,14 +54,14 @@ No multiple providers, crypto history, tick/order-book history, alternate data, 
 
 ## Required Tests
 
-OANDA→canonical normalization, UTC handling, completed-candle filtering, MID/BID/ASK preservation, duplicate/incremental ingestion, coverage calculation, warm-up coverage, expected closure handling, unexpected gap detection, no forward filling, 1m→15m alignment and OHLC aggregation, incomplete aggregation rejection, deterministic aggregation, DatasetSnapshot creation, fingerprint stability and change after correction, Experiment blocked on insufficient data.
+OANDA→canonical normalization, UTC handling, completed-observation filtering, MID/BID/ASK preservation, duplicate/incremental ingestion, independent native-product coverage, warm-up coverage, expected closure handling, unexpected gap detection, no forward filling, strict native M15 validation, sparse M1 handling, DatasetSnapshot creation, fingerprint stability and change after correction, Experiment blocked on insufficient data.
 
 ## Acceptance Flow
 
-Open Data → EUR/USD coverage displayed → request period → Atlas determines missing → OANDA loaded → canonical 1m MID/BID/ASK persisted → integrity validated → 15m bars derive deterministically → DatasetSnapshot available → Experiment data validation passes.
+Open Data → EUR/USD coverage displayed → request period → Atlas determines missing native M15 MID and sparse native M1 BID/ASK coverage → OANDA loaded → canonical products persisted → integrity validated → immutable DatasetSnapshot available → Experiment data validation passes.
 
-Durable setup flow: Experiment setup → enter labelled UTC 15-minute bounds → "Load missing historical data" → durable `PENDING` → RUNNING → bounded M1 load → coverage recomputed → immutable DatasetSnapshot created/reused → M15 MID derived from snapshot membership → Experiment coverage validated → COMPLETED → snapshot auto-selected and coverage auto-validated → Experiment creation enabled. A partial/failed/interrupted load stays inspectable and never enables creation.
+Durable setup flow: Experiment setup → enter labelled UTC 15-minute bounds → "Load missing historical data" → durable `PENDING` → RUNNING → independently planned bounded native M15 MID and M1 BID/ASK loads → coverage recomputed → immutable DatasetSnapshot created/reused → Experiment coverage validated → COMPLETED → snapshot auto-selected and coverage auto-validated → Experiment creation enabled. A partial/failed/interrupted load stays inspectable and never enables creation.
 
 ## Success Criteria
 
-Reliably: request EUR/USD period → determine missing → load only required OANDA → store without duplicates → detect integrity problems → derive deterministic 15m bars → identify exact data used by Experiment — without a generalized market-data platform.
+Reliably: request EUR/USD period → determine missing native M15 MID and sparse native M1 BID/ASK coverage → load only required OANDA products → store without duplicates → detect integrity problems → identify exact data used by Experiment — without a generalized market-data platform.

@@ -4,7 +4,7 @@
 
 Atlas is built through narrow vertical slices. Each phase must prove one real capability before the next phase begins. The roadmap is governed by one rule: do not build future infrastructure before the current workflow works end to end.
 
-The Golden Path: Historical EUR/USD → deterministic 15m bars → EMA Sweep Engulfing → deterministic Experiment → trustworthy results → OANDA Practice → same StrategyVersion → PAPER TradeIntent → Risk → Order → Fill → protected Position → restart → reconciliation → safe resume.
+The Golden Path: Historical EUR/USD native M15/M1 products → EMA Sweep Confirmation Break v2 → deterministic Experiment → trustworthy results → OANDA Practice → same StrategyVersion → PAPER TradeIntent → Risk → Order → Fill → protected Position → restart → reconciliation → safe resume.
 
 ## Phase 0 — Project Foundation
 
@@ -12,11 +12,11 @@ The Golden Path: Historical EUR/USD → deterministic 15m bars → EMA Sweep Eng
 
 ## Phase 1 — Reference Strategy
 
-**Goal**: Prove Atlas can load and deterministically evaluate one real Python Strategy. **Build**: Strategy, immutable StrategyVersion, contract, parameter schema, state, source fingerprinting, EMA Sweep Engulfing. **Do Not Build**: broker execution, account Risk sizing, Experiment UI, plugin framework, multiple Strategies. **Exit**: Reference Strategy deterministically produces correct long/short/no-action/state-transition/expiry behavior from crafted completed bars.
+**Goal**: Prove Atlas can load and deterministically evaluate one real Python Strategy. **Build**: Strategy, immutable StrategyVersion, contract, parameter schema, state, source fingerprinting, EMA Sweep Confirmation Break v2. **Do Not Build**: broker execution, account Risk sizing, Experiment UI, plugin framework, multiple Strategies. **Exit**: Reference Strategy deterministically produces correct long/short/no-action/state-transition/expiry behavior from crafted completed bars.
 
 ## Phase 2 — Historical EUR/USD Data
 
-**Goal**: Trustworthy historical data for reference Strategy. **Build**: Instrument, VenueInstrument, OANDA adapter, EUR/USD 1m ingestion, MID/BID/ASK normalization, PostgreSQL persistence, coverage/gap detection, DatasetSnapshot, deterministic 1m→15m aggregation. **Do Not Build**: live streaming, multiple providers, crypto, derived timeframe persistence, specialized time-series DB. **Exit**: Load EUR/USD 1m data without duplicates, validate coverage, detect gaps, derive identical 15m bars, create DatasetSnapshot.
+**Goal**: Trustworthy historical data for reference Strategy. **Build**: Instrument, VenueInstrument, OANDA adapter, EUR/USD native M15 MID and M1 BID/ASK ingestion, PostgreSQL persistence, coverage/gap detection, and immutable DatasetSnapshot. **Do Not Build**: live streaming, multiple providers, crypto, derived timeframe persistence, specialized time-series DB. **Exit**: Load native products without duplicates, validate strict M15 and sparse M1 semantics, and create DatasetSnapshot.
 
 ## Phase 3 — First Historical Trade
 
@@ -68,7 +68,7 @@ crypto spot, futures, equities, options, multi-instrument Strategies, pyramiding
 
 ## Golden Path Checklist
 
-Project boots → EMA Sweep Engulfing evaluates bars → EUR/USD loads without duplicates → 15m bars produced → long + short historical Trades → identical Experiment reproduces → results inspectable → OANDA Practice connects → live bars produced → same StrategyVersion evaluates → PAPER TradeIntent → Risk approves → OANDA Order → Fill → Position → stop+target confirmed → Trade closes → Journal shows it → runtime restarts → broker reconciles → Deployment resumes safely.
+Project boots → EMA Sweep Confirmation Break v2 evaluates native M15 bars → EUR/USD products load without duplicates → long + short historical Trades → identical Experiment reproduces → results inspectable → OANDA Practice connects → live bars produced → same StrategyVersion evaluates → PAPER TradeIntent → Risk approves → OANDA Order → Fill → Position → stop+target confirmed → Trade closes → Journal shows it → runtime restarts → broker reconciles → Deployment resumes safely.
 
 ## Advancement Rule / Completion Rule
 

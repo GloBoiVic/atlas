@@ -16,18 +16,18 @@ Preserve: StrategyVersion, Instrument, parameter snapshot, DatasetSnapshot, date
 
 Experiment setup offers a "Load missing historical data" action enabled from a StrategyVersion plus valid UTC 15-minute-aligned trading bounds. It does not require a pre-existing snapshot and never exposes a provider or credential selector. The server executes a strictly ordered lifecycle before Experiment creation is enabled: load -> snapshot -> M15 -> validation.
 
-1. Bounded `load_missing` for current M1 MID/BID/ASK over `[requiredWarmUpStart, tradingEnd)`.
+1. Independently planned bounded native M15 MID and M1 BID/ASK acquisition over the required ranges.
 2. Persist the sanitized final ingestion report and recomputed current coverage.
 3. Fail on source failure, incomplete provider data, or invalid coverage.
 4. Create or reuse an immutable DatasetSnapshot for the loaded range.
-5. Derive M15 MID exclusively from that snapshot's immutable membership; fail if deterministic aggregation cannot cover eligible windows.
+5. Validate strict native M15 MID coverage and immutable sparse M1 BID/ASK membership; M1 never substitutes for M15.
 6. Validate Experiment coverage for the original trading period; mark the load `COMPLETED` only if that validation is valid.
 
 On `COMPLETED` the setup refetches configuration options, auto-selects the returned snapshot, calls the existing coverage-validation endpoint, and enables Experiment creation only from a successful response. A partial, failed, or interrupted load never enables creation. The durable request (not a toast) is the status authority.
 
 ## Reference Configuration
 
-EMA Sweep Engulfing, EUR/USD, 15m Strategy, 1m simulation, MID analysis, BID/ASK execution, USD base.
+EMA Sweep Confirmation Break v2, EUR/USD, native M15 Strategy analysis, native M1 BID/ASK execution, USD base.
 
 ## Simulation Clock / No Lookahead
 
@@ -47,7 +47,7 @@ Prior history loaded → indicators initialized → trading disabled → request
 
 ## Strategy Evaluation / Risk
 
-Follows [Strategy Contract](../architecture/strategy-contract.md). Exact EMA Sweep Engulfing: [Reference Strategy](reference-strategy.md). Experiments use canonical Risk logic with simulated account/exposure state. Two-stage Risk: PRE_FLIGHT (structural eligibility) → executable context → PRE_SUBMISSION (valid at actual executable price, quantity). See [Risk Management](risk-management.md).
+Follows [Strategy Contract](../architecture/strategy-contract.md). Exact EMA Sweep Confirmation Break v2: [Reference Strategy](reference-strategy.md). Experiments use canonical Risk logic with simulated account/exposure state. Two-stage Risk: PRE_FLIGHT (structural eligibility) → executable context → PRE_SUBMISSION (valid at actual executable price, quantity). See [Risk Management](risk-management.md).
 
 ## Executable Entry / Stop Geometry / Target
 
@@ -99,7 +99,7 @@ Deterministic replay, warm-up (no Trade during), no lookahead, exact 15m decisio
 
 ## Golden Acceptance Flow
 
-historical EUR/USD 1m MID/BID/ASK → deterministic 15m MID bars → EMA Sweep Engulfing → TradeIntent → Risk → post-decision BID/ASK → Order → Fill → protected Position → stop or target → closed Trade → account/equity update — for both long and short.
+historical EUR/USD native M15 MID + sparse M1 BID/ASK → EMA Sweep Confirmation Break v2 → TradeIntent → Risk → post-decision BID/ASK → Order → Fill → protected Position → stop or target → closed Trade → account/equity update — for both long and short.
 
 ## Success Criteria
 

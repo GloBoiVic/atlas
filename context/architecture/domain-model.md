@@ -10,7 +10,9 @@ Strategy → StrategyVersion → Experiment or Deployment → TradeIntent → Ri
 
 ## Strategy
 
-A Strategy is the long-lived identity of a trading methodology (e.g., EMA Sweep Engulfing, Trend Breakout). It does not itself represent one immutable executable version — that belongs to StrategyVersion.
+A Strategy is the long-lived identity of a trading methodology (currently EMA
+Sweep Confirmation Break). It does not itself represent one immutable executable
+version — that belongs to StrategyVersion. The current executable version is v2.
 
 ## StrategyVersion
 
@@ -26,7 +28,12 @@ Maps an Atlas Instrument to a specific broker/provider representation and venue-
 
 ## DatasetSnapshot
 
-Identifies the immutable historical market-data view used by an Experiment. Preserves provenance: Instrument, provider, base resolution, price components, coverage, alignment convention, fingerprint, integrity metadata. Does not require physically copying all bars for every Experiment.
+Identifies the immutable historical market-data view used by an Experiment.
+Preserves provenance for the independent native products: OANDA M15 MID for
+analysis and sparse M1 BID/ASK for execution, including resolution, components,
+coverage, alignment, fingerprint, and integrity metadata. M1 does not substitute
+for missing native M15. Does not require physically copying all bars for every
+Experiment.
 
 ## Experiment
 

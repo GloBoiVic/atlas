@@ -28,13 +28,13 @@ A bar becomes completed only when its full interval has elapsed and Atlas has su
 
 At evaluation time T, Strategy-visible market info must satisfy bar.end_time <= T. No Strategy code may access future bars, partially formed future context, or provider responses beyond the current frontier. Applies equally to historical simulation, paper trading, and live trading.
 
-## Base Resolution / Deterministic Aggregation
+## Native Products / Sparse Execution
 
-Initial Forex base: 1m. Reference Strategy: 15m. Higher timeframes derived deterministically from base resolution. Aggregation rules identical across historical and live workflows. Do not implement separate builders for Experiment vs live.
+The initial historical Experiment path uses provider-native OANDA M15 MID candles for analysis and provider-native M1 BID/ASK observations for execution. M15 is not derived from M1 in the authoritative path. M1 execution observations may be sparse: Atlas never forward-fills, interpolates, or fabricates a price. A fully absent acquired M1 minute is explicit unavailable execution data; a one-sided BID/ASK observation is invalid. Analytical M15 coverage remains strict.
 
 ## OHLC Aggregation
 
-For derived interval: open = first base-bar open, high = max base-bar high, low = min base-bar low, close = final base-bar close. Only completed constituent bars contribute. Missing data must not be silently fabricated. Timeframe boundaries deterministic and UTC-based (00/15/30/45 for 15m unless provider convention requires otherwise).
+For any future derived interval: open = first base-bar open, high = max base-bar high, low = min base-bar low, close = final base-bar close. Only completed constituent bars contribute. Missing data must not be silently fabricated. Timeframe boundaries are deterministic and UTC-based (00/15/30/45 for 15m unless provider convention requires otherwise).
 
 ## Decision / Execution Separation
 
@@ -50,7 +50,7 @@ Each provider adapter translates data into canonical Atlas bars. Initial: OANDA.
 
 ## Historical / Live Data
 
-Historical: deterministic replay, coverage inspection, gap detection, DatasetSnapshot creation, warm-up validation, timeframe aggregation. Idempotent ingestion. Live: provider connection, normalized updates, bar formation, completed-bar emission, reconnect recovery, stale-data detection. Do not allow live-provider quirks to alter canonical completed-bar semantics.
+Historical: deterministic replay, native-product coverage inspection, gap detection, DatasetSnapshot creation, warm-up validation, and idempotent ingestion. Live: provider connection, normalized updates, bar formation, completed-bar emission, reconnect recovery, and stale-data detection. Do not allow live-provider quirks to alter canonical completed-bar semantics.
 
 ## Live / Historical Parity
 
@@ -74,7 +74,7 @@ Market-data validation must account for Strategy warm-up requirements. Warm-up b
 
 ## Execution Simulation Resolution
 
-Strategy resolution and simulation resolution are separate. Reference: Strategy 15m, execution simulation 1m. The Strategy should not be aware of the simulation resolution.
+Strategy resolution and simulation resolution are separate. Reference: Strategy native M15, execution simulation native M1 BID/ASK. The Strategy should not be aware of the simulation resolution.
 
 ## Intrabar Uncertainty
 
@@ -90,8 +90,8 @@ Correctness before optimization. Do not add Redis cache, specialized time-series
 
 ## Required Tests
 
-At minimum test: UTC normalization, start/end timestamp semantics, 1m bar completion, deterministic 1m→15m aggregation, exact 15m boundary alignment, no incomplete bar reaches Strategy, no future bar reaches Strategy, signal interval not reused as post-decision data, MID/BID/ASK normalization, duplicate ingestion, out-of-order input handling, missing-data detection, weekend closure classification, warm-up coverage, live/historical aggregation parity, DatasetSnapshot fingerprint change on data change.
+At minimum test: UTC normalization, start/end timestamp semantics, native M15/M1 completion and provenance, exact M15 boundary alignment, no incomplete bar reaches Strategy, no future bar reaches Strategy, signal interval not reused as post-decision data, MID/BID/ASK normalization, duplicate ingestion, out-of-order input handling, sparse execution gaps, missing-data detection, weekend closure classification, warm-up coverage, live/historical parity, DatasetSnapshot fingerprint change on data change.
 
 ## Success Criteria
 
-Proven when Atlas can: load EUR/USD 1m data → normalize MID/BID/ASK → construct deterministic completed 15m bars → expose only info available at time frontier → run Strategy evaluation → use only post-decision executable data for fills — with same candle semantics for historical and live trading.
+Proven when Atlas can: load provider-native EUR/USD M15 MID and sparse native M1 BID/ASK data → expose only completed analytical information available at the time frontier → run Strategy evaluation → use only post-decision executable observations for fills — with the same candle semantics for historical and live trading.

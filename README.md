@@ -1,7 +1,8 @@
 # Atlas
 
 Atlas currently supports the historical EUR/USD workflow: load OANDA Practice
-M1 candles, create immutable DatasetSnapshots, derive M15 data, configure and
+native M15 MID and sparse M1 BID/ASK observations, create immutable
+DatasetSnapshots, configure and
 run deterministic historical Experiments, inspect results and Trades, compare
 completed Experiments, and inspect immutable StrategyVersion history. This is
 historical simulation only: PAPER/LIVE broker execution is not implemented.
@@ -63,30 +64,46 @@ uv run alembic check
 
 Migrations live in `backend/persistence/migrations` and read `ATLAS_DATABASE_URL` from `.env`.
 
-## 4. Prepare historical data
+## 4. Prepare historical data (current V2 UI/API workflow)
 
 All ranges must be explicit UTC, minute-aligned, positive, half-open ranges.
-Commands print stable summaries; `--json` produces compact sorted-key JSON.
+The authoritative V2 setup flow is the Experiments UI at
+<http://localhost:3000/experiments/new>, backed by these API calls:
+
+1. Check `GET /api/v1/historical-data/capability`.
+2. Submit `POST /api/v1/historical-data/load-requests` with the selected
+   `strategyVersionId`, `tradingStart`, and `tradingEnd` in UTC.
+3. Poll `GET /api/v1/historical-data/load-requests/{id}` until the load is
+   terminal. If the status requires recovery, explicitly resume with
+   `POST /api/v1/historical-data/load-requests/{id}/resume`, then continue
+   polling; an uncertain status is never resent automatically.
+4. Select the completed V2 `DatasetSnapshot`, validate its coverage for the
+   trading period (`POST /api/v1/experiments/coverage-validations`), then
+   create the historical `Experiment` (`POST /api/v1/experiments`) with that
+   immutable `StrategyVersion` and snapshot.
+
+The following `atlas-data` commands are retained for **legacy, non-authoritative
+CLI use only**; they are not the current V2 setup workflow:
 
 ```bash
 uv run atlas-data load-missing --start 2025-01-06T00:00:00Z --end 2025-01-07T00:00:00Z
 uv run atlas-data refresh --start 2025-01-06T00:00:00Z --end 2025-01-07T00:00:00Z
 uv run atlas-data coverage --start 2025-01-06T00:00:00Z --end 2025-01-07T00:00:00Z --warm-up-bars 50
 uv run atlas-data snapshot --start 2025-01-06T00:00:00Z --end 2025-01-07T00:00:00Z
-uv run atlas-data derive-m15 --snapshot-fingerprint <sha256> --component MID
 ```
 
 Failures have a nonzero exit status. No raw database UUIDs or credentials are
 normal output. OANDA failures are bounded and sanitized; a timeout or partial
 provider failure never means that coverage is valid. Unknown holidays and
-unexpected observations fail closed. M15 is derived only from immutable
-snapshot membership; no forward fill, interpolation, or synthetic bars are
-created. OANDA Practice historical candles are the only external capability.
+unexpected observations fail closed. Native M15 is validated from immutable
+snapshot membership; M1 never substitutes for M15. No forward fill,
+interpolation, or synthetic observations are created. OANDA Practice historical
+candles are the only external capability.
 
-To run an Experiment, Atlas needs a completed DatasetSnapshot with derived M15
-data that covers the selected period. The UI lists eligible data. If it has no
-eligible DatasetSnapshot, load a sufficiently long range, create a snapshot,
-and derive M15 data using the commands above. Keep all Experiment periods
+To run an Experiment, Atlas needs a completed DatasetSnapshot with native M15 MID
+coverage and sparse M1 BID/ASK membership for the selected period. The UI lists eligible data. If it has no
+eligible DatasetSnapshot, load a sufficiently long range and create a snapshot.
+Keep all Experiment periods
 inside the snapshot's validated coverage.
 
 ## 5. Run the stack
@@ -115,12 +132,14 @@ Liveness is process-only; readiness checks PostgreSQL and returns sanitized 503 
 
 **Stopping:** press Ctrl+C in each terminal. The runtime also exits cleanly on SIGTERM.
 
-## 6. Manually validate Phase 6
+## 6. Use the current Strategy workflow
+
+The current reference Strategy is **EMA Sweep Confirmation Break v2**. Use its immutable StrategyVersion with an eligible DatasetSnapshot to create and run a historical Experiment. Strategy analysis uses native M15 MID; sparse M1 BID/ASK observations are used only for execution simulation. Compare completed Experiments from the read-only comparison view; Atlas does not rank or recommend parameters.
 
 1. Start PostgreSQL, apply migrations, then start the API and frontend as above.
 2. Confirm the API is ready at <http://127.0.0.1:8000/health/ready> and open
    <http://localhost:3000/experiments/new>.
-3. Select the parameter-enabled **EMA Sweep Engulfing v2** StrategyVersion and
+3. Select the parameter-enabled **EMA Sweep Confirmation Break v2** StrategyVersion and
    an eligible DatasetSnapshot. Choose a period within the snapshot coverage.
 4. Run a baseline Experiment, then run 5–10 more while changing one supported
    parameter at a time (for example EMA period, ATR period, stop buffer, or

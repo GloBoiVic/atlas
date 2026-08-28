@@ -30,7 +30,7 @@ Strategies are deterministic Python trading logic consuming Atlas-controlled con
 
 ## Market Data Boundary
 
-Providers normalized before Strategy evaluation. Initial: OANDA → EUR/USD → 1m base → deterministic 15m bars. Historical and live must preserve same completed-bar semantics. Rules: [Market Data Model](market-data-model.md).
+Providers normalized before Strategy evaluation. Initial authoritative Experiment data: OANDA → EUR/USD → native M15 MID for analysis plus native M1 BID/ASK for sparse execution. Historical and live must preserve the same completed-bar semantics. Rules: [Market Data Model](market-data-model.md).
 
 ## Risk Boundary
 
@@ -126,4 +126,4 @@ If implementation requires a new persistent process, infrastructure, domain conc
 
 ## Architectural Success
 
-The architecture is working when Atlas can prove: historical EUR/USD → completed 15m bars → EMA Sweep Engulfing → deterministic Experiment → trustworthy Trades → OANDA Practice → same StrategyVersion → live completed bars → Risk → Order → Fill → protected Position → restart → reconciliation → safe resume — with a codebase understandable without distributed infrastructure.
+The architecture is working when Atlas can prove: historical EUR/USD native M15/M1 products → EMA Sweep Confirmation Break v2 → deterministic Experiment → trustworthy Trades → OANDA Practice → same StrategyVersion → live completed bars → Risk → Order → Fill → protected Position → restart → reconciliation → safe resume — with a codebase understandable without distributed infrastructure.

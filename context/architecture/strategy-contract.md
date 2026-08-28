@@ -106,7 +106,7 @@ A StrategyVersion may declare requirements (LONG, SHORT, STOP_LOSS, TAKE_PROFIT)
 
 ## Reference Strategy
 
-First Strategy: EMA Sweep Engulfing, EUR/USD, 15m. Exact methodology: [Reference Strategy](../features/reference-strategy.md). Generic infrastructure must not contain special cases for this Strategy.
+Current Strategy: EMA Sweep Confirmation Break v2, EUR/USD, native M15 MID. Exact methodology: [Reference Strategy](../features/reference-strategy.md). Generic infrastructure must not contain special cases for this Strategy.
 
 ## Required Tests
 

@@ -6,7 +6,7 @@ Atlas is a single-user algorithmic trading platform for moving a trading hypothe
 
 ## Current Scope
 
-**Initial vertical slice:** Instrument: EUR/USD | Broker: OANDA | Account: OANDA Practice | Base Currency: USD | Strategy Timeframe: 15m | Historical Base Resolution: 1m | Strategy: EMA Sweep Engulfing. Build this correctly before generalizing.
+**Initial vertical slice:** Instrument: EUR/USD | Broker: OANDA | Account: OANDA Practice | Base Currency: USD | Strategy: EMA Sweep Confirmation Break v2 | Analysis: native M15 MID | Execution: sparse native M1 BID/ASK. Build this correctly before generalizing.
 
 ## Architecture Principle
 
@@ -18,7 +18,7 @@ Use canonical Atlas terminology. Prefer: Strategy, StrategyVersion, Experiment, 
 
 ## Core Invariants
 
-Never violate: StrategyVersion is immutable. Completed Experiment inputs/results are immutable. Strategy does not own Risk; Risk is centralized. Position state derives from Fills. Broker truth wins in PAPER/LIVE. Unknown financial state blocks new exposure. Only completed candles trigger decisions. No lookahead. Same completed bar never evaluated twice. Order submission must be retry-safe. Open PAPER/LIVE exposure must use broker-hosted protection. Reconciliation before resuming after uncertain state. PAPER/LIVE share Strategy/Risk/domain boundaries. Raw UUIDs are not normal UI labels.
+Never violate: StrategyVersion is immutable. Completed Experiment inputs/results are immutable. Strategy does not own Risk; Risk is centralized. Position state derives from Fills. Broker truth wins in PAPER/LIVE. Unknown financial state blocks new exposure. Only completed candles trigger decisions. No lookahead. Same completed bar never evaluated twice. Native M15 is not substituted by M1 aggregation; sparse M1 never fabricates execution prices. Order submission must be retry-safe. Open PAPER/LIVE exposure must use broker-hosted protection. Reconciliation before resuming after uncertain state. PAPER/LIVE share Strategy/Risk/domain boundaries. Raw UUIDs are not normal UI labels.
 
 ## Context Hierarchy
 
@@ -26,7 +26,14 @@ Read only relevant files. **Product:** `context/product/`, `context/roadmap/`. *
 
 ## Source Precedence
 
-1. explicit current task | 2. architecture invariants | 3. feature specification | 4. product/roadmap scope | 5. design specification | 6. screenshot/mockup | 7. existing implementation. Existing code is not automatically correct. Surface contradictions; do not invent resolutions.
+Document ownership governs authority: North Star and product documents own
+product direction; architecture documents own cross-feature rules and invariants;
+feature specifications own feature behavior within those architectural bounds.
+`CURRENT.md`, the roadmap, and `README.md` own status, sequencing, and usage.
+Design documents and screenshots govern appearance only where their ownership
+applies. Feature specifications cannot silently override architecture; surface
+contradictions and resolve them explicitly. Existing code is not automatically
+correct.
 
 ## Implementation Workflow
 
