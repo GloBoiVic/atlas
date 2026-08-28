@@ -12,6 +12,7 @@ from backend.market_data.historical_load import (
     _warmup_plan,
 )
 from backend.market_data.ingestion import classify_failure
+from backend.market_data.session_calendar import required_warmup_range
 from backend.persistence.historical_data_load_repository import (
     HistoricalDataLoadRepository,
 )
@@ -114,8 +115,43 @@ def test_prepare_does_not_invoke_legacy_shared_m1_planner(monkeypatch) -> None:
         trading_start=UTC_START,
         trading_end=UTC_START + timedelta(minutes=15),
     )
-    assert load_start == UTC_START - timedelta(minutes=1500)
+    assert load_start == required_warmup_range(
+        UTC_START, UTC_START + timedelta(minutes=15), 100
+    )[0]
     assert load_end == UTC_START + timedelta(minutes=15)
+
+
+def test_prepare_uses_eligible_completed_m15_warmup_across_market_closure() -> None:
+    version_id = uuid4()
+    strategies = SimpleNamespace(
+        get_version=lambda *_args: SimpleNamespace(
+            id=version_id, warm_up_bars=100, primary_timeframe="15m",
+            strategy=SimpleNamespace(strategy_key="ema_sweep_engulfing"),
+            version_number=2, source_fingerprint="f" * 64,
+            implementation_key="ema_sweep_engulfing.v2", parameter_schema=[],
+            required_historical_context_bars=100, state_schema_version=2,
+            created_at=UTC_START,
+        )
+    )
+    coordinator = HistoricalDataLoadCoordinator(
+        lambda: None,
+        SimpleNamespace(),
+        SimpleNamespace(),
+        SimpleNamespace(implementation_for_version=lambda _version: object()),
+        strategies=strategies,
+    )
+
+    load_start, load_end = coordinator.prepare(
+        SimpleNamespace(),
+        strategy_version_id=version_id,
+        trading_start=UTC_START,
+        trading_end=UTC_START + timedelta(minutes=15),
+    )
+
+    assert (load_start, load_end) == required_warmup_range(
+        UTC_START, UTC_START + timedelta(minutes=15), 100
+    )
+    assert load_start == datetime(2026, 1, 2, 14, tzinfo=UTC)
 
 
 def test_model_declares_json_checks_and_one_active_partial_unique_index() -> None:
@@ -323,6 +359,53 @@ def test_product_progress_is_additive_and_records_only_committed_window() -> Non
     )
 
 
+def test_v2_progress_is_durable_per_product_before_acquisition() -> None:
+    row = SimpleNamespace(
+        id=uuid4(), status="RUNNING", coverage_summary=None,
+        fetched_ranges=[], committed_ranges=[], inserted=0, reactivated=0,
+        unchanged=0, incomplete_minute_count=0, updated_at=UTC_START,
+    )
+
+    class ProgressSession:
+        def scalar(self, _statement):
+            return row
+
+        def flush(self):
+            pass
+
+    payload = {
+        "schema": "ATLAS_HISTORICAL_PROGRESS_V1",
+        "phase": "PLANNING",
+        "unit": "provider_request",
+        "completed_units": {"m15": 0, "m1": 0},
+        "total_units": {"m15": 8, "m1": 40},
+        "products": {
+            "m15": {
+                "expected_requests": 8,
+                "completed_requests": 0,
+                "already_covered_window_count": 0,
+                "uncovered_span_count": 1,
+                "planning_elapsed_ms": 2,
+            },
+            "m1": {
+                "expected_requests": 40,
+                "completed_requests": 0,
+                "already_covered_window_count": 0,
+                "uncovered_span_count": 1,
+                "planning_elapsed_ms": 2,
+            },
+        },
+    }
+
+    assert HistoricalDataLoadRepository().record_progress(
+        ProgressSession(), row.id, progress_payload=payload
+    )
+    progress = row.coverage_summary["progress"]
+    assert progress["plan_generation"] == 1
+    assert progress["completed_units"] == {"m15": 0, "m1": 0}
+    assert progress["total_units"] == {"m15": 8, "m1": 40}
+
+
 class FakeSession:
     @contextmanager
     def begin(self):
@@ -352,9 +435,11 @@ class FakeRegistry:
 
 
 class FakeRepository:
-    def __init__(self, row):
+    def __init__(self, row, *, completion_result=True):
         self.row = row
         self.events: list[str] = []
+        self.completed_snapshot_id = None
+        self.completion_result = completion_result
 
     def claim(self, _session, _request_id):
         self.events.append("claim")
@@ -364,12 +449,19 @@ class FakeRepository:
     def record_progress(self, _session, *_args, **_kwargs):
         self.events.append("progress")
 
-    def complete(self, _session, *_args, **_kwargs):
+    def complete(self, _session, *_args, **kwargs):
         self.events.append("complete")
-        self.row.status = "COMPLETED"
+        self.completed_snapshot_id = kwargs["snapshot_id"]
+        if self.completion_result:
+            self.row.status = "COMPLETED"
+        return self.completion_result
 
-    def fail_if_active(self, _session, *_args, **_kwargs):
+    def fail_if_active(self, _session, *_args, **kwargs):
+        self.events.append("fail")
         self.row.status = "FAILED"
+        self.row.failure_category = kwargs["category"]
+        self.row.failure_code = kwargs["code"]
+        self.row.failure_detail = kwargs["detail"]
 
 
 def test_claim_failure_is_attempted_as_sanitized_terminal_failure(monkeypatch) -> None:
@@ -398,6 +490,11 @@ def test_claim_failure_is_attempted_as_sanitized_terminal_failure(monkeypatch) -
 
 def test_success_order_is_load_snapshot_m15_then_validation() -> None:
     events: list[str] = []
+    snapshot = SimpleNamespace(
+        id=uuid4(),
+        snapshot_schema="ATLAS_HISTORICAL_SIMULATION_SNAPSHOT_V2",
+        integrity_summary={"warmup_count": 100, "gap_count": 0},
+    )
     row = SimpleNamespace(
         id=uuid4(),
         status="PENDING",
@@ -413,9 +510,9 @@ def test_success_order_is_load_snapshot_m15_then_validation() -> None:
             events.append("load")
             or SimpleNamespace(
                 snapshot=SimpleNamespace(
-                    id=uuid4(),
-                    snapshot_schema="ATLAS_HISTORICAL_SIMULATION_SNAPSHOT_V2",
-                    integrity_summary={"warmup_count": 100, "gap_count": 0},
+                    id=snapshot.id,
+                    snapshot_schema=snapshot.snapshot_schema,
+                    integrity_summary=snapshot.integrity_summary,
                 ),
             )
         ),
@@ -441,6 +538,48 @@ def test_success_order_is_load_snapshot_m15_then_validation() -> None:
 
     assert events == ["load"]
     assert row.status == "COMPLETED"
+    assert repository.completed_snapshot_id == snapshot.id
+
+
+def test_failed_completion_transition_becomes_inspectable_terminal_failure() -> None:
+    snapshot = SimpleNamespace(
+        id=uuid4(),
+        snapshot_schema="ATLAS_HISTORICAL_SIMULATION_SNAPSHOT_V2",
+        integrity_summary={"warmup_count": 100, "gap_count": 0},
+    )
+    row = SimpleNamespace(
+        id=uuid4(),
+        status="PENDING",
+        load_start=UTC_START,
+        load_end=UTC_START + timedelta(minutes=15),
+        trading_start=UTC_START,
+        trading_end=UTC_START + timedelta(minutes=15),
+        strategy_version_id=uuid4(),
+        snapshot_id=None,
+        failure_category=None,
+        failure_code=None,
+        failure_detail=None,
+    )
+    repository = FakeRepository(row, completion_result=False)
+    coordinator = HistoricalDataLoadCoordinator(
+        lambda: FakeSession(),
+        SimpleNamespace(
+            load_v2=lambda *_args, **_kwargs: SimpleNamespace(snapshot=snapshot)
+        ),
+        SimpleNamespace(),
+        FakeRegistry(),
+        repository=repository,
+        strategies=FakeStrategies(),
+    )
+
+    coordinator.run(row.id)
+
+    assert repository.events == ["claim", "complete", "fail"]
+    assert row.status == "FAILED"
+    assert row.failure_category == "PERSISTENCE"
+    assert row.failure_code == "COMPLETION_TRANSITION_FAILED"
+    assert "no snapshot was linked" in row.failure_detail
+    assert row.snapshot_id is None
 
 
 def test_durable_load_prefers_v2_acquisition_when_available() -> None:
@@ -532,7 +671,12 @@ def test_v2_warmup_extension_uses_missing_only_union_seam() -> None:
 
     coordinator = HistoricalDataLoadCoordinator(
         lambda: FakeSession(),
-        SimpleNamespace(load_v2=load_v2, load_v2_incremental=lambda **_: pytest.fail("legacy incremental path invoked")),
+        SimpleNamespace(
+            load_v2=load_v2,
+            load_v2_incremental=lambda **_: pytest.fail(
+                "legacy incremental path invoked"
+            ),
+        ),
         SimpleNamespace(), FakeRegistry(), repository=repository,
         strategies=FakeStrategies(),
     )

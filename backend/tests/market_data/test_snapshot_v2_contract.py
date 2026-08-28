@@ -1,5 +1,6 @@
 from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime
+from decimal import Decimal
 from uuid import uuid4
 
 import pytest
@@ -9,6 +10,7 @@ from backend.domain.market_data import (
     GAP_POLICY_V1,
     NATIVE_M15_CONTRACT_V1,
     SNAPSHOT_SCHEMA_V2,
+    Bar,
     DatasetSnapshot,
     Instrument,
     PriceComponent,
@@ -16,7 +18,11 @@ from backend.domain.market_data import (
     Timeframe,
     VenueInstrument,
 )
-from backend.market_data.fingerprint import dataset_fingerprint_v2
+from backend.market_data.fingerprint import (
+    bar_content_fingerprint,
+    bar_content_fingerprint_from_fields,
+    dataset_fingerprint_v2,
+)
 from backend.persistence.market_data_repository import MarketDataRepository
 
 
@@ -107,6 +113,60 @@ def test_v2_fingerprint_includes_ordered_contract_sections() -> None:
             execution_members=[],
             gaps=[],
         )
+
+
+def test_v2_fingerprint_bytes_have_a_stable_golden_value() -> None:
+    assert dataset_fingerprint_v2(
+        metadata={"provider": "OANDA", "coverage_start": "2026-01-01T00:00:00Z"},
+        analytical_members=[
+            {
+                "sequence": 1,
+                "start_time": "2026-01-01T00:00:00Z",
+                "end_time": "2026-01-01T00:15:00Z",
+                "content_fingerprint": "a" * 64,
+            }
+        ],
+        execution_members=[
+            {
+                "sequence": 1,
+                "market_bar_id": "00000000-0000-0000-0000-000000000001",
+                "price_component": "BID",
+                "start_time": "2026-01-01T00:00:00Z",
+                "observation_fingerprint": "b" * 64,
+            }
+        ],
+        gaps=[],
+    ) == "3b55d114bc6e99037fb4da65d6d7cd6d7a759f60a578a8da70fb968e58e93d86"
+
+
+def test_field_fingerprint_is_byte_equivalent_to_domain_bar() -> None:
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    bar = Bar(
+        Instrument.EUR_USD,
+        Timeframe.M1,
+        PriceComponent.BID,
+        start,
+        start.replace(minute=1),
+        Decimal("1.1000"),
+        Decimal("1.1010"),
+        Decimal("1.0990"),
+        Decimal("1.1005"),
+        provider=Provider.OANDA,
+        volume=Decimal("2"),
+    )
+    assert bar_content_fingerprint_from_fields(
+        instrument="EUR/USD",
+        provider="OANDA",
+        timeframe="1m",
+        price_component="BID",
+        start_time=bar.start_time,
+        end_time=bar.end_time,
+        open_price=bar.open,
+        high_price=bar.high,
+        low_price=bar.low,
+        close_price=bar.close,
+        volume=bar.volume,
+    ) == bar_content_fingerprint(bar)
 
 
 def test_v2_fingerprint_canonicalizes_nested_utc_gap_datetimes() -> None:

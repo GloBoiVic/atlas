@@ -23,6 +23,7 @@ from backend.domain.market_data import (
     PriceComponent,
     Timeframe,
 )
+from backend.market_data.session_policy import EXPECTED_DATA, OANDA_EUR_USD_POLICY
 
 OANDA_PRACTICE_BASE_URL = "https://api-fxpractice.oanda.com"
 _M1_WINDOW_MINUTES = 4_000
@@ -256,6 +257,7 @@ class OandaHistoricalBarSource:
             price="BA",
             timeframe=Timeframe.M1,
             components=((PriceComponent.BID, "bid"), (PriceComponent.ASK, "ask")),
+            omit_unavailable_m1=True,
         )
 
     def _fetch(
@@ -268,6 +270,7 @@ class OandaHistoricalBarSource:
         timeframe: Timeframe,
         components: tuple[tuple[PriceComponent, str], ...],
         validate_m15_alignment: bool = False,
+        omit_unavailable_m1: bool = False,
     ) -> FetchResult:
         _rfc3339(start)
         _rfc3339(end)
@@ -320,18 +323,30 @@ class OandaHistoricalBarSource:
         finally:
             if owned_client:
                 client.close()
+        normalized: list[Bar] = []
+        incomplete: list[IncompleteCandle] = []
+        for candle_time in sorted(provider_candles):
+            candle = provider_candles[candle_time]
+            # OANDA can return the last/first boundary candle around its
+            # maintenance interval in a larger calendar request.  Those
+            # observations are not canonical execution data under the frozen
+            # session policy.  Filter them only after timestamp and duplicate
+            # validation; native M15 remains untouched and malformed provider
+            # candles still fail through _group.
+            expected_session = (
+                not omit_unavailable_m1
+                or timeframe is not Timeframe.M1
+                or OANDA_EUR_USD_POLICY.classify_minute(candle_time)[0] == EXPECTED_DATA
+            )
+            if candle.get("complete") is True:
+                bars = _group(candle, candle_time, timeframe, components)
+                if expected_session:
+                    normalized.extend(bars)
+            elif expected_session:
+                incomplete.append(IncompleteCandle(candle_time))
         return FetchResult(
-            bars=tuple(
-                bar
-                for time in sorted(provider_candles)
-                if provider_candles[time].get("complete") is True
-                for bar in _group(provider_candles[time], time, timeframe, components)
-            ),
-            incomplete=tuple(
-                IncompleteCandle(time)
-                for time in sorted(provider_candles)
-                if provider_candles[time].get("complete") is not True
-            ),
+            bars=tuple(normalized),
+            incomplete=tuple(incomplete),
             diagnostics=FetchDiagnostics(tuple(diagnostics)),
         )
 

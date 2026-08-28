@@ -7,55 +7,55 @@ Branch: `solo/foundation-freeze-03-historical-data-foundation`
 
 ## Verdict
 
-**PASS.** No unresolved `IMPORTANT` or `CRITICAL` findings remain.
+**PASS.** Fresh independent review found no remaining Critical or Important
+Freeze 03 architecture violation after T036/T037 validation PASS.
 
-## Evidence
+## Scope and evidence
 
-- Reviewed the user correction, frozen `ARCHITECTURE.md`, `PLAN.md`, latest
-  `VALIDATION.md`, and all T001–T016 receipts.
-- CodeGraph was queried first; current acquisition, coverage, ingestion,
-  repository, model, migration, fingerprint, Experiment-validation, test, and
-  benchmark sources were inspected.
-- Native M15 strictness is preserved: the genuine snapshot contains **24,605
-  native M15/MID** members and no M1-derived analytical membership. Validation
-  recomputed **0 M15 gaps**; M1 remains sparse with **1,293** explicit missing
-  minutes.
-- Acquisition coverage is distinct from continuity: **927** M1 BID+ASK windows
-  are durably recorded as `SUCCESS_EMPTY_OR_SPARSE`; exact sparse execution
-  membership contains **740,226** rows (**370,113 BID + 370,113 ASK**), with no
-  fabrication or forward-fill.
-- Full-year evidence is genuine and exact for
-  `[2025-01-01T00:00:00Z, 2026-01-01T00:00:00Z)`: snapshot
-  `8bc3149e-94bc-49b6-a5d2-3f409cf87088`, fingerprint
-  `b0f7c522b390af988a3a33169fc853871a282d4c93804c452f018a4078491c90`.
-  An unchanged repeat made **0 M15 and 0 M1 OANDA calls** and returned the same
-  snapshot ID and fingerprint.
-- Alembic current/heads are `0018_acquisition_windows`; `alembic check` passed.
-  Full backend suite: **354 passed, 1 skipped, 4 warnings**. Focused
-  reconciliation/migration/frontier suite: **27 passed**. `git diff --check`
-  passed.
-- No credentials or provider response bodies were exposed. The only untracked
-  items are the pre-existing `.codegraph/` index and non-secret
-  `frontend/.env.local`; neither is part of the workstream diff.
+- CodeGraph was queried first. I reviewed the developer scope, canonical
+  `PLAN.md`/`ARCHITECTURE.md`, T030–T037 receipts, `VALIDATION.md`, relevant
+  source/tests, the full tracked diff, and Git state.
+- CWD and repository root are `/Users/vike/Desktop/atlas`; the requested branch
+  is checked out. No tests, benchmarks, database operations, branch changes, or
+  Git history operations were performed by REVIEW.
+- T036 is resolved: each V2 planning iteration reads the next provider window
+  inside a short transaction, closes the session before yielding it, and only
+  then permits provider fetch. Persistence begins in a separate transaction
+  after provider return. Both product totals are computed before provider I/O;
+  the focused transaction-boundary regression passed.
+- T037 is resolved: production `missing_ranges()` streams ordered canonical rows
+  with a bounded frontier; application coalescing retains only its current span
+  and provider bound; V2 replans one next window per closed planning transaction
+  and replays the bounded generator for totals. No request-sized missing-range
+  list/tuple is retained in the authoritative V2 path. Closure bridging,
+  acquisition-union subtraction, strict native M15 semantics, and provider
+  bounds remain intact; the focused large/disjoint regression passed.
+- T030–T035 remain resolved and were not reopened. Their atomic commit, native
+  M15 reuse, `FINALIZING` progress, bounded Experiment validation, fail-closed
+  completion, and gap-inclusive terminal metrics are supported by their receipts,
+  source, and regression coverage.
+- Validation evidence is supported: focused **2 passed**, affected **46 passed**,
+  isolated PostgreSQL **11 passed**, full backend **383 passed / 1 skipped**,
+  scoped Ruff PASS, compileall PASS, diff checks PASS, and no remaining
+  validation/OANDA processes. No new OANDA benchmark was required or run.
 
-## Git/state review
+## Accepted non-blockers and state constraints
 
-Repository root and CWD are `/Users/vike/Desktop/atlas`; branch is the requested
-branch. No branch switch or history mutation was performed. The tracked diff is
-confined to Freeze 03 implementation, migrations, tests, and workstream state;
-`REVIEW.md` is the only file changed by this role.
+- The malformed-URL `atlas_test.public` teardown is documented and accepted as a
+  non-blocking validation-process incident; it is not reopened.
+- Existing genuine-year, covered-repeat zero-call, and interrupted/recovery
+  evidence remains accepted under the approved no-rerun exception.
+- Full Ruff retains **45** unrelated pre-existing issues; this is deferred and
+  non-blocking. Validation reported four warnings and one opt-in external-provider
+  skip with credentials unset.
+- `.codegraph/` and `frontend/.env.local` remain untracked/excluded from the
+  intended commit. REVIEW changed only this artifact.
 
-## Remaining non-blocking concerns
-
-- Four non-functional pytest warnings remain (Starlette/httpx deprecation and
-  three unregistered `price_analysis` marks).
-- Fixture “one-year” benchmark timings remain representative fixture evidence;
-  the genuine credentialed full-year evidence above supplies the acceptance
-  proof for acquisition, snapshot, and repeat reuse.
+## Receipt
 
 ROLE: REVIEW
 STATUS: PASS
 ARTIFACT: `dispatch/workstreams/foundation-freeze-03-historical-data-foundation/REVIEW.md`
 FILES CHANGED: `dispatch/workstreams/foundation-freeze-03-historical-data-foundation/REVIEW.md`
-CHECKS / EVIDENCE: Fresh artifact/source/diff/status review; exact full-year snapshot and fingerprint; native M15 and sparse M1 membership; 927 successful acquisition windows; zero-call repeat; Alembic head/check; 354-pass full suite; diff check
-FINDINGS / CONCERNS: No unresolved important or critical findings; four non-functional pytest warnings and representative fixture benchmark scope
+CHECKS / EVIDENCE: CodeGraph-first independent artifact/source/test/full-diff/Git review; T030–T037 receipt audit; validation PASS with focused 2, affected 46, isolated PostgreSQL 11, and full backend 383 passed/1 skipped; no tests or benchmarks run by REVIEW.
+FINDINGS / CONCERNS: PASS. No Critical/Important violations remain. Deferred concerns are unrelated full-Ruff findings and the accepted malformed-URL teardown incident; no OANDA rerun requested.

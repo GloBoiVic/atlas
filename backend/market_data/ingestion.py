@@ -5,8 +5,12 @@ separate steps.  Repositories own persistence details; the application layer
 only coordinates canonical bars, coverage, and immutable snapshots.
 """
 
+import platform
+import resource
+import time
+from bisect import bisect_left
 from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from types import SimpleNamespace
@@ -46,6 +50,7 @@ from .aggregation import aggregate_m1_to_m15
 from .coverage import CoverageReport, diagnostic_payloads, validate_coverage
 from .fingerprint import (
     bar_content_fingerprint,
+    bar_content_fingerprint_from_fields,
     dataset_fingerprint,
     dataset_fingerprint_v2,  # noqa: F401 - benchmark instrumentation seam
 )
@@ -156,6 +161,7 @@ class SnapshotReport:
     coverage: CoverageReport
     snapshot: DatasetSnapshot | None
     failure: str | None = None
+    telemetry: dict[str, Any] | None = None
 
     @property
     def valid(self) -> bool:
@@ -182,25 +188,302 @@ def _validate_range(start: datetime, end: datetime) -> None:
         raise ValueError("range must be positive")
 
 
+_P95_BUCKET_UPPER_BOUNDS = (0, *tuple(2**index for index in range(17)), 2**16 + 1)
+
+
+class _DurationStats:
+    """Bounded integer-millisecond duration statistics."""
+
+    __slots__ = ("count", "total_ms", "buckets")
+
+    def __init__(self) -> None:
+        self.count = 0
+        self.total_ms = 0
+        self.buckets = [0] * len(_P95_BUCKET_UPPER_BOUNDS)
+
+    def add(self, elapsed_seconds: float) -> int:
+        duration_ms = max(0, int(round(elapsed_seconds * 1000)))
+        self.count += 1
+        self.total_ms += duration_ms
+        if duration_ms == 0:
+            bucket = 0
+        else:
+            bucket = 1 + bisect_left(_P95_BUCKET_UPPER_BOUNDS[1:-1], duration_ms)
+        self.buckets[bucket] += 1
+        return duration_ms
+
+    def report(self) -> dict[str, int | None]:
+        if not self.count:
+            return {
+                "count": 0,
+                "elapsed_ms": 0,
+                "average_ms": None,
+                "p95_ms": None,
+            }
+        rank = max(1, (95 * self.count + 99) // 100)
+        seen = 0
+        for bucket, count in enumerate(self.buckets):
+            seen += count
+            if seen >= rank:
+                p95 = _P95_BUCKET_UPPER_BOUNDS[bucket]
+                break
+        else:  # pragma: no cover - every observation enters a bucket
+            p95 = _P95_BUCKET_UPPER_BOUNDS[-1]
+        return {
+            "count": self.count,
+            "elapsed_ms": self.total_ms,
+            "average_ms": self.total_ms // self.count,
+            "p95_ms": p95,
+        }
+
+
+def _rss_bytes() -> int:
+    value = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    # Darwin reports bytes; Linux and the other supported Unix platforms report
+    # KiB.  The telemetry contract is host-normalized bytes.
+    return value if platform.system() == "Darwin" else value * 1024
+
+
+class _V2Telemetry:
+    """In-process bounded metrics collector for one active V2 load segment."""
+
+    __slots__ = (
+        "started",
+        "baseline_rss",
+        "peak_rss",
+        "provider",
+        "persistence",
+        "inserted_rows",
+        "planning_ms",
+        "validation_ms",
+        "snapshot_ms",
+        "fingerprint_ms",
+        "membership_rows",
+        "membership_batches",
+        "analytical_rows",
+        "execution_rows",
+        "gap_rows",
+    )
+
+    def __init__(self) -> None:
+        self.started = time.perf_counter()
+        self.baseline_rss = _rss_bytes()
+        self.peak_rss = self.baseline_rss
+        self.provider = {key: _DurationStats() for key in ("m15", "m1")}
+        self.persistence = {key: _DurationStats() for key in ("m15", "m1")}
+        self.inserted_rows = {key: 0 for key in ("m15", "m1")}
+        self.planning_ms = 0
+        self.validation_ms = 0
+        self.snapshot_ms = 0
+        self.fingerprint_ms = 0
+        self.membership_rows = 0
+        self.membership_batches = 0
+        self.analytical_rows = 0
+        self.execution_rows = 0
+        self.gap_rows = 0
+
+    def sample(self) -> None:
+        self.peak_rss = max(self.peak_rss, _rss_bytes())
+
+    def record(self, stream: dict[str, _DurationStats], key: str, began: float) -> None:
+        stream[key].add(time.perf_counter() - began)
+        self.sample()
+
+    def report(
+        self,
+        *,
+        expected: dict[str, int],
+        completed: dict[str, int],
+        planning_ms: int,
+        validation_ms: int,
+        snapshot_ms: int,
+        fingerprint_ms: int,
+        valid: bool = True,
+    ) -> dict[str, Any]:
+        self.sample()
+        persistence = {}
+        for key in ("m15", "m1"):
+            metric = self.persistence[key].report()
+            seconds = metric["elapsed_ms"] / 1000
+            inserted = self.inserted_rows[key]
+            metric.update(
+                batches=metric.pop("count"),
+                inserted_rows=inserted,
+                rows_per_second=(inserted / seconds if inserted and seconds else None),
+            )
+            persistence[key] = metric
+        provider = {
+            key: {
+                "calls": self.provider[key].count,
+                "elapsed_ms": self.provider[key].total_ms,
+                "average_ms": self.provider[key].report()["average_ms"],
+                "p95_ms": self.provider[key].report()["p95_ms"],
+            }
+            for key in ("m15", "m1")
+        }
+        total_elapsed_ms = max(
+            0, int(round((time.perf_counter() - self.started) * 1000))
+        )
+        return {
+            "schema": "ATLAS_HISTORICAL_TELEMETRY_V1",
+            "expected_requests": {key: int(expected[key]) for key in ("m15", "m1")},
+            "completed_requests": {key: int(completed[key]) for key in ("m15", "m1")},
+            "timing": {
+                "planning": {"elapsed_ms": planning_ms},
+                "provider": provider,
+                "persistence": persistence,
+                "validation": {"elapsed_ms": validation_ms, "valid": valid},
+                "snapshot_membership": {
+                    "elapsed_ms": snapshot_ms,
+                    "rows": self.membership_rows,
+                    "analytical_rows": self.analytical_rows,
+                    "execution_rows": self.execution_rows,
+                    "gap_rows": self.gap_rows,
+                    "batches": self.membership_batches,
+                },
+                "fingerprinting": {
+                    "elapsed_ms": fingerprint_ms,
+                    "records_hashed": self.membership_rows,
+                    "analytical_rows": self.analytical_rows,
+                    "execution_rows": self.execution_rows,
+                    "gap_rows": self.gap_rows,
+                },
+                "total_elapsed_ms": total_elapsed_ms,
+                "p95_method": "fixed_log2_ms_v1",
+            },
+            "rss": {
+                "baseline_bytes": self.baseline_rss,
+                "peak_bytes": max(self.baseline_rss, self.peak_rss),
+                "delta_bytes": max(0, self.peak_rss - self.baseline_rss),
+            },
+        }
+
+
+class V2Progress:
+    """Strict, redacted progress notification matching architecture section 11."""
+
+    __slots__ = ("_payload", "product", "window", "telemetry")
+
+    def __init__(
+        self,
+        payload: dict[str, Any],
+        *,
+        product: str | None = None,
+        window: dict[str, Any] | None = None,
+        telemetry: dict[str, Any] | None = None,
+    ) -> None:
+        self._payload = payload
+        self.product = product
+        self.window = window
+        self.telemetry = telemetry
+
+    def to_payload(self) -> dict[str, Any]:
+        return dict(self._payload)
+
+    @property
+    def operation(self) -> str:
+        return "load_v2"
+
+    @property
+    def requested_start(self):
+        return None
+
+    @property
+    def requested_end(self):
+        return None
+
+    @property
+    def inserted(self) -> int:
+        return int(self._payload.get("inserted_rows", 0))
+
+    @property
+    def reactivated(self) -> int:
+        return int(self._payload.get("reactivated_rows", 0))
+
+    @property
+    def unchanged(self) -> int:
+        return int(self._payload.get("unchanged_rows", 0))
+
+    @property
+    def incomplete_minutes(self) -> tuple[datetime, ...]:
+        return ()
+
+    @property
+    def coverage(self):
+        return None
+
+    @property
+    def fetched_ranges(self) -> tuple[tuple[datetime, datetime], ...]:
+        return ()
+
+    @property
+    def committed_ranges(self) -> tuple[tuple[datetime, datetime], ...]:
+        return ()
+
+
 def _coalesce_expected_ranges(
-    ranges: Sequence[BarRange],
+    ranges: Iterable[BarRange],
     *,
     step: timedelta = timedelta(minutes=1),
-) -> tuple[tuple[datetime, datetime], ...]:
-    """Coalesce only adjacent missing session-open intervals."""
-    result: list[tuple[datetime, datetime]] = []
+) -> Iterable[tuple[datetime, datetime]]:
+    """Coalesce expected missing spans and split only at the OANDA bound.
+
+    Session closures belong to expected-observation validation.  They are not
+    provider range boundaries: one calendar request may bridge a closure.  A
+    remainder containing no expected observation is not provider work.
+    """
+    bound_minutes = 60_000 if step == timedelta(minutes=15) else 4_000
+    current_start: datetime | None = None
+    current_end: datetime | None = None
+    current_components = None
+    current_has_expected = False
+
+    def has_expected_observation(start: datetime, end: datetime) -> bool:
+        cursor = start
+        constituent_minutes = 15 if step == timedelta(minutes=15) else 1
+        while cursor < end:
+            if all(
+                OANDA_EUR_USD_POLICY.classify_minute(
+                    cursor + timedelta(minutes=offset)
+                )[0]
+                == EXPECTED_DATA
+                for offset in range(constituent_minutes)
+            ):
+                return True
+            cursor += step
+        return False
+
+    def bounded(start: datetime, end: datetime):
+        bound = timedelta(minutes=bound_minutes)
+        cursor = start
+        while cursor < end:
+            right = min(cursor + bound, end)
+            yield cursor, right
+            cursor = right
+
     for item in ranges:
         item_start = item.start if hasattr(item, "start") else item[0]
         item_end = item.end if hasattr(item, "end") else item[1]
-        cursor = item_start
-        while cursor < item_end:
-            if OANDA_EUR_USD_POLICY.classify_minute(cursor)[0] == EXPECTED_DATA:
-                if result and result[-1][1] == cursor:
-                    result[-1] = (result[-1][0], cursor + step)
-                else:
-                    result.append((cursor, cursor + step))
-            cursor += step
-    return tuple(result)
+        item_components = getattr(item, "components", ())
+        if (
+            current_start is not None
+            and current_end == item_start
+            and current_components == item_components
+        ):
+            current_end = item_end
+            if not current_has_expected:
+                current_has_expected = has_expected_observation(item_start, item_end)
+            continue
+        if current_start is not None and current_has_expected:
+            yield from bounded(current_start, current_end)
+        current_start, current_end, current_components, current_has_expected = (
+            item_start,
+            item_end,
+            item_components,
+            has_expected_observation(item_start, item_end),
+        )
+    if current_start is not None and current_has_expected:
+        yield from bounded(current_start, current_end)
 
 
 def _subtract_acquisition_windows(
@@ -300,6 +583,45 @@ def _acquisition_coverage_digest(
     return count, digest.hexdigest()
 
 
+def _v2_gap_members(
+    start: datetime, end: datetime, analytical: Iterable[Bar]
+) -> Iterable[dict[str, object]]:
+    """Yield the canonical V2 gap facts without retaining the native stream."""
+    cursor = start
+    for member in analytical:
+        while cursor < member.start_time:
+            yield {
+                "start_time": cursor,
+                "end_time": cursor + timedelta(minutes=15),
+                "price_component": "MID",
+                "resolution": "M15",
+                "source": "OANDA",
+                "reason": "MISSING_NATIVE_COMPLETED_CANDLE",
+                "classification": "NON_BLOCKING",
+                "affected_state": None,
+                "affected_event": None,
+                "policy_version": GAP_POLICY_V1,
+                "blocked": False,
+            }
+            cursor += timedelta(minutes=15)
+        cursor = member.start_time + timedelta(minutes=15)
+    while cursor < end:
+        yield {
+            "start_time": cursor,
+            "end_time": cursor + timedelta(minutes=15),
+            "price_component": "MID",
+            "resolution": "M15",
+            "source": "OANDA",
+            "reason": "MISSING_NATIVE_COMPLETED_CANDLE",
+            "classification": "NON_BLOCKING",
+            "affected_state": None,
+            "affected_event": None,
+            "policy_version": GAP_POLICY_V1,
+            "blocked": False,
+        }
+        cursor += timedelta(minutes=15)
+
+
 class MarketDataService:
     """Coordinate historical loading, coverage inspection, and snapshots."""
 
@@ -361,7 +683,18 @@ class MarketDataService:
         self._check_frontier(end)
         return CoverageInspection(start, end, self._coverage(start, end))
 
-    def _apply(self, mapping_id: UUID, result: HistoricalFetchResult) -> BarBatchResult:
+    def _apply(
+        self,
+        mapping_id: UUID,
+        result: HistoricalFetchResult,
+        session: Session | None = None,
+    ) -> BarBatchResult:
+        if session is not None:
+            return self._repository.apply_bar_batch(
+                session,
+                mapping_id,
+                tuple(BarBatchItem(bar, self._clock()) for bar in result.bars),
+            )
         session = self._session_factory()
         try:
             with session.begin():
@@ -370,6 +703,41 @@ class MarketDataService:
                     mapping_id,
                     tuple(BarBatchItem(bar, self._clock()) for bar in result.bars),
                 )
+        finally:
+            session.close()
+
+    def _apply_and_record_outcome(
+        self,
+        mapping_id: UUID,
+        result: HistoricalFetchResult,
+        resolution: Timeframe,
+        components: tuple[PriceComponent, ...],
+        window: tuple[datetime, datetime],
+        returned_count: int,
+    ) -> BarBatchResult:
+        """Commit canonical rows and successful coverage as one durable fact."""
+        recorder = getattr(self._repository, "record_acquisition_window", None)
+        if recorder is None:
+            # Keep the narrow seam usable by repositories predating acquisition
+            # coverage. The authoritative repository always has the recorder.
+            return self._apply(mapping_id, result)
+
+        session = self._session_factory()
+        try:
+            # Provider I/O has completed before this short transaction begins.
+            with session.begin():
+                applied = self._apply(mapping_id, result, session)
+                recorder(
+                    session,
+                    mapping_id,
+                    resolution,
+                    components,
+                    window[0],
+                    window[1],
+                    "SUCCESS_EMPTY_OR_SPARSE",
+                    returned_count,
+                )
+                return applied
         finally:
             session.close()
 
@@ -441,8 +809,10 @@ class MarketDataService:
         session = self._session_factory()
         try:
             with session.begin():
-                missing = self._repository.missing_ranges(
-                    session, mapping_id, start, end, REQUIRED_COMPONENTS
+                missing = tuple(
+                    self._repository.missing_ranges(
+                        session, mapping_id, start, end, REQUIRED_COMPONENTS
+                    )
                 )
         finally:
             session.close()
@@ -549,6 +919,7 @@ class MarketDataService:
             PriceComponent.BID,
             PriceComponent.ASK,
         ),
+        _telemetry: _V2Telemetry | None = None,
     ) -> SnapshotReport:
         """Capture native M15 analysis and sparse current M1 execution facts."""
         _validate_range(start, end)
@@ -559,9 +930,16 @@ class MarketDataService:
         # V2 has two independent native products.  Do not use the legacy
         # three-component/M1 coverage validator here: it both admits the old
         # shared-range contract and cannot prove native M15 provenance.
+        validation_started = time.perf_counter()
         coverage = self._coverage_product(
             start, end, (PriceComponent.BID, PriceComponent.ASK), Timeframe.M1
         )
+        validation_ms = max(
+            0, int(round((time.perf_counter() - validation_started) * 1000))
+        )
+        if _telemetry is not None:
+            _telemetry.validation_ms = validation_ms
+            _telemetry.sample()
         mapping_id = self._mapping_id()
         session = self._session_factory()
         try:
@@ -573,7 +951,8 @@ class MarketDataService:
                             (PriceComponent.MID,), Timeframe.M15,
                         )
                 else:
-                    analytical_source = lambda: analytical
+                    def analytical_source():
+                        return analytical
                 row_stream = getattr(self._repository, "current_bar_rows_stream", None)
                 if row_stream is None:
                     raise ValueError("V2 repository must provide ordered row streaming")
@@ -595,6 +974,7 @@ class MarketDataService:
                         coverage,
                         None,
                         "execution coverage is invalid",
+                        telemetry=None,
                     )
                 metadata = {
                     "provider": "OANDA",
@@ -636,24 +1016,26 @@ class MarketDataService:
                         session, mapping_id, start, end, execution_components
                     )
                     for sequence, row in enumerate(rows, 1):
-                        bar = Bar(
-                            Instrument.EUR_USD,
-                            Timeframe.M1,
-                            PriceComponent(row.price_component),
-                            row.start_time,
-                            row.end_time,
-                            row.open_price,
-                            row.high_price,
-                            row.low_price,
-                            row.close_price,
-                            volume=row.volume,
-                        )
                         yield {
                             "sequence": sequence,
                             "market_bar_id": str(row.id),
-                            "price_component": bar.price_component.value,
-                            "start_time": bar.start_time.isoformat(),
-                            "observation_fingerprint": bar_content_fingerprint(bar),
+                            "price_component": row.price_component,
+                            "start_time": row.start_time.isoformat(),
+                            "observation_fingerprint": (
+                                bar_content_fingerprint_from_fields(
+                                    instrument=Instrument.EUR_USD.value,
+                                    provider=Provider.OANDA.value,
+                                    timeframe=Timeframe.M1.value,
+                                    price_component=row.price_component,
+                                    start_time=row.start_time,
+                                    end_time=row.end_time,
+                                    open_price=row.open_price,
+                                    high_price=row.high_price,
+                                    low_price=row.low_price,
+                                    close_price=row.close_price,
+                                    volume=row.volume,
+                                )
+                            ),
                         }
 
                 def analytical_members():
@@ -665,6 +1047,10 @@ class MarketDataService:
                             "content_fingerprint": bar_content_fingerprint(bar),
                         }
 
+                def gap_members():
+                    yield from _v2_gap_members(start, end, analytical_source())
+
+                fingerprint_started = time.perf_counter()
                 snapshot_fingerprint = dataset_fingerprint_v2(
                     metadata={
                         **metadata,
@@ -673,8 +1059,14 @@ class MarketDataService:
                     },
                     analytical_members=analytical_members(),
                     execution_members=execution_members(),
-                    gaps=(),
+                    gaps=gap_members(),
                 )
+                fingerprint_ms = max(
+                    0, int(round((time.perf_counter() - fingerprint_started) * 1000))
+                )
+                if _telemetry is not None:
+                    _telemetry.fingerprint_ms = fingerprint_ms
+                    _telemetry.sample()
                 snapshot = DatasetSnapshot(
                     uuid4(),
                     VENUE,
@@ -690,10 +1082,36 @@ class MarketDataService:
                     self._clock(),
                     SNAPSHOT_SCHEMA_V2,
                 )
+                membership_started = time.perf_counter()
                 stored = self._snapshots.create_v2_validated(
                     session, snapshot, analytical_source(), execution, None,
                     metadata=metadata,
                 )
+                membership_ms = max(
+                    0, int(round((time.perf_counter() - membership_started) * 1000))
+                )
+                if _telemetry is not None:
+                    _telemetry.snapshot_ms = membership_ms
+                    finalization = getattr(
+                        self._snapshots, "last_v2_finalization_telemetry", {}
+                    )
+                    _telemetry.analytical_rows = int(
+                        finalization.get("analytical_rows", 0)
+                    )
+                    _telemetry.execution_rows = int(
+                        finalization.get("execution_rows", 0)
+                    )
+                    _telemetry.gap_rows = int(finalization.get("gap_rows", 0))
+                    _telemetry.membership_rows = (
+                        _telemetry.analytical_rows
+                        + _telemetry.execution_rows
+                        + _telemetry.gap_rows
+                    )
+                    _telemetry.membership_batches = sum(
+                        int(finalization.get(f"{key}_batches", 0))
+                        for key in ("analytical", "execution", "gap")
+                    )
+                    _telemetry.sample()
                 return SnapshotReport(start, end, coverage, stored)
         finally:
             session.close()
@@ -722,7 +1140,7 @@ class MarketDataService:
         start: datetime,
         end: datetime,
         *,
-        progress: Callable[[IngestionReport], None] | None = None,
+        progress: Callable[[Any], None] | None = None,
     ):
         """Acquire native products in missing-only, independently committed windows.
 
@@ -735,143 +1153,317 @@ class MarketDataService:
         execution = getattr(self._source, "fetch_execution_m1", None)
         if native is None or execution is None:
             raise ValueError("source does not support Alternative A acquisition")
+        telemetry = _V2Telemetry()
         mapping_id = self._mapping_id()
 
         def plans(resolution, components):
-            session = self._session_factory()
-            try:
-                with session.begin():
-                    acquired_method = getattr(
-                        self._repository, "acquired_windows", None
-                    )
-                    if acquired_method is None or resolution is not Timeframe.M1:
-                        yield from _coalesce_expected_ranges(
-                            self._repository.missing_ranges(
-                                session, mapping_id, start, end, components, resolution
-                            ),
-                            step=timedelta(
-                                minutes=15 if resolution is Timeframe.M15 else 1
-                            ),
-                        )
-                        return
-                    acquired = acquired_method(
-                        session, mapping_id, resolution, components, start, end
-                    )
-                    # Coverage is checked before the expensive observation scan.
-                    # Only uncovered remainders consult current M1 rows; sparse
-                    # acquired windows therefore make repeat planning O(windows),
-                    # not O(calendar minutes).
-                    remainder = _uncovered_range(start, end, acquired)
-                    for left, right in remainder:
-                        yield from _coalesce_expected_ranges(
-                            self._repository.missing_ranges(
-                                session, mapping_id, left, right, components, resolution
-                            ),
-                            step=timedelta(minutes=1),
-                        )
-            finally:
-                session.close()
-
-        totals = [0, 0, 0]
-        # Progress is an O(1) notification.  Durable resume authority is the
-        # observation table plus acquisition-window union, not this callback;
-        # retaining the complete window history here made a full-year load grow
-        # linearly with the number of provider requests.
-        fetched_count = 0
-        committed_count = 0
-
-        def acquire(product, fetch, ranges):
-            nonlocal fetched_count, committed_count
-            for window in ranges:
-                # No database transaction is held during this provider call.
+            step = timedelta(minutes=15 if resolution is Timeframe.M15 else 1)
+            scan_start = start
+            while scan_start < end:
+                session = self._session_factory()
+                next_window = None
                 try:
-                    result = fetch(*window)
-                    if result.incomplete:
-                        raise ValueError(
-                            "provider returned incomplete historical observations"
+                    with session.begin():
+                        acquired_method = getattr(
+                            self._repository, "acquired_windows", None
                         )
-                    applied = self._apply(mapping_id, result)
-                except Exception:
-                    recorder = getattr(
-                        self._repository, "record_acquisition_window", None
-                    )
-                    if recorder is not None:
-                        session = self._session_factory()
-                        try:
-                            with session.begin():
-                                recorder(
+                        if acquired_method is None:
+                            candidate = _coalesce_expected_ranges(
+                                self._repository.missing_ranges(
                                     session,
                                     mapping_id,
-                                    Timeframe.M15
-                                    if product == "analytical"
-                                    else Timeframe.M1,
-                                    (PriceComponent.MID,)
-                                    if product == "analytical"
-                                    else (PriceComponent.BID, PriceComponent.ASK),
-                                    window[0],
-                                    window[1],
-                                    "PROVIDER_FAILURE",
-                                )
-                        finally:
-                            session.close()
-                    raise
-                recorder = getattr(self._repository, "record_acquisition_window", None)
-                if recorder is not None:
-                    session = self._session_factory()
-                    try:
-                        with session.begin():
-                            recorder(
+                                    scan_start,
+                                    end,
+                                    components,
+                                    resolution,
+                                ),
+                                step=step,
+                            )
+                            next_window = next(candidate, None)
+                        else:
+                            acquired = acquired_method(
                                 session,
                                 mapping_id,
-                                Timeframe.M15
-                                if product == "analytical"
-                                else Timeframe.M1,
-                                (PriceComponent.MID,)
-                                if product == "analytical"
-                                else (PriceComponent.BID, PriceComponent.ASK),
-                                window[0],
-                                window[1],
-                                "SUCCESS_EMPTY_OR_SPARSE",
-                                len(result.bars),
+                                resolution,
+                                components,
+                                scan_start,
+                                end,
                             )
-                    finally:
-                        session.close()
-                fetched_count += 1
-                committed_count += 1
+                            # Coverage is checked before the expensive
+                            # observation scan. Only uncovered remainders
+                            # consult current canonical rows; sparse acquired
+                            # windows therefore make repeat planning O(windows),
+                            # not O(calendar minutes).
+                            for left, right in _uncovered_range(
+                                scan_start, end, acquired
+                            ):
+                                candidate = _coalesce_expected_ranges(
+                                    self._repository.missing_ranges(
+                                        session,
+                                        mapping_id,
+                                        left,
+                                        right,
+                                        components,
+                                        resolution,
+                                    ),
+                                    step=step,
+                                )
+                                next_window = next(candidate, None)
+                                if next_window is not None:
+                                    break
+                finally:
+                    session.close()
+                if next_window is None:
+                    return
+                # This transaction is closed before the planned provider window
+                # is yielded to acquire().
+                yield next_window
+                scan_start = next_window[1]
+
+        totals = [0, 0, 0]
+        completed = {"m15": 0, "m1": 0}
+        product_totals: dict[str, int] = {}
+        planning_started = telemetry.started
+        # Count both deterministic generators before issuing either provider
+        # call.  Replaying the generators keeps planning bounded to one DB
+        # frontier rather than retaining a request-sized range collection.
+        for key, resolution, components in (
+            ("m15", Timeframe.M15, (PriceComponent.MID,)),
+            ("m1", Timeframe.M1, (PriceComponent.BID, PriceComponent.ASK)),
+        ):
+            product_totals[key] = sum(1 for _window in plans(resolution, components))
+        telemetry.planning_ms = max(
+            0, int(round((time.perf_counter() - planning_started) * 1000))
+        )
+        telemetry.sample()
+
+        def progress_payload(
+            phase: str,
+            *,
+            product: str | None = None,
+            window: dict[str, str] | None = None,
+            elapsed_ms: int | None = None,
+            rows: int | None = None,
+            batches: int | None = None,
+        ) -> V2Progress:
+            products = {
+                key: {
+                    "expected_requests": product_totals[key],
+                    "completed_requests": completed[key],
+                }
+                for key in ("m15", "m1")
+            }
+            if phase == "PLANNING":
+                for key in products:
+                    products[key].update(
+                        already_covered_window_count=0,
+                        uncovered_span_count=product_totals[key],
+                        planning_elapsed_ms=telemetry.planning_ms,
+                    )
+            payload: dict[str, Any] = {
+                "schema": "ATLAS_HISTORICAL_PROGRESS_V1",
+                "phase": phase,
+                "unit": "provider_request",
+                "completed_units": dict(completed),
+                "total_units": dict(product_totals),
+                "products": products,
+            }
+            if phase == "ACQUIRING":
+                payload.update(
+                    current_product=product,
+                    provider_calls_total=telemetry.provider[product].count
+                    if product
+                    else 0,
+                    inserted_rows=totals[0],
+                    reactivated_rows=totals[1],
+                    unchanged_rows=totals[2],
+                    latest_window=window,
+                )
+            elif phase != "PLANNING":
+                payload.update(
+                    elapsed_ms=elapsed_ms or 0,
+                    rows=rows or 0,
+                    batches=batches or 0,
+                )
+            return V2Progress(
+                payload, product=product, window=window
+            )
+
+        if progress:
+            progress(progress_payload("PLANNING"))
+
+        def acquire(product: str, fetch, resolution, components, ranges):
+            def record_outcome(window, outcome: str, returned_count: int = 0) -> None:
+                recorder = getattr(self._repository, "record_acquisition_window", None)
+                if recorder is None:
+                    return
+                session = self._session_factory()
+                try:
+                    with session.begin():
+                        recorder(
+                            session,
+                            mapping_id,
+                            resolution,
+                            components,
+                            window[0],
+                            window[1],
+                            outcome,
+                            returned_count,
+                        )
+                finally:
+                    session.close()
+
+            for window in ranges:
+                # No database transaction is held during this provider call.
+                provider_started = time.perf_counter()
+                try:
+                    result = fetch(*window)
+                except Exception:
+                    telemetry.record(telemetry.provider, product, provider_started)
+                    record_outcome(window, "PROVIDER_FAILURE")
+                    raise
+                telemetry.record(telemetry.provider, product, provider_started)
+                if result.incomplete:
+                    record_outcome(window, "PROVIDER_FAILURE")
+                    raise ValueError(
+                        "provider returned incomplete historical observations"
+                    )
+                persistence_started = time.perf_counter()
+                try:
+                    applied = self._apply_and_record_outcome(
+                        mapping_id,
+                        result,
+                        resolution,
+                        components,
+                        window,
+                        len(result.bars),
+                    )
+                except Exception:
+                    record_outcome(window, "PROVIDER_FAILURE")
+                    raise
+                finally:
+                    telemetry.record(
+                        telemetry.persistence, product, persistence_started
+                    )
+                telemetry.inserted_rows[product] += applied.inserted
                 totals[0] += applied.inserted
                 totals[1] += applied.reactivated
                 totals[2] += applied.unchanged
+                # A request becomes completed only after both canonical rows and
+                # its durable acquisition-window outcome are committed.
+                completed[product] += 1
                 if progress:
+                    bounded_window = {
+                        "start": window[0].isoformat(),
+                        "end": window[1].isoformat(),
+                    }
                     progress(
-                        SimpleNamespace(
-                            operation="load_v2",
-                            requested_start=start,
-                            requested_end=end,
-                            fetched_ranges=(),
-                            committed_ranges=(),
-                            inserted=totals[0],
-                            reactivated=totals[1],
-                            unchanged=totals[2],
-                            incomplete_minutes=(),
-                            coverage=None,
+                        progress_payload(
+                            "ACQUIRING",
                             product=product,
-                            window={
-                                "start": window[0].isoformat(),
-                                "end": window[1].isoformat(),
-                                "fetched_count": fetched_count,
-                                "committed_count": committed_count,
-                            },
+                            window=bounded_window,
                         )
                     )
+                telemetry.sample()
 
-        native_ranges = plans(Timeframe.M15, (PriceComponent.MID,))
-        execution_ranges = plans(Timeframe.M1, (PriceComponent.BID, PriceComponent.ASK))
-        acquire("analytical", native, native_ranges)
-        acquire("execution", execution, execution_ranges)
+        try:
+            acquire(
+                "m15", native, Timeframe.M15, (PriceComponent.MID,),
+                plans(Timeframe.M15, (PriceComponent.MID,)),
+            )
+            acquire(
+                "m1", execution, Timeframe.M1,
+                (PriceComponent.BID, PriceComponent.ASK),
+                plans(Timeframe.M1, (PriceComponent.BID, PriceComponent.ASK)),
+            )
+        except Exception:
+            if progress:
+                failed = progress_payload("FAILED")
+                failed.telemetry = telemetry.report(
+                    expected=product_totals,
+                    completed=completed,
+                    planning_ms=telemetry.planning_ms,
+                    validation_ms=telemetry.validation_ms,
+                    snapshot_ms=telemetry.snapshot_ms,
+                    fingerprint_ms=telemetry.fingerprint_ms,
+                    valid=False,
+                )
+                progress(failed)
+            raise
 
         # Snapshot construction consumes the persisted native M15 membership,
         # including work committed by an earlier attempt.
-        return self.create_snapshot_v2(start, end, analytical=None)
+        try:
+            snapshot_report = self.create_snapshot_v2(
+                start, end, analytical=None, _telemetry=telemetry
+            )
+        except Exception:
+            if progress:
+                failed = progress_payload("FAILED")
+                failed.telemetry = telemetry.report(
+                    expected=product_totals,
+                    completed=completed,
+                    planning_ms=telemetry.planning_ms,
+                    validation_ms=telemetry.validation_ms,
+                    snapshot_ms=telemetry.snapshot_ms,
+                    fingerprint_ms=telemetry.fingerprint_ms,
+                    valid=False,
+                )
+                progress(failed)
+            raise
+        if not isinstance(snapshot_report, SnapshotReport):
+            return snapshot_report
+        if progress:
+            for phase, elapsed, rows, batches in (
+                ("VALIDATING", telemetry.validation_ms, 0, 0),
+                (
+                    "SNAPSHOT_MEMBERSHIP",
+                    telemetry.snapshot_ms,
+                    telemetry.membership_rows,
+                    telemetry.membership_batches,
+                ),
+                (
+                    "FINGERPRINTING",
+                    telemetry.fingerprint_ms,
+                    telemetry.membership_rows,
+                    0,
+                ),
+                ("FINALIZING", 0, 0, 0),
+            ):
+                progress(
+                    progress_payload(
+                        phase, elapsed_ms=elapsed, rows=rows, batches=batches
+                    )
+                )
+            terminal_telemetry = telemetry.report(
+                expected=product_totals,
+                completed=completed,
+                planning_ms=telemetry.planning_ms,
+                validation_ms=telemetry.validation_ms,
+                snapshot_ms=telemetry.snapshot_ms,
+                fingerprint_ms=telemetry.fingerprint_ms,
+                valid=snapshot_report.valid,
+            )
+            snapshot_report = replace(snapshot_report, telemetry=terminal_telemetry)
+            completed_report = progress_payload(
+                "COMPLETED",
+                elapsed_ms=telemetry.snapshot_ms,
+                rows=telemetry.membership_rows,
+                batches=telemetry.membership_batches,
+            )
+            completed_report.telemetry = terminal_telemetry
+            progress(completed_report)
+        else:
+            snapshot_report = replace(snapshot_report, telemetry=telemetry.report(
+                expected=product_totals,
+                completed=completed,
+                planning_ms=telemetry.planning_ms,
+                validation_ms=telemetry.validation_ms,
+                snapshot_ms=telemetry.snapshot_ms,
+                fingerprint_ms=telemetry.fingerprint_ms,
+                valid=snapshot_report.valid,
+            ))
+        return snapshot_report
 
     def load_v2_incremental(
         self,
@@ -904,12 +1496,14 @@ class MarketDataService:
         try:
             with session.begin():
                 execution_ranges = _coalesce_expected_ranges(
-                    self._repository.missing_ranges(
-                        session,
-                        mapping_id,
-                        start,
-                        end,
-                        (PriceComponent.BID, PriceComponent.ASK),
+                    tuple(
+                        self._repository.missing_ranges(
+                            session,
+                            mapping_id,
+                            start,
+                            end,
+                            (PriceComponent.BID, PriceComponent.ASK),
+                        )
                     )
                 )
                 prior_analytical = self._snapshots.v2_analytical_members(
@@ -1019,5 +1613,6 @@ __all__ = [
     "MarketDataService",
     "SnapshotReport",
     "SourceFailure",
+    "V2Progress",
     "classify_failure",
 ]

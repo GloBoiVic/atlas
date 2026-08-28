@@ -188,12 +188,14 @@ def test_missing_ranges_and_snapshot_membership_are_immutable_boundary(
         ),
     )
     assert (
-        repo.missing_ranges(
-            session,
-            mapping.id,
-            start,
-            start + timedelta(minutes=1),
-            tuple(PriceComponent),
+        tuple(
+            repo.missing_ranges(
+                session,
+                mapping.id,
+                start,
+                start + timedelta(minutes=1),
+                tuple(PriceComponent),
+            )
         )
         == ()
     )
@@ -367,9 +369,16 @@ def test_v2_bulk_memberships_persist_representative_large_batch(
         start + timedelta(days=1),
         SNAPSHOT_SCHEMA_V2,
     )
-    stored = DatasetSnapshotRepository().create_v2_validated(
+    snapshot_repo = DatasetSnapshotRepository()
+    stored = snapshot_repo.create_v2_validated(
         session, snapshot, iter(analytical), iter(()), iter(gaps)
     )
+    telemetry = snapshot_repo.last_v2_finalization_telemetry
+    assert telemetry["analytical_rows"] == 1_201
+    assert telemetry["execution_rows"] == 0
+    assert telemetry["gap_rows"] == 100
+    assert telemetry["analytical_batches"] == 1
+    assert telemetry["analytical_insert_seconds"] >= 0
     assert stored.id == snapshot.id
     assert (
         session.scalar(
@@ -387,6 +396,52 @@ def test_v2_bulk_memberships_persist_representative_large_batch(
         )
         == 100
     )
+
+
+def test_v2_generated_gaps_use_database_gap_policy(
+    repository_session: tuple[Session, Engine],
+) -> None:
+    """Snapshot finalization must satisfy the immutable gap-table constraint."""
+    session, _ = repository_session
+    _mapping(session)
+    start = datetime(2026, 1, 5, 10, tzinfo=UTC)
+    analytical = Bar(
+        Instrument.EUR_USD,
+        Timeframe.M15,
+        PriceComponent.MID,
+        start,
+        start + timedelta(minutes=15),
+        Decimal("1.1000"),
+        Decimal("1.1010"),
+        Decimal("1.0990"),
+        Decimal("1.1005"),
+    )
+    snapshot = DatasetSnapshot(
+        uuid4(),
+        VenueInstrument(Instrument.EUR_USD, Provider.OANDA, "EUR_USD"),
+        Timeframe.M15,
+        (PriceComponent.MID,),
+        start,
+        start + timedelta(minutes=30),
+        ALIGNMENT_CONVENTION,
+        SESSION_POLICY,
+        FINGERPRINT_SCHEMA_V2,
+        "0" * 64,
+        {"status": "VALID", "policy_version": GAP_POLICY_V1},
+        start,
+        SNAPSHOT_SCHEMA_V2,
+    )
+    stored = DatasetSnapshotRepository().create_v2_validated(
+        session, snapshot, (analytical,), iter(()), gaps=None
+    )
+    assert stored.fingerprint != "0" * 64
+    gap = session.scalar(
+        select(DatasetSnapshotGapModel).where(
+            DatasetSnapshotGapModel.dataset_snapshot_id == snapshot.id
+        )
+    )
+    assert gap is not None
+    assert gap.policy_version == GAP_POLICY_V1
 
 
 def test_concurrent_batches_serialize_current_projection(

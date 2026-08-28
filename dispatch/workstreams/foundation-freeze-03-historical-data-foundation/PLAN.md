@@ -1,6 +1,6 @@
 # Foundation Freeze 03 — Historical Data Foundation
 
-Status: `VALIDATION BLOCKED BY OANDA ACCOUNT CONFIGURATION`
+Status: `REVIEW PASS — READY TO COMMIT`
 Classification: `Critical`
 Workstream: `foundation-freeze-03-historical-data-foundation`
 Branch: `solo/foundation-freeze-03-historical-data-foundation`
@@ -104,7 +104,9 @@ request-sized collection defects found by validation. T019 fixed these defects a
 full backend suite is green; fresh validation still finds authoritative V2
 `current_bars` tuple materialization and tuple-accumulated planning plus an
 inconsistent compatibility fallback. T020 is reopened for this narrow source-audit
-remediation before any further long live run.
+remediation before any further long live run. External review confirmed the historical
+source is token-only; T021 is correcting the invented account-ID benchmark gate and
+will run fresh genuine evidence.
 
 T001–T012 are complete with concerns. T008 repaired the stale API fixture but its
 full-calendar-year durable run exposed a live schema constraint still enforcing
@@ -188,6 +190,26 @@ OANDA are available and must be validated without exposing secrets.
   ordered execution streams, and remaining V2 request-sized collections.
 - `T020-final-bounded-v2-path`: eliminate remaining authoritative V2 request-sized
   collections and prove deterministic repeat equivalence/telemetry.
+- `T021-token-only-live-benchmark`: correct the harness to use token-only historical
+  OANDA configuration and collect final genuine performance evidence.
+- `T022-live-snapshot-persistence-remediation`: diagnose and fix live V2 snapshot
+  persistence, then rerun fresh/repeat/recovery evidence.
+- `T023-diagnose-live-snapshot-write`: reproduce and fix the remaining bounded live
+  snapshot write failure without another provider load.
+- `T024-coordinator-snapshot-linkage`: fix coordinator warm-up completion and link the
+  immutable snapshot to the load request.
+- `T025-streaming-snapshot-memory`: remove hidden full-year snapshot buffering and prove
+  bounded memory/time before live validation.
+- `T026-live-finalization-profile`: profile and fix the remaining full-year finalization
+  hotspot without timeout increases or semantic weakening.
+- `T027-phase-telemetry-and-progress`: implement the frozen phase telemetry,
+  per-product provider progress, bounded metrics, range-splitting regressions, and
+  short-sample-first benchmark gate.
+- `T028-fingerprint-hotspot-remediation`: remediate only the measured fingerprinting
+  hotspot, prove byte-identical fingerprints, and rerun the short sample before live
+  acceptance.
+- `T029-closure-only-resume-ranges`: prevent closure-only durable-union holes from
+  becoming needless provider requests while retaining closure-bridging bounded ranges.
 
 Dependency order: T001 and T002 may proceed independently after approval; T003 depends
 on both; T004 depends on T001–T003; T005 follows the implementation and is the final
@@ -210,5 +232,193 @@ must load root `.env`, verify immutability-trigger behavior, profile the actual 
 Mac/PostgreSQL/OANDA path, and report any unavailable credential gate. T019 is complete
 with concerns; T020 validation remediation is complete. Final validation passes the
 full backend suite and authoritative bounded-path audit, but the genuine full-year
-benchmark is blocked because root `.env` lacks an OANDA account ID. No review/merge
-readiness is claimed until that evidence is supplied.
+benchmark was incorrectly blocked by a harness account-ID gate. T021 is correcting the
+harness to use the token-only historical source; no account-ID requirement may be added.
+T021 completed fresh acquisition but snapshot persistence failed; T022 fixed the
+fingerprint/gap parity defect with deterministic regressions. Developer approved fresh
+validation using the token-only historical source and disposable PostgreSQL; run final
+live/performance evidence now without resuming the stopped load. T023 diagnosed and
+fixed the gap-policy constraint mismatch without another OANDA request. Fresh
+validation must materialize the existing full-year snapshot and repeat from durable
+bars, then run final performance/full-suite checks. T024 fixed coordinator
+warm-up/session handling and snapshot linkage with focused regressions. Fresh validation
+must now run the genuine token-only full-year lifecycle, repeat, recovery, and final
+performance suite. Validation measured approximately 1.15 GiB RSS and incomplete
+snapshot finalization; T025 removed ORM/result buffering in the V2 snapshot stream and
+added bounded local memory regression evidence. Fresh genuine validation still exceeded
+two 20-minute windows during finalization; T026 added set-based snapshot INSERT
+validation and finalization telemetry with focused profile evidence. Fresh validation
+may now run the genuine benchmark; no timeout increase or unchanged pre-remediation
+rerun is permitted.
+
+## Developer feedback — current performance run stopped
+
+The full-year process for request `2dd2dd72-1d97-4b73-af17-f20f91820945` was stopped
+before acceptance evidence and is explicitly excluded from final performance evidence.
+The disposable `atlas_test` database was not reset. Its durable canonical facts remain
+inspectable: the request is still `RUNNING` with committed observations and successful
+M15/M1 acquisition-window records, while no snapshot is linked to that request. The
+Freeze 03 crash/resume contract permits reuse of those facts only after validation
+confirms that successful-window union and canonical rows are the resume authority; no
+cleanup or destructive reset is allowed before that confirmation.
+
+The stopped run also exposed a telemetry defect. In the current V2 path,
+`completed_units` is the process-wide number of successfully fetched-and-persisted
+provider windows (`committed_count`), shared across analytical and execution products;
+it is not bars, minutes, or rows. The same value is copied into each product's progress
+object, and `total_units` is always `None`. This is opaque and must be replaced with
+per-product expected/completed provider-request counts, with the expected total written
+before the first provider call.
+
+Before any new long run, telemetry must separately report acquisition planning, M15/M1
+provider request counts and elapsed OANDA request time, M15/M1 persistence time, final
+coverage/integrity validation, snapshot membership construction, fingerprinting, total
+elapsed time, and baseline/peak RSS. It must include expected requests before acquisition,
+completed/total requests by product, average/p95 OANDA request duration, average/p95
+database persistence duration per batch, and rows inserted per second. Session closures
+remain validation semantics only; they must not split otherwise safely bounded OANDA
+calendar ranges into tiny requests.
+
+No speculative optimization is authorized. Run a short representative sample with the
+complete telemetry first, identify the dominant measured bottleneck, make one evidence-
+based fix, and only then run genuine full-year acceptance evidence.
+
+T027 completed the telemetry/progress implementation and its short sample found
+fingerprinting dominant. T028 made the single authorized field-level fingerprint
+remediation; its short sample reduced representative fresh-year fingerprinting from
+4,652 ms to 2,987 ms and total elapsed from 10,120 ms to 7,199 ms, with unchanged
+fingerprints across fresh/repeat/resumed fixtures. No genuine OANDA run has been started
+since the stopped attempt. VALIDATE must now independently audit the implementation,
+confirm stopped-run durable-fact reuse/resume safety, and run the genuine acceptance
+benchmark only with complete telemetry and progress.
+
+The durable stopped-run audit found 261 inter-window M1 holes containing zero expected
+open-session minutes; they are closure-only legacy gaps, not provider work. T029 is the
+narrow remediation to prevent those holes from being re-requested on resume. No new
+full-year run may start until T029 is complete and its focused tests pass.
+
+## Developer feedback — final validation order
+
+Disk pressure is resolved (approximately 69 GiB free). Do not resume the old stopped
+full-year process unchanged, create further speculative remediation tasks, or increase
+timeouts. T029 is the final narrow range correction. Validation must proceed in this
+order: confirm real per-product `completed_units`/`total_units`; verify all phase
+instrumentation; run a short representative load and inspect request counts,
+throughput, progress, and RSS; run the genuine fresh full-calendar-year benchmark if
+healthy; run a covered repeat proving zero OANDA calls, identical fingerprint and
+membership, and materially faster completion; run interrupted/resume equivalence and
+the full backend suite. The stopped attempt remains excluded from final performance
+evidence, but its durable facts may be reused only under the confirmed Freeze 03
+resume contract. The final receipt must include every requested metric and the branch
+must be committed and pushed for independent review.
+
+The ordered validation reached the genuine isolated year and completed acquisition
+(`m15=9/9`, `m1=132/132`) with telemetry, but snapshot creation failed because 503
+returned observations were classified inside session closures. This is the only
+authorized remediation continuation: diagnose the exact closure/final-validation
+contract failure and fix it without weakening closure semantics or splitting bounded
+provider ranges. No additional speculative task or timeout change is permitted; the
+validation order restarts at the short representative check after this correction.
+
+T026 continuation fixed the isolated-year failure at the OANDA canonicalization
+boundary: complete execution candles in unavailable-session intervals are validated
+then omitted from canonical M1 execution data, while native M15 remains untouched and
+bounded requests still bridge closures. The short representative benchmark was rerun
+after that fix; validation now resumes the prescribed ordered gates with no additional
+task or speculative optimization.
+
+The final validator found one non-performance completion defect: the full backend suite
+still asserts the obsolete migration head `0018_acquisition_windows`, while the
+authoritative schema is at `0020_fix_snapshot_guard`. This is a required test-contract
+reconciliation only, not a new optimization or task. The suite must be rerun against
+an isolated schema so it cannot destroy the already-audited disposable data; the
+stopped-run facts were successfully reused before the suite teardown and remain
+excluded from final performance evidence.
+
+The stale-head assertion was reconciled to `0020_fix_snapshot_guard` without runtime
+or database changes. Validation must rerun the full backend suite on a fresh isolated
+schema, not `atlas_test`, then reconcile the final evidence; no new OANDA run is needed
+for this test-only correction.
+
+## Approved narrow remediation pass
+
+The developer approved one narrow remediation pass treating all six independent-review
+findings as authoritative Freeze 03 blockers. This pass adds no architecture and no
+unrelated refactor or optimization. Preserve the already-proven OANDA chunking, sparse
+M1 semantics, native M15 semantics, snapshot determinism, and bounded-memory behavior.
+No genuine full-year OANDA run is required unless VALIDATE determines changed behavior
+invalidates existing live acceptance evidence.
+
+1. T030: atomically commit canonical observations and successful acquisition-window
+   outcome in one short transaction; provider I/O remains outside it; add interruption
+   coverage around the commit boundary.
+2. T031: reuse successful acquisition-window union for native M15 as well as M1 while
+   retaining strict native-M15 validation; add empty/sparse M15 repeat coverage.
+3. T032: emit and durably record the frozen `FINALIZING` progress phase.
+4. T033: replace request-sized ORM `.all()`/tuple/set materialization in authoritative
+   V2 Experiment coverage validation with bounded streaming/set-based reads.
+5. T034: check the completion transition result and persist an inspectable fail-closed
+   terminal outcome when completion cannot be committed.
+6. T035: make terminal snapshot/fingerprint metrics count all hashed records including
+   gaps, or explicitly separate counts without presenting an incomplete total.
+
+The review also confirmed the intended uncommitted changes are present and that
+untracked `.codegraph/` and `frontend/.env.local` must remain excluded from any commit.
+
+Dependency order: T030 → T031 → T032 → T033 → T034 → T035. Each task requires focused
+regression coverage and a complete BUILD receipt before the next task starts. VALIDATE
+follows all six BUILD tasks; REVIEW follows a passing VALIDATION.
+
+## Validation procedural incident
+
+The remediation implementation and all six focused findings pass source/test review,
+but VALIDATE is `BLOCKED`: its first migration invocation used a malformed derived URL
+that resolved to `atlas_test`, and an established migration fixture executed
+`DROP SCHEMA public CASCADE` before the URL failure. All subsequent checks used the
+fresh isolated database/schema, and the prior receipt already recorded that `atlas_test`
+was not independently inspectable after an earlier suite teardown. Nevertheless, this
+violated the explicit no-reset/delete constraint during the current pass. The developer
+accepted this as a documented validation-process incident; it is not an implementation
+blocker, must not create a remediation task, and must not trigger a repeat of the genuine
+full-year benchmark or already-passed validation.
+
+## Remediation task state
+
+- T030 `DONE_WITH_CONCERNS`
+- T031 `DONE`
+- T032 `DONE`
+- T033 `DONE_WITH_CONCERNS`
+- T034 `DONE`
+- T035 `DONE_WITH_CONCERNS`
+
+## Approved final narrow remediation pass
+
+The developer approved remediation of the two remaining IMPORTANT findings only. This
+pass does not reopen T030–T035, add architecture, or introduce unrelated refactoring,
+performance work, cleanup, or context changes. Existing live-year/repeat/recovery
+evidence remains accepted unless VALIDATE determines these boundary changes materially
+invalidate it. No genuine full-year OANDA benchmark will be rerun.
+
+1. T036 closes all V2 planning-read transactions before provider work is yielded or
+   fetched, preserving planning semantics and progress totals.
+2. T037 removes request-sized missing-range list/tuple accumulation from authoritative
+   V2 planning, retaining only bounded frontier/state and diagnostics while preserving
+   closure handling, acquisition-union subtraction, strict M15 semantics, and provider
+   chunk bounds.
+
+Dependency order: T036 → T037. VALIDATE follows both tasks, then fresh REVIEW follows
+validation. The accepted validation-process incident, existing live evidence, and
+excluded `.codegraph/`/`frontend/.env.local` are not reopened.
+
+## Final remediation task state
+
+- T036 `DONE`
+- T037 `DONE`
+
+## Final review
+
+Fresh independent REVIEW passed after T036/T037. No Critical or Important Freeze 03
+violations remain. The accepted validation-process incident, existing live-year/repeat/
+recovery evidence, and no-new-benchmark exception remain documented. Commit only the
+intended `backend/` and `dispatch/` changes; exclude `.codegraph/` and
+`frontend/.env.local`.

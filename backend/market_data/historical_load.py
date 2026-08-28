@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from backend.domain.strategy_requirements import requirement_for_version
 from backend.experiments.configuration import ExperimentConfigurationService
+from backend.market_data.session_calendar import required_warmup_range
 from backend.persistence.database import session_scope
 from backend.persistence.historical_data_load_repository import (
     HistoricalDataLoadRepository,
@@ -151,12 +152,15 @@ class HistoricalDataLoadCoordinator:
                 "StrategyVersion is not executable on this server.",
             ) from exc
         requirement = requirement_for_version(version)
-        # Plan the actual semantic prefix up front.  The old 25-hour estimate
-        # was both non-deterministic and guaranteed a needless warm-up retry.
-        load_start = trading_start - timedelta(
-            minutes=15 * requirement.required_historical_context_bars
+        # Plan the actual semantic prefix up front.  Warm-up is measured in
+        # eligible completed M15 windows, not wall-clock minutes.  In
+        # particular, a Monday request must not manufacture a Sunday provider
+        # window when the durable native M15 history already has enough bars.
+        load_start, load_end = required_warmup_range(
+            trading_start,
+            trading_end,
+            requirement.required_historical_context_bars,
         )
-        load_end = trading_end
         return load_start, load_end
 
     def run(self, request_id: UUID) -> None:
@@ -171,6 +175,17 @@ class HistoricalDataLoadCoordinator:
                 requirement = requirement_for_version(version_to_domain(version_row))
             required_context = requirement.required_historical_context_bars
             load_start = row.load_start
+            # Requests created before semantic warm-up planning used a fixed
+            # 25-hour prefix.  Normalize that legacy boundary on retry so a
+            # durable native-M15 range can complete without re-requesting an
+            # ineligible market-closure window.
+            legacy_start = row.trading_start - timedelta(
+                minutes=15 * required_context
+            )
+            if load_start == legacy_start:
+                load_start, _ = required_warmup_range(
+                    row.trading_start, row.load_end, required_context
+                )
             windows = 0
             while True:
                 try:
@@ -243,15 +258,28 @@ class HistoricalDataLoadCoordinator:
                 "reasons": [],
                 "snapshot_schema": snapshot.snapshot_schema,
             }
+            if getattr(snapshot_report, "telemetry", None) is not None:
+                coverage_json["telemetry"] = snapshot_report.telemetry
             with session_scope(self.session_factory) as db:
                 with db.begin():
-                    self.repository.complete(
+                    completed = self.repository.complete(
                         db,
                         request_id,
                         snapshot_id=snapshot.id,
                         coverage_summary=coverage_json,
                         experiment_validation=validation_json,
                     )
+            if not completed:
+                # Completion is the only safe point at which the snapshot can be
+                # linked to this request.  A failed linkage or lifecycle race must
+                # not leave the request looking RUNNING or imply a usable snapshot.
+                self._fail(
+                    request_id,
+                    "PERSISTENCE",
+                    "COMPLETION_TRANSITION_FAILED",
+                    "Historical data load completion could not be committed; "
+                    "no snapshot was linked.",
+                )
         except Exception as error:
             category, code, detail = classify_failure(error)
             self._fail(request_id, category, code, detail)
@@ -259,22 +287,31 @@ class HistoricalDataLoadCoordinator:
     def _progress(self, request_id, report, coverage=None):
         with session_scope(self.session_factory) as db:
             with db.begin():
-                self.repository.record_progress(
-                    db,
-                    request_id,
-                    fetched_ranges=report.fetched_ranges,
-                    committed_ranges=report.committed_ranges,
-                    inserted=report.inserted,
-                    reactivated=report.reactivated,
-                    unchanged=report.unchanged,
-                    incomplete_minutes=report.incomplete_minutes,
-                    coverage_summary=coverage,
-                    product=getattr(report, "product", None),
-                    window=getattr(report, "window", None),
-                    completed_units=(
-                        getattr(report, "window", {}) or {}
-                    ).get("committed_count"),
-                )
+                payload_builder = getattr(report, "to_payload", None)
+                if payload_builder is not None:
+                    self.repository.record_progress(
+                        db,
+                        request_id,
+                        progress_payload=payload_builder(),
+                        telemetry=getattr(report, "telemetry", None),
+                    )
+                else:
+                    self.repository.record_progress(
+                        db,
+                        request_id,
+                        fetched_ranges=report.fetched_ranges,
+                        committed_ranges=report.committed_ranges,
+                        inserted=report.inserted,
+                        reactivated=report.reactivated,
+                        unchanged=report.unchanged,
+                        incomplete_minutes=report.incomplete_minutes,
+                        coverage_summary=coverage,
+                        product=getattr(report, "product", None),
+                        window=getattr(report, "window", None),
+                        completed_units=(
+                            getattr(report, "window", {}) or {}
+                        ).get("committed_count"),
+                    )
 
     def _required_context_bars(self, row) -> int:
         """Read the canonical Strategy market-data requirement."""

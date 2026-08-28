@@ -1,86 +1,70 @@
 # Validation
 
-Status: `FAIL` — genuine OANDA full-year evidence `BLOCKED`
+Status: `PASS`
 Role: `VALIDATE`
 Workstream: `foundation-freeze-03-historical-data-foundation`
 Branch: `solo/foundation-freeze-03-historical-data-foundation`
 
-Fresh validation ran 2026-08-27 from `/Users/vike/Desktop/atlas` after T020.
-CWD, repository root, branch, and CodeGraph were verified. Root `.env` was loaded
-without exposing values. Only this artifact was changed; implementation, branch,
-and Git history were not changed. No stopped pre-remediation load was resumed.
+Validation ran 2026-08-28 from `/Users/vike/Desktop/atlas`. CWD, repository root,
+branch, and CodeGraph were verified. This validation covered only T036-T037; T030-T035
+were not reopened. Only this artifact was edited by VALIDATE. No branch or Git history
+operation was performed, and `.codegraph/` plus `frontend/.env.local` remain untouched.
 
-## Environment gate
+## Source and focused evidence
 
-- `ATLAS_DATABASE_URL`, `ATLAS_TEST_DATABASE_URL`, and
-  `ATLAS_OANDA_API_TOKEN`: configured (presence-only check).
-- `ATLAS_OANDA_ACCOUNT_ID`, `OANDA_ACCOUNT_ID`, and
-  `ATLAS_EXTERNAL_OANDA_ACCOUNT_ID`: absent.
-- Therefore no live OANDA run was started. Genuine fresh one-month, fresh
-  calendar-year, covered-repeat calendar-year, and interrupted/resumed
-  calendar-year evidence is blocked by the missing safe account target. No
-  database reset or long run was performed.
+- **T036:** `MarketDataService.load_v2` obtains each next planning window and all
+  planning reads inside a short `session.begin()` scope, closes the session, and only
+  then yields the window. `acquire` calls the provider after that yield and opens its
+  persistence transaction only after provider return. The focused regression
+  `test_v2_provider_fetch_runs_after_planning_transaction_closes` passed and asserts
+  the provider sees no active planning transaction. Planning totals are computed for
+  both products before provider I/O and the totals/progress regression passed.
+- **T037:** authoritative repository `missing_ranges` advances a streamed ordered-row
+  frontier and emits one bounded `BarRange` at a time; application coalescing retains
+  only its current span and provider bound. V2 planning replans from the frontier and
+  replays the bounded generator for per-product totals rather than retaining a
+  request-sized missing-range collection. The focused large/disjoint regression
+  `test_missing_range_planning_streams_large_disjoint_ranges` passed: the first
+  window was produced after fewer than 100 of 20,000 candidate minutes were read.
+- Closure bridging, acquisition-union subtraction, strict native-M15 behavior,
+  provider bounds, and per-product totals remained green in the affected suites.
 
-## Checks
+## Checks and evidence
 
-- Full backend suite with root `.env`: **359 passed, 1 skipped, 4 warnings** in
-  **208.98s**.
-- Focused V2/ingestion/repository/migration/load suite: **48 passed** in
-  **89.76s**.
-- Warnings: one Starlette/httpx deprecation and three unknown
-  `price_analysis` marks.
-- Ruff was not an acceptance gate; it reports existing repository-wide style
-  findings, including unrelated tests.
+- T036/T037 focused regressions: **2 passed**.
+- Affected Freeze 03 and historical-load unit tests: **46 passed**.
+- Fresh isolated PostgreSQL repository/ingestion integration checks: **11 passed**.
+- Full backend suite on the isolated validation schema: **383 passed, 1 skipped,
+  4 warnings**. The migration cycle and drift checks passed; the skipped test is the
+  opt-in external-provider check with credentials unset.
+- Isolated database checks used the fresh schema
+  `validation_t036_t037_20260828` in disposable database
+  `atlas_validation_20260828_final3_test`. `atlas_test` was never targeted, reset, or
+  deleted; its pre-existing idle/server connections were left untouched.
+- Ruff on all T036/T037 changed application/test files: **PASS**. Full `ruff check
+  backend` still reports **45 pre-existing issues**, all outside those changed files.
+- `python -m compileall -q backend`: **PASS**.
+- `git diff --check`: **PASS**.
+- Post-check process inspection: **no validation or OANDA processes remain**. No
+  OANDA request or genuine full-year benchmark was run.
 
-## Deterministic fixture benchmark
+## Existing evidence and incident context
 
-`uv run python -m backend.market_data.freeze03_benchmark` completed through the
-real V2 planner, acquisition seam, persistence seam, snapshot path, and
-incremental fingerprint path. Fingerprints are real SHA-256 values. Times are
-seconds; provider calls are `M15/M1`; RSS is process `ru_maxrss`.
+The previously accepted live-year, covered-repeat, and interrupted/recovery evidence
+remains accepted. T036/T037 change planning transaction lifetime and missing-range
+memory behavior only; these checks found no material invalidation, so the approved
+no-rerun exception applies.
 
-| Scenario | calls | inserted/reused | repeat calls | planning/coverage | persistence | snapshot/fingerprint | total | max batch/progress | peak RSS | fingerprint |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
-| fresh month | 24/24 | 70,975/0 | 0 | 0.403001/0.088907 | 1.308493 | 0.000004/11.525815 | 19.044363 | 2,868 / 415 B | 130,527,232 B | `4c81385bdf1413da55857b78148b115169b35e30889148ae0159d7e89af5cfb6` |
-| fresh representative year | 24/24 | 68,126/0 | 0 | 0.458907/0.104120 | 1.214234 | 0.000003/7.781196 | 13.613552 | 2,868 / 415 B | 130,527,232 B | `037e9a6fb4a97143dd13a99720904cda9864faaf04039b35714b2a8af647ed01` |
-| covered repeat representative year | 0/0 | 68,126/68,126 | 0 | 1.142049/0.292894 | 1.455824 | 0.000003/7.203717 | 9.822558 | 2,868 / 0 B | 130,867,200 B | `037e9a6fb4a97143dd13a99720904cda9864faaf04039b35714b2a8af647ed01` |
-| interrupted/resumed representative year | 35/24 | 68,126/933 | 48 | 0.688884/0.090140 | 1.109625 | 0.000001/7.817414 | 13.846155 | 2,868 / 417 B | 130,867,200 B | `037e9a6fb4a97143dd13a99720904cda9864faaf04039b35714b2a8af647ed01` |
+The previously accepted validation-process incident remains non-blocking context: an
+earlier validator used a malformed derived migration URL that targeted `atlas_test`
+and its fixture dropped that schema. This validation did not repeat that invocation;
+all database checks above used the explicitly constructed isolated database/schema.
 
-The representative-year fresh, repeat, and resumed fingerprints match; the
-covered repeat made zero provider calls. This fixture's “year” is the existing
-representative month and is not full-calendar-year, PostgreSQL, or credentialed
-OANDA evidence.
-
-## Authoritative V2 source/AST audit
-
-`backend/market_data/ingestion.py`, `fingerprint.py`,
-`freeze03_benchmark.py`, `market_data_repository.py`, and
-`historical_data_load_repository.py` were audited with AST and CodeGraph.
-
-- **PASS:** V2 coverage uses ordered `current_bars_stream`; snapshot execution
-  requires `current_bar_rows_stream` and does not use a compatibility fallback.
-- **PASS:** authoritative V2 planning, coverage, snapshot, membership,
-  fingerprint, and progress paths contain no request-sized `tuple`, `list`,
-  `set`, `.all()`, or full-iterable `sorted()` materialization. Batches are
-  bounded; progress is O(1); fingerprinting is incremental and ordered.
-- **PASS:** native M15/MID strictness, sparse M1 BID/ASK semantics, overlap and
-  subrange acquisition reuse, immutable snapshots, and deterministic repeat
-  fingerprints are covered by the focused suite and fixture telemetry.
-- **PASS:** legacy materialization remains only in explicitly non-authoritative
-  APIs (`create_snapshot` and `load_v2_incremental`); V2 does not route through
-  them.
-
-## Verdict
-
-Implementation/source and deterministic fixture checks pass. Overall acceptance
-is **FAIL/BLOCKED** because the required genuine full-calendar-year OANDA
-Practice benchmark cannot safely run without an account ID. Configure the
-disposable OANDA Practice account target, then run fresh-process month/year,
-repeat, and interruption benchmarks without resuming the stopped old load.
+## Receipt
 
 ROLE: VALIDATE
-STATUS: FAIL / genuine OANDA evidence BLOCKED
+STATUS: PASS
 ARTIFACT: `dispatch/workstreams/foundation-freeze-03-historical-data-foundation/VALIDATION.md`
 FILES CHANGED: `dispatch/workstreams/foundation-freeze-03-historical-data-foundation/VALIDATION.md`
-CHECKS / EVIDENCE: Full suite 359/1 skipped; focused suite 48 passed; AST/CodeGraph audit passed; deterministic real-fingerprint fixture benchmark passed with zero-call repeat and bounded telemetry.
-FINDINGS / CONCERNS: OANDA account ID absent; genuine full-calendar-year PostgreSQL/OANDA evidence was not started and remains the sole acceptance blocker.
+CHECKS / EVIDENCE: CodeGraph-first T036/T037 source audit; focused 2-test regression; affected unit 46 passed; isolated PostgreSQL integration 11 passed; full backend suite 383 passed/1 skipped/4 warnings; scoped Ruff, compileall, and diff checks passed; no validation/OANDA processes remain.
+FINDINGS / CONCERNS: T036/T037 resolved with no new implementation blockers. Full Ruff retains 45 unrelated pre-existing issues. No full-year OANDA benchmark was required or run.

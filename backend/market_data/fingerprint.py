@@ -167,7 +167,53 @@ class V2FingerprintBuilder:
 
 def bar_content_fingerprint(bar: Bar) -> str:
     """Stable provider-observation fingerprint shared by V2 memberships."""
-    value = {"bar": bar.to_json(), "content_schema": "ATLAS_BAR_CONTENT_SHA256_V1"}
+    return bar_content_fingerprint_from_fields(
+        instrument=bar.instrument.value,
+        provider=bar.provider.value,
+        timeframe=bar.timeframe.value,
+        price_component=bar.price_component.value,
+        start_time=bar.start_time,
+        end_time=bar.end_time,
+        open_price=bar.open,
+        high_price=bar.high,
+        low_price=bar.low,
+        close_price=bar.close,
+        volume=bar.volume,
+    )
+
+
+def bar_content_fingerprint_from_fields(
+    *,
+    instrument: str,
+    provider: str,
+    timeframe: str,
+    price_component: str,
+    start_time: datetime,
+    end_time: datetime,
+    open_price: Decimal,
+    high_price: Decimal,
+    low_price: Decimal,
+    close_price: Decimal,
+    volume: Decimal | None,
+) -> str:
+    """Hash canonical bar content without first materializing a domain Bar."""
+    value = {
+        "bar": {
+            "instrument": instrument,
+            "provider": provider,
+            "timeframe": timeframe,
+            "price_component": price_component,
+            "start_time": start_time.isoformat().replace("+00:00", "Z"),
+            "end_time": end_time.isoformat().replace("+00:00", "Z"),
+            "open": str(open_price),
+            "high": str(high_price),
+            "low": str(low_price),
+            "close": str(close_price),
+            "volume": str(volume) if volume is not None else None,
+            "complete": True,
+        },
+        "content_schema": "ATLAS_BAR_CONTENT_SHA256_V1",
+    }
     return hashlib.sha256(_line(value)).hexdigest()
 
 
@@ -181,4 +227,5 @@ __all__ = [
     "fingerprint_dataset",
     "dataset_fingerprint_v2",
     "bar_content_fingerprint",
+    "bar_content_fingerprint_from_fields",
 ]

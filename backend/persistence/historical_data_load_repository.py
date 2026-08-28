@@ -1,14 +1,103 @@
 """Persistence transitions for the one narrow historical-load command."""
 
+import json
 from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .models import HistoricalDataLoadRequestModel
+from .models import DatasetSnapshotModel, HistoricalDataLoadRequestModel
 
 ACTIVE = ("PENDING", "RUNNING")
+_PROGRESS_SCHEMA = "ATLAS_HISTORICAL_PROGRESS_V1"
+_PROGRESS_PHASES = {
+    "PLANNING",
+    "ACQUIRING",
+    "VALIDATING",
+    "SNAPSHOT_MEMBERSHIP",
+    "FINGERPRINTING",
+    "FINALIZING",
+    "COMPLETED",
+    "FAILED",
+}
+
+
+def _validate_progress_payload(payload: dict) -> None:
+    """Reject request-sized or ambiguous durable progress before writing it."""
+    common = {
+        "schema",
+        "phase",
+        "unit",
+        "plan_generation",
+        "completed_units",
+        "total_units",
+        "products",
+    }
+    phase = payload.get("phase")
+    if payload.get("schema") != _PROGRESS_SCHEMA or phase not in _PROGRESS_PHASES:
+        raise ValueError("invalid historical progress schema or phase")
+    if set(payload) - (
+        common
+        | (
+            {
+                "current_product",
+                "provider_calls_total",
+                "inserted_rows",
+                "reactivated_rows",
+                "unchanged_rows",
+                "latest_window",
+            }
+            if phase == "ACQUIRING"
+            else {"elapsed_ms", "rows", "batches"}
+            if phase != "PLANNING"
+            else set()
+        )
+    ):
+        raise ValueError("historical progress contains unsupported fields")
+    for name in ("completed_units", "total_units"):
+        values = payload.get(name)
+        if not isinstance(values, dict) or set(values) != {"m15", "m1"}:
+            raise ValueError("historical progress requires m15 and m1 units")
+        if any(type(value) is not int or value < 0 for value in values.values()):
+            raise ValueError("historical progress units must be non-negative integers")
+    products = payload.get("products")
+    if not isinstance(products, dict) or set(products) != {"m15", "m1"}:
+        raise ValueError("historical progress requires both products")
+    for key, product in products.items():
+        if not isinstance(product, dict) or not {
+            "expected_requests",
+            "completed_requests",
+        } <= set(product):
+            raise ValueError("historical progress product counts are incomplete")
+        allowed_product = (
+            {
+                "expected_requests",
+                "completed_requests",
+                "already_covered_window_count",
+                "uncovered_span_count",
+                "planning_elapsed_ms",
+            }
+            if phase == "PLANNING"
+            else {"expected_requests", "completed_requests"}
+        )
+        if set(product) - allowed_product:
+            raise ValueError("historical progress product contains unsupported fields")
+        if any(
+            type(product[key]) is not int or product[key] < 0
+            for key in ("expected_requests", "completed_requests")
+        ):
+            raise ValueError("historical progress request counts are invalid")
+        if product["completed_requests"] > product["expected_requests"]:
+            raise ValueError("historical progress completion exceeds expected work")
+        if (
+            product["expected_requests"] != payload["total_units"][key]
+            or product["completed_requests"] != payload["completed_units"][key]
+        ):
+            raise ValueError("historical progress product counts do not match units")
+    encoded = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
+    if len(encoded) > 8 * 1024:
+        raise ValueError("historical progress exceeds the 8 KiB limit")
 
 
 def _now() -> datetime:
@@ -96,6 +185,8 @@ class HistoricalDataLoadRepository:
         unit="database_commit",
         product=None,
         window=None,
+        progress_payload=None,
+        telemetry=None,
     ) -> bool:
         row = session.scalar(
             select(HistoricalDataLoadRequestModel)
@@ -113,6 +204,31 @@ class HistoricalDataLoadRepository:
         row.inserted, row.reactivated, row.unchanged = inserted, reactivated, unchanged
         row.incomplete_minute_count = len(incomplete_minutes)
         previous_progress = (row.coverage_summary or {}).get("progress", {})
+        if progress_payload is not None:
+            progress = dict(progress_payload)
+            if "plan_generation" not in progress:
+                progress["plan_generation"] = int(
+                    previous_progress.get("plan_generation", 0)
+                )
+            _validate_progress_payload(progress)
+            if progress["phase"] == "PLANNING":
+                progress["plan_generation"] = int(
+                    previous_progress.get("plan_generation", 0)
+                ) + 1
+                _validate_progress_payload(progress)
+            summary = dict(coverage_summary or row.coverage_summary or {})
+            summary["progress"] = progress
+            if telemetry is not None:
+                encoded = json.dumps(
+                    telemetry, separators=(",", ":"), sort_keys=True
+                ).encode()
+                if len(encoded) > 8 * 1024:
+                    raise ValueError("historical telemetry exceeds the 8 KiB limit")
+                summary["telemetry"] = telemetry
+            row.coverage_summary = summary
+            row.updated_at = _now()
+            session.flush()
+            return True
         if completed_units is None:
             completed_units = 0
         if previous_progress.get("completed_units") is not None:
@@ -163,6 +279,7 @@ class HistoricalDataLoadRepository:
             or row.status != "RUNNING"
             or coverage_summary.get("valid") is not True
             or experiment_validation.get("valid") is not True
+            or session.get(DatasetSnapshotModel, snapshot_id) is None
         ):
             return False
         row.status = "COMPLETED"

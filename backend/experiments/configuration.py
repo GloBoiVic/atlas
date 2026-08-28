@@ -7,7 +7,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import String, exists, func, literal, select, union_all
 from sqlalchemy.orm import Session
 
 from backend.domain.market_data import (
@@ -19,8 +19,16 @@ from backend.domain.market_data import (
 )
 from backend.domain.strategy import StrategyParameters
 from backend.domain.strategy_requirements import requirement_for_version
-from backend.market_data.coverage import CoverageGap, CoverageReport, validate_coverage
-from backend.market_data.session_calendar import eligible_m15_windows
+from backend.market_data.coverage import (
+    CoverageGap,
+    CoverageReport,
+    MissingMinute,
+    coalesce_gaps,
+)
+from backend.market_data.session_calendar import (
+    eligible_m15_windows,
+    is_session_open_minute,
+)
 from backend.persistence.experiment_repository import ExperimentRepository
 from backend.persistence.market_data_repository import DatasetSnapshotRepository
 from backend.persistence.models import (
@@ -132,6 +140,178 @@ class ConfigurationError(ValueError):
     def __init__(self, code: str, detail: str) -> None:
         self.code = code
         super().__init__(detail)
+
+
+@dataclass(frozen=True, slots=True)
+class _V2ExecutionValidation:
+    report: CoverageReport
+    has_one_sided_observation: bool
+    has_unacquired_absence: bool
+
+
+def _unique_reasons(reasons: list[str]) -> tuple[str, ...]:
+    ordered: list[str] = []
+    for reason in reasons:
+        if reason not in ordered:
+            ordered.append(reason)
+    return tuple(ordered)
+
+
+def _iter_eligible_m15_starts(
+    start: datetime, end: datetime
+):
+    """Yield eligible native M15 starts without retaining the requested range."""
+    cursor = start - timedelta(minutes=start.minute % 15)
+    while cursor < end:
+        window_end = cursor + timedelta(minutes=15)
+        if window_end > start and any(
+            is_session_open_minute(cursor + timedelta(minutes=offset))
+            for offset in range(15)
+        ):
+            yield cursor
+        cursor = window_end
+
+
+def _stream_v2_execution_coverage(
+    session: Session,
+    snapshot: DatasetSnapshotModel,
+    trading_start: datetime,
+    trading_end: datetime,
+) -> _V2ExecutionValidation:
+    """Validate sparse execution membership from one bounded result stream."""
+    observation_events = select(
+        MarketBarModel.start_time.label("start_time"),
+        MarketBarModel.end_time.label("end_time"),
+        MarketBarModel.price_component.label("price_component"),
+        literal(0).label("event_kind"),
+    ).join(
+        DatasetSnapshotExecutionObservationModel,
+        DatasetSnapshotExecutionObservationModel.market_bar_id == MarketBarModel.id,
+    ).where(
+        DatasetSnapshotExecutionObservationModel.dataset_snapshot_id == snapshot.id,
+        MarketBarModel.start_time >= trading_start,
+        MarketBarModel.start_time < trading_end,
+    )
+    window_events = select(
+        HistoricalAcquisitionWindowModel.start_time.label("start_time"),
+        HistoricalAcquisitionWindowModel.end_time.label("end_time"),
+        literal(None, String(3)).label("price_component"),
+        literal(1).label("event_kind"),
+    ).where(
+        HistoricalAcquisitionWindowModel.venue_instrument_id
+        == snapshot.venue_instrument_id,
+        HistoricalAcquisitionWindowModel.resolution == "M1",
+        HistoricalAcquisitionWindowModel.components == "ASK,BID",
+        HistoricalAcquisitionWindowModel.outcome == "SUCCESS_EMPTY_OR_SPARSE",
+        HistoricalAcquisitionWindowModel.start_time < trading_end,
+        HistoricalAcquisitionWindowModel.end_time > trading_start,
+    )
+    events = union_all(observation_events, window_events).subquery()
+    rows = session.execute(
+        select(
+            events.c.start_time,
+            events.c.end_time,
+            events.c.price_component,
+            events.c.event_kind,
+        )
+        .order_by(
+            events.c.start_time,
+            events.c.event_kind,
+            events.c.end_time,
+            events.c.price_component,
+        )
+        .execution_options(stream_results=True)
+    ).yield_per(1000)
+
+    next_event = iter(rows)
+    event = next(next_event, None)
+    maximum_successful_window_end: datetime | None = None
+    missing_preview: list[MissingMinute] = []
+    closure_preview: list[datetime] = []
+    unexpected_preview: list[datetime] = []
+    has_one_sided_observation = False
+    has_unacquired_absence = False
+    expected_open_minutes = 0
+    expected_closure_minutes = 0
+    member_minutes = 0
+    cursor = trading_start
+    while cursor < trading_end:
+        has_bid = False
+        has_ask = False
+        closure_seen = False
+        unexpected_seen = False
+        while event is not None and event.start_time <= cursor:
+            if event.event_kind == 1:
+                if (
+                    maximum_successful_window_end is None
+                    or event.end_time > maximum_successful_window_end
+                ):
+                    maximum_successful_window_end = event.end_time
+            elif event.start_time != cursor or event.end_time != cursor + timedelta(
+                minutes=1
+            ):
+                if not unexpected_seen and len(unexpected_preview) < 101:
+                    unexpected_preview.append(event.start_time)
+                unexpected_seen = True
+            elif not is_session_open_minute(cursor):
+                if not closure_seen and len(closure_preview) < 101:
+                    closure_preview.append(cursor)
+                closure_seen = True
+            elif event.price_component == PriceComponent.BID.value:
+                if has_bid and not unexpected_seen and len(unexpected_preview) < 101:
+                    unexpected_preview.append(event.start_time)
+                if has_bid:
+                    unexpected_seen = True
+                has_bid = True
+            elif event.price_component == PriceComponent.ASK.value:
+                if has_ask and not unexpected_seen and len(unexpected_preview) < 101:
+                    unexpected_preview.append(event.start_time)
+                if has_ask:
+                    unexpected_seen = True
+                has_ask = True
+            else:
+                if not unexpected_seen and len(unexpected_preview) < 101:
+                    unexpected_preview.append(event.start_time)
+                unexpected_seen = True
+            event = next(next_event, None)
+
+        if is_session_open_minute(cursor):
+            expected_open_minutes += 1
+            if has_bid and has_ask:
+                member_minutes += 1
+            else:
+                if not has_bid:
+                    missing_components = (
+                        PriceComponent.BID, PriceComponent.ASK
+                    ) if not has_ask else (PriceComponent.BID,)
+                else:
+                    missing_components = (PriceComponent.ASK,)
+                if len(missing_preview) < 101:
+                    missing_preview.append(MissingMinute(cursor, missing_components))
+                if len(missing_components) == 1:
+                    has_one_sided_observation = True
+                elif (
+                    maximum_successful_window_end is None
+                    or maximum_successful_window_end < cursor + timedelta(minutes=1)
+                ):
+                    has_unacquired_absence = True
+        else:
+            expected_closure_minutes += 1
+        cursor += timedelta(minutes=1)
+
+    return _V2ExecutionValidation(
+        CoverageReport(
+            expected_open_minutes,
+            expected_closure_minutes,
+            member_minutes,
+            tuple(missing_preview),
+            coalesce_gaps(missing_preview),
+            tuple(closure_preview),
+            tuple(unexpected_preview),
+        ),
+        has_one_sided_observation,
+        has_unacquired_absence,
+    )
 
 
 def missing_analytical_frontiers(
@@ -338,22 +518,36 @@ class ExperimentConfigurationService:
         validator; only native completed M15 availability and persisted,
         explicitly blocking snapshot gaps can invalidate the requested range.
         """
-        analytical = tuple(
-            session.scalars(
-                select(DatasetSnapshotAnalyticalBarModel)
+        analytical_base = (
+            DatasetSnapshotAnalyticalBarModel.dataset_snapshot_id == snapshot.id,
+            DatasetSnapshotAnalyticalBarModel.complete.is_(True),
+        )
+        warm_up_available = session.scalar(
+            select(func.count())
+            .select_from(DatasetSnapshotAnalyticalBarModel)
+            .where(
+                *analytical_base,
+                DatasetSnapshotAnalyticalBarModel.end_time <= trading_start,
+            )
+        ) or 0
+        required_start = None
+        if warm_up_required and warm_up_available >= warm_up_required:
+            required_start = session.scalar(
+                select(DatasetSnapshotAnalyticalBarModel.start_time)
                 .where(
-                    DatasetSnapshotAnalyticalBarModel.dataset_snapshot_id
-                    == snapshot.id,
-                    DatasetSnapshotAnalyticalBarModel.complete.is_(True),
+                    *analytical_base,
+                    DatasetSnapshotAnalyticalBarModel.end_time <= trading_start,
                 )
-                .order_by(DatasetSnapshotAnalyticalBarModel.end_time)
-            ).all()
-        )
-        warm = tuple(item for item in analytical if item.end_time <= trading_start)
-        selected = warm[-warm_up_required:] if warm_up_required else ()
-        required_start = (
-            selected[0].start_time if len(selected) == warm_up_required else None
-        )
+                .order_by(
+                    DatasetSnapshotAnalyticalBarModel.end_time.desc(),
+                    DatasetSnapshotAnalyticalBarModel.start_time.desc(),
+                    DatasetSnapshotAnalyticalBarModel.sequence.desc(),
+                )
+                .offset(warm_up_required - 1)
+                .limit(1)
+            )
+        elif not warm_up_required:
+            required_start = trading_start
         reasons: list[str] = []
         if required_start is None:
             reasons.append("INSUFFICIENT_WARMUP")
@@ -364,71 +558,70 @@ class ExperimentConfigurationService:
         ):
             reasons.append("RANGE_OUTSIDE_SNAPSHOT")
 
-        requested_analytical = tuple(
-            item
-            for item in analytical
-            if trading_start <= item.start_time < trading_end
-        )
-        if not requested_analytical:
-            reasons.append("INSUFFICIENT_ANALYTICAL_DATA")
-        if missing_analytical_frontiers(
-            {item.start_time for item in analytical}, required_start, trading_end
+        if not session.scalar(
+            select(
+                exists().where(
+                    *analytical_base,
+                    DatasetSnapshotAnalyticalBarModel.start_time >= trading_start,
+                    DatasetSnapshotAnalyticalBarModel.start_time < trading_end,
+                )
+            )
         ):
+            reasons.append("INSUFFICIENT_ANALYTICAL_DATA")
+        analytical_rows = session.execute(
+            select(DatasetSnapshotAnalyticalBarModel.start_time)
+            .where(
+                *analytical_base,
+                DatasetSnapshotAnalyticalBarModel.start_time >= required_start,
+                DatasetSnapshotAnalyticalBarModel.start_time < trading_end,
+            )
+            .order_by(DatasetSnapshotAnalyticalBarModel.start_time)
+            .execution_options(stream_results=True)
+        ).yield_per(1000)
+        analytical_iter = iter(analytical_rows)
+        analytical_row = next(analytical_iter, None)
+        missing_frontier = False
+        for expected_start in _iter_eligible_m15_starts(
+            required_start, trading_end
+        ):
+            while (
+                analytical_row is not None
+                and analytical_row[0] < expected_start
+            ):
+                analytical_row = next(analytical_iter, None)
+            if analytical_row is None or analytical_row[0] != expected_start:
+                missing_frontier = True
+            if analytical_row is not None and analytical_row[0] == expected_start:
+                analytical_row = next(analytical_iter, None)
+        if missing_frontier:
             reasons.append("MISSING_ANALYTICAL_FRONTIERS")
 
-        # Execution is an independent immutable native product.  Validate its
-        # BID/ASK membership, never mutable market-bar heads or M1-derived M15.
-        execution_rows = session.scalars(
-            select(MarketBarModel)
-            .join(
-                DatasetSnapshotExecutionObservationModel,
-                DatasetSnapshotExecutionObservationModel.market_bar_id
-                == MarketBarModel.id,
-            )
-            .where(
-                DatasetSnapshotExecutionObservationModel.dataset_snapshot_id
-                == snapshot.id,
-                MarketBarModel.start_time >= trading_start,
-                MarketBarModel.start_time < trading_end,
-            )
-        ).all()
-        execution_bars = tuple(_execution_bar(row) for row in execution_rows)
-        execution_report = validate_coverage(
-            trading_start,
-            trading_end,
-            execution_bars,
-            (PriceComponent.BID, PriceComponent.ASK),
+        # Execution is an independent immutable native product. Validate its
+        # BID/ASK membership and successful sparse-window provenance, never
+        # mutable market-bar heads or M1-derived M15. The joined event stream is
+        # ordered and bounded; it retains only the current minute's two flags.
+        execution_validation = _stream_v2_execution_coverage(
+            session, snapshot, trading_start, trading_end
         )
-        successful_m1_windows = tuple(
-            session.scalars(
-                select(HistoricalAcquisitionWindowModel).where(
-                    HistoricalAcquisitionWindowModel.venue_instrument_id
-                    == snapshot.venue_instrument_id,
-                    HistoricalAcquisitionWindowModel.resolution == "M1",
-                    HistoricalAcquisitionWindowModel.components == "ASK,BID",
-                    HistoricalAcquisitionWindowModel.outcome
-                    == "SUCCESS_EMPTY_OR_SPARSE",
-                    HistoricalAcquisitionWindowModel.start_time < trading_end,
-                    HistoricalAcquisitionWindowModel.end_time > trading_start,
-                )
-            ).all()
-        )
-        # A successful sparse request may legitimately contain no M1 rows. It
-        # cannot, however, turn a one-sided BID/ASK observation into valid data.
-        if not _execution_coverage_valid(execution_report, successful_m1_windows):
+        execution_report = execution_validation.report
+        if (
+            execution_validation.has_one_sided_observation
+            or execution_validation.has_unacquired_absence
+            or execution_report.closure_anomalies
+            or execution_report.unexpected_observations
+        ):
             reasons.append("INCOMPLETE_EXECUTION_DATA")
 
-        blocked_gaps = session.scalars(
-            select(DatasetSnapshotGapModel)
-            .where(
-                DatasetSnapshotGapModel.dataset_snapshot_id == snapshot.id,
-                DatasetSnapshotGapModel.blocked.is_(True),
-                DatasetSnapshotGapModel.end_time > required_start,
-                DatasetSnapshotGapModel.start_time < trading_end,
+        if session.scalar(
+            select(
+                exists().where(
+                    DatasetSnapshotGapModel.dataset_snapshot_id == snapshot.id,
+                    DatasetSnapshotGapModel.blocked.is_(True),
+                    DatasetSnapshotGapModel.end_time > required_start,
+                    DatasetSnapshotGapModel.start_time < trading_end,
+                )
             )
-            .order_by(DatasetSnapshotGapModel.sequence)
-        ).all()
-        if blocked_gaps:
+        ):
             reasons.append("BLOCKING_GAPS")
 
         return CoverageValidation(
@@ -437,11 +630,11 @@ class ExperimentConfigurationService:
             trading_end,
             required_start,
             warm_up_required,
-            len(warm),
+            warm_up_available,
             snapshot.id,
             snapshot.fingerprint,
             None,
-            tuple(dict.fromkeys(reasons)),
+            _unique_reasons(reasons),
         )
 
     def create(

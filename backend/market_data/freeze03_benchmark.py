@@ -14,6 +14,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
+from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from backend.domain.market_data import (
@@ -48,7 +49,9 @@ class BenchmarkResult:
     fingerprint: str
     max_batch_size: int
     max_progress_payload_bytes: int
+    max_telemetry_payload_bytes: int
     peak_rss_bytes: int
+    telemetry: dict[str, Any]
 
 
 class _FixtureSession:
@@ -113,13 +116,21 @@ class _FixtureRepository:
     def current_bars_stream(
         self, session, mapping, start, end, components, resolution=Timeframe.M1
     ):
-        yield from self.current_bars(session, mapping, start, end, components, resolution)
+        yield from self.current_bars(
+            session, mapping, start, end, components, resolution
+        )
 
     def current_bar_rows_stream(
         self, _session, _mapping, start, end, components, resolution=Timeframe.M1
     ):
-        for row in sorted(self.m1_rows, key=lambda item: (item.start_time, item.price_component)):
-            if start <= row.start_time < end and resolution is Timeframe.M1 and row.price_component in {c.value for c in components}:
+        for row in sorted(
+            self.m1_rows, key=lambda item: (item.start_time, item.price_component)
+        ):
+            if (
+                start <= row.start_time < end
+                and resolution is Timeframe.M1
+                and row.price_component in {c.value for c in components}
+            ):
                 yield row
 
     def missing_ranges(
@@ -189,11 +200,24 @@ class _FixtureSnapshotRepository:
     def __init__(self):
         self.snapshots = {}
         self.snapshot_seconds = 0.0
+        self.last_v2_finalization_telemetry = {}
 
-    def create_v2_validated(self, _session, snapshot, analytical, execution, gaps, **_kwargs):
+    def create_v2_validated(
+        self, _session, snapshot, analytical, execution, gaps, **_kwargs
+    ):
         began = time.perf_counter()
+        analytical_rows = sum(1 for _ in analytical)
+        execution_rows = sum(1 for _ in execution)
         result = self.snapshots.setdefault(snapshot.fingerprint, snapshot)
         self.snapshot_seconds += time.perf_counter() - began
+        self.last_v2_finalization_telemetry = {
+            "analytical_rows": analytical_rows,
+            "execution_rows": execution_rows,
+            "gap_rows": 0,
+            "analytical_batches": 1 if analytical_rows else 0,
+            "execution_batches": 1 if execution_rows else 0,
+            "gap_batches": 0,
+        }
         return result
 
 
@@ -292,6 +316,7 @@ def run_fixture_benchmarks() -> tuple[BenchmarkResult, ...]:
         began = time.perf_counter()
         fingerprint_seconds = 0.0
         max_progress_payload_bytes = 0
+        max_telemetry_payload_bytes = 0
         original_fingerprint = ingestion_module.dataset_fingerprint_v2
 
         def measured_fingerprint(original=original_fingerprint, **kwargs):
@@ -304,11 +329,29 @@ def run_fixture_benchmarks() -> tuple[BenchmarkResult, ...]:
         ingestion_module.dataset_fingerprint_v2 = measured_fingerprint
         try:
             def progress(report):
-                nonlocal max_progress_payload_bytes
+                nonlocal max_progress_payload_bytes, max_telemetry_payload_bytes
+                payload = (
+                    report.to_payload()
+                    if hasattr(report, "to_payload")
+                    else asdict(report)
+                    if hasattr(report, "__dataclass_fields__")
+                    else vars(report)
+                )
                 max_progress_payload_bytes = max(
                     max_progress_payload_bytes,
-                    len(json.dumps(asdict(report) if hasattr(report, "__dataclass_fields__") else vars(report), default=str)),
+                    len(json.dumps(payload, separators=(",", ":"), default=str)),
                 )
+                if getattr(report, "telemetry", None) is not None:
+                    max_telemetry_payload_bytes = max(
+                        max_telemetry_payload_bytes,
+                        len(
+                            json.dumps(
+                                report.telemetry,
+                                separators=(",", ":"),
+                                default=str,
+                            )
+                        ),
+                    )
 
             report = service.load_v2(start, end, progress=progress)
         except RuntimeError:
@@ -347,7 +390,13 @@ def run_fixture_benchmarks() -> tuple[BenchmarkResult, ...]:
                 fingerprint=fingerprint,
                 max_batch_size=repository.max_batch_size,
                 max_progress_payload_bytes=max_progress_payload_bytes,
-                peak_rss_bytes=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
+                max_telemetry_payload_bytes=max_telemetry_payload_bytes,
+                peak_rss_bytes=(
+                    report.telemetry["rss"]["peak_bytes"]
+                    if getattr(report, "telemetry", None)
+                    else resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+                ),
+                telemetry=getattr(report, "telemetry", {}) or {},
             )
         )
     return tuple(results)

@@ -1,6 +1,6 @@
 # Foundation Freeze 03 — Authoritative V2 Historical-Data Contract
 
-Status: `FROZEN — performance remediation contract added`
+Status: `FROZEN — telemetry/progress and performance evidence contract added`
 
 ## 1. Authority and scope
 
@@ -49,8 +49,10 @@ completed-bar count. The final snapshot records the exact ordered analytical con
 membership; it never fabricates context to satisfy the count.
 
 For each product, local coverage is inspected by its exact provider, resolution, and
-component key. Only missing expected session-open intervals are sent to OANDA; a fully
-acquired product causes zero OANDA requests. A successful M1 BID/ASK window may
+component key. Missing expected open-session intervals identify needed calendar ranges;
+deterministic coalescing may include intervening closure time. Only those coalesced
+missing ranges are sent to OANDA; a fully acquired product causes zero OANDA requests.
+A successful M1 BID/ASK window may
 contain zero or sparse returned minutes and is still acquired data; repeat requests
 must not re-query it merely because continuity is sparse. Existing valid observations
 and successful-window classifications are reused. Provider failure, timeout,
@@ -66,6 +68,14 @@ never treated as successful empty responses.
 The plan may contain any number of bounded provider chunks. Missing coverage spans and
 provider request chunks are distinct: large plans are processed in bounded batches
 with durable progress and resume, never rejected because of request-window count.
+
+Session policy is not a provider-request partitioning policy. It determines which
+intervals are expected observations and how returned data is validated, but it must not
+split an otherwise valid bounded calendar range at a weekend, holiday, or other
+closure. Request chunks are split only by the configured provider bound, product
+resolution/component, and deterministic acquisition-coverage subtraction. A request
+may therefore contain closure time; closure intervals contribute no expected
+observation and do not make a successful provider response a failure.
 
 ## 3. Provider and canonical observation contract
 
@@ -347,12 +357,12 @@ later operation convenient.
 
 After each successfully validated provider window, the existing atomic observation
 commit and separate short progress transaction remain mandatory. A progress callback
-and its durable projection must be O(1) per window: current product/window, cumulative
-inserted/reactivated/unchanged counts, cumulative successful-window count, and bounded
-status/error facts are allowed; unbounded `fetched_ranges`, `committed_ranges`, gap
-arrays, or per-observation payloads are not. If a range summary is exposed, it is a
-bounded count/byte-size or canonical interval summary with an explicitly enforced
-limit, never the complete history of windows.
+and its durable projection must follow the exact contract in section 11. It must be
+O(1) per window: current product/window, bounded counters, and bounded status/error
+facts are allowed; unbounded `fetched_ranges`, `committed_ranges`, gap arrays, or
+per-observation payloads are not. If a range summary is exposed, it is a bounded
+count/byte-size or canonical interval summary with an explicitly enforced limit,
+never the complete history of windows.
 
 Progress must not call whole-range coverage validation after every window. Coverage
 updates are incremental from the committed window/result (or are performed once at a
@@ -448,6 +458,14 @@ membership counts/order, coverage classifications, and terminal state between fr
 resumed, and repeat runs. A benchmark is not passing evidence unless correctness and
 resource measurements are both captured.
 
+The evidence report must use the section 11 names and units. In particular, it must
+show expected and completed provider requests separately for M15 and M1 before any
+provider I/O, average and p95 provider/request and persistence/batch durations,
+coverage/validation, snapshot-membership, fingerprint, and total elapsed timings,
+inserted rows per second, baseline/peak RSS, and the maximum serialized telemetry
+payload. A scalar shared `completed_units`, a null `total_units`, or a request count
+inferred from rows is not acceptable evidence.
+
 ### 10.6 Required performance regressions and examples
 
 Required regressions include:
@@ -488,3 +506,248 @@ union remains valid and is not fetched or fabricated.
 **Boundary:** Batch size 1 and batch size 10,000 must yield identical ordered rows,
 coverage classifications, and fingerprint; memory is allowed to differ only within
 the fixed batch bound, never with total year-row count.
+
+## 11. Frozen telemetry, progress, and safe reuse contract
+
+This section is implementation authority for the next telemetry implementation and
+supersedes any older progress shape in application code, API examples, or benchmark
+harnesses. Telemetry is an inspectable operational projection, not a source of market
+data truth, coverage truth, snapshot identity, or resume authority. Durable canonical
+observations plus successful acquisition-window records remain the resume authority.
+
+### 11.1 Product keys and progress meaning
+
+Telemetry uses exactly two product keys:
+
+| Key | Role | Native provider contract |
+| --- | --- | --- |
+| `m15` | analytical | OANDA M15, `MID` |
+| `m1` | execution | OANDA M1, `BID` + `ASK` |
+
+The public progress object has this fixed shape (additional arbitrary keys are not
+allowed):
+
+```json
+{
+  "schema": "ATLAS_HISTORICAL_PROGRESS_V1",
+  "phase": "PLANNING",
+  "unit": "provider_request",
+  "completed_units": {"m15": 0, "m1": 0},
+  "total_units": {"m15": 8, "m1": 40},
+  "products": {
+    "m15": {"expected_requests": 8, "completed_requests": 0},
+    "m1": {"expected_requests": 40, "completed_requests": 0}
+  }
+}
+```
+
+`completed_units[p]` is the number of bounded provider request windows for product
+`p` whose response was validated and whose canonical observations **and successful
+acquisition-window outcome** were durably committed. A successful empty or sparse M1
+response counts as one completed request. It is a request count, never a bar, minute,
+observation-row, byte, HTTP-attempt, or database-transaction count. A provider failure,
+timeout, malformed response, or unknown outcome increments none of these counters.
+
+`total_units[p]` is the number of bounded provider request windows in the deterministic
+missing-coverage plan for product `p`, after successful-window-union subtraction and
+coalescing, for the current `plan_generation`. It is known and durably written for both
+products before the first provider call of that generation. It includes only provider
+windows that may be issued; already covered windows are not counted as new work. The
+corresponding `products[p].expected_requests` and `products[p].completed_requests` are
+the same integers, not independently maintained values. At a fully covered repeat,
+both products are `0/0` and provider calls are zero.
+
+The coordinator must plan both products before acquisition begins so that neither
+product has `total_units = null` or an absent expected count. A warm-up extension or
+explicit resume creates a new monotonically increasing `plan_generation` and writes
+the new per-product totals before its next provider call. Counts from an earlier
+generation are retained only as bounded aggregate evidence (`provider_calls_total`);
+they are not copied into the new generation's `completed_units`. Replanning may
+reduce expected work through durable union reuse, but it may not mark a failed or
+unknown window complete. Progress percentages, if displayed, are `completed_units /
+total_units` for the same product and generation; `0/0` displays `covered`, not 100%.
+
+The scalar legacy meanings are forbidden: `completed_units` and `total_units` must
+never be a shared scalar, `total_units` must never be null for an acquired generation,
+and database rows/observations must never be used as a proxy for completed provider
+requests. The legacy range arrays remain empty compatibility fields if the schema
+requires them; they are not telemetry and are never read for resume.
+
+### 11.2 Bounded, redacted phase telemetry
+
+The durable progress projection contains only fixed schema fields: fixed enums,
+booleans, UTC timestamps, integer counters, durations in integer milliseconds, byte
+counts, and the two product keys. It is capped at **8 KiB serialized UTF-8**; the
+writer rejects any over-cap update before persistence rather than allowing unbounded
+growth. It may
+contain the current `plan_generation`, current product, the latest bounded window
+summary, and aggregate counters. It must not contain a window history, all expected
+intervals, gap arrays, provider response data, OHLC/prices, URLs, query strings,
+headers, credentials/tokens, account identifiers, raw exception text, stack traces,
+or arbitrary provider/user strings. Failure facts use the existing allowlisted
+category/code/detail contract and are redacted before storage.
+
+Allowed phase enum values are `PLANNING`, `ACQUIRING`, `VALIDATING`,
+`SNAPSHOT_MEMBERSHIP`, `FINGERPRINTING`, `FINALIZING`, `COMPLETED`, and `FAILED`.
+Each phase emits at most one aggregate start/end record plus O(1) per-window progress
+updates. `PLANNING` reports, per product, `expected_requests`,
+`already_covered_window_count`, `uncovered_span_count`, and `planning_elapsed_ms`;
+it never serializes the spans. `ACQUIRING` reports the current product's
+`completed_units`, `total_units`, `provider_calls_total`, `inserted_rows`,
+`reactivated_rows`, `unchanged_rows`, and only the latest window's bounded start/end
+summary. All other phases report their fixed aggregate timing and bounded row/batch
+counters. The full shape and cap are test-enforced; a callback must not invoke a
+whole-range coverage scan or retain prior reports.
+
+Progress may lag the latest observation/window commit and may be absent after a crash.
+It is status/audit information only. A crash between durable commits is resolved by
+recomputing canonical rows and successful acquisition-window union, never by trusting
+the last progress payload.
+
+### 11.3 Required timing and resource metrics
+
+The terminal telemetry report contains all of the following, with `*_ms` as integer
+milliseconds and RSS as integer bytes. Each product is reported separately under
+`m15` and `m1`, plus an `overall` aggregate where applicable:
+
+```json
+{
+  "timing": {
+    "planning": {"elapsed_ms": 12},
+    "provider": {
+      "m15": {"calls": 8, "elapsed_ms": 1200, "average_ms": 150, "p95_ms": 220},
+      "m1": {"calls": 40, "elapsed_ms": 8000, "average_ms": 200, "p95_ms": 310}
+    },
+    "persistence": {
+      "m15": {"batches": 8, "elapsed_ms": 600, "average_batch_ms": 75, "p95_batch_ms": 110, "inserted_rows": 2400, "rows_per_second": 4000},
+      "m1": {"batches": 40, "elapsed_ms": 4000, "average_batch_ms": 100, "p95_batch_ms": 160, "inserted_rows": 72000, "rows_per_second": 18000}
+    },
+    "validation": {"elapsed_ms": 90, "valid": true},
+    "snapshot_membership": {"elapsed_ms": 300, "rows": 74400, "batches": 30},
+    "fingerprinting": {"elapsed_ms": 80, "records_hashed": 74400},
+    "total_elapsed_ms": 14260
+  },
+  "rss": {"baseline_bytes": 70000000, "peak_bytes": 180000000, "delta_bytes": 110000000}
+}
+```
+
+`provider.*.calls` counts provider request windows, including successful empty/sparse
+responses and terminal failed/unknown calls; `completed_units` counts only successful
+ones. The provider elapsed time is the sum of per-window wall time around the OANDA
+adapter call, including adapter retries within that window and excluding persistence.
+Persistence elapsed time is measured around each committed canonical observation batch,
+separately for M15 and M1; snapshot-membership insertion is reported only in its own
+phase and is not silently folded into M15/M1 persistence. `average_ms` is elapsed/count
+when count is nonzero, otherwise null; `p95_ms` is also null when count is zero.
+`rows_per_second` is newly inserted canonical
+observation rows divided by that product's persistence seconds; reactivated and
+unchanged rows are not numerator rows. A zero-row/zero-time metric is null, never
+infinity or a fabricated rate.
+
+For bounded deterministic p95, each duration stream uses the fixed 17-bucket
+logarithmic histogram `[1, 2, 4, ..., 2^16]` milliseconds plus explicit zero and
+overflow buckets. `p95_ms` is the upper bound of the bucket containing the nearest-rank
+95th observation (`rank = max(1, ceil(0.95 * n))`); this method name and bucket scheme
+are part of the report. Averages remain exact integer-duration sums/counts. The
+histogram is bounded independently of request/window count and is maintained for M15
+provider calls, M1 provider calls, M15 persistence batches, and M1 persistence batches.
+
+`total_elapsed_ms` starts immediately before the first planning phase and ends at the
+terminal transition, summing active work segments across an explicit resume; it
+includes planning, provider calls, canonical persistence, validation, snapshot
+membership, fingerprinting, and finalization, and excludes time spent queued in
+`PENDING`. A benchmark harness additionally records wall-clock scenario elapsed when
+process restart downtime must be shown. RSS baseline is sampled immediately before
+planning, peak is the process high-water mark sampled throughout the run, and both are
+normalized to bytes on the host OS. Peak must be at least baseline; sampling cannot
+retain observations or telemetry history.
+
+### 11.4 Closure versus provider-range examples
+
+**Valid:** The missing expected M1 observations before and after a weekend fit inside
+one configured M1 provider bound. The planner issues one half-open calendar request
+covering the intervening closure. Closure minutes are excluded by validation, and the
+request contributes one `total_units`/provider call, not one call per open-session
+minute.
+
+**Invalid:** Splitting at every weekend/holiday, counting closed minutes as missing
+provider work, or reporting a closure as a provider failure. This changes neither
+provider truth nor expected observation semantics and violates the range contract.
+
+**Boundary:** A request exactly `[10:00, 10:10)` is one unit and excludes `10:10`.
+Adjacent successful `[10:00, 10:10)` and `[10:10, 10:20)` coverage merges to one
+union. A range larger than the configured product bound is split only at deterministic
+boundaries (not at closures); a touching boundary belongs to the next half-open
+chunk.
+
+### 11.5 Progress, timing, and reuse examples
+
+**Valid progress:** Before any provider I/O, M15 has `completed_units=0`,
+`total_units=8`, and M1 has `completed_units=0`, `total_units=40`. After three
+successful M15 windows and one successful empty M1 window, the values are `3/8` and
+`1/40`; the M1 empty response is acquired coverage and is not fetched again. The
+payload remains bounded after 10,000 windows because it retains counters and only the
+latest window.
+
+**Invalid progress:** `completed_units=770723` because that is the number of rows,
+one scalar `completed_units=43` copied to both products, `total_units=null`, or a
+`fetched_ranges` array containing all windows. Each is opaque, misleading, or
+request-sized and is rejected by the contract.
+
+**Boundary progress:** A fully covered repeat reports M15 `0/0` and M1 `0/0`, with
+`provider.calls=0`; it is `covered`, not complete acquisition work. A failed or
+unknown tenth window leaves successful completed count at nine and contributes no
+coverage. A later explicit resume recomputes the remainder and writes new totals
+before its first call.
+
+**Valid stopped-run reuse:** After process `2dd2dd72-1d97-4b73-af17-f20f91820945`
+was stopped, inspection confirms the disposable database is `atlas_test.public`, the
+request contract/ranges and StrategyVersion are unchanged, no process owns the
+request, every reused M15/M1 window has a durable successful outcome, and canonical
+rows are valid, complete, provenance-keyed, and conflict-free. Atlas may explicitly
+resume that same request, recompute both products' successful-window unions, issue
+only uncovered/confirmed retryable ranges, and then create/link the immutable snapshot.
+If both unions cover the required ranges, it must make zero provider calls and proceed
+to validation/snapshot construction. This stopped run remains excluded from final
+acceptance benchmark evidence; it is reusable durable input only after these checks.
+
+**Invalid stopped-run reuse:** Resetting `atlas_test`, creating a new active request,
+trusting stale progress JSON, treating a window with unknown provider outcome as
+successful, or using M1 rows to substitute a missing native M15 bar. Any such fact
+blocks reuse until explicitly classified; no destructive cleanup is allowed before
+the durable-fact audit and resume decision.
+
+### 11.6 Required tests and benchmark gate
+
+Before another genuine full-year benchmark, implementation must add deterministic
+tests for:
+
+- exact progress schema and product semantics: totals persisted before the first
+  provider call; M15/M1 `0/0`, successful empty/sparse, failure/unknown, retry, resume,
+  and warm-up plan-generation cases; no row/minute/scalar/null confusion;
+- boundedness and redaction: fixed 8 KiB cap, no request-sized arrays or provider
+  secrets/bodies/raw exceptions, O(1) callback work, no whole-range coverage scan per
+  callback, and bounded histogram state after a large window count;
+- timing correctness: fake-clock M15/M1 provider durations, persistence batch
+  durations, exact averages, fixed-histogram nearest-rank p95, validation/snapshot/
+  fingerprint/total phase inclusion, zero-denominator null rates, rows/sec numerator,
+  and baseline/peak RSS byte normalization;
+- closure/range behavior: closure-containing bounded requests are not split by session
+  policy, expected closure classification remains validation-only, provider max and
+  half-open boundaries are deterministic, and touching/overlapping union reuse makes
+  no repeat calls;
+- stopped-run recovery: a fixture matching the durable `atlas_test` facts resumes
+  from successful acquisition union plus canonical rows, does not trust stale progress,
+  never creates a second active request, never reissues successful windows, blocks on
+  unknown/conflicting facts, and produces the same snapshot membership/fingerprint as
+  a fresh run;
+- benchmark evidence: a short representative sample runs first and reports every
+  section 11 metric. Exactly one remediation may follow from its measured dominant
+  bottleneck; only after that evidence may fresh one-month, genuine one-year,
+  covered-repeat one-year, and interrupted/resumed one-year acceptance runs begin.
+
+The full-year gate fails or reports `BLOCKED` when any required metric is absent, when
+the covered repeat performs provider I/O, when telemetry grows with window/row count,
+when the stopped-run facts are discarded before audit, or when closure splitting is
+used to make the numbers look smaller. Fixture timings cannot substitute for
+credentialed OANDA evidence; unavailable credentials are reported as `BLOCKED`.

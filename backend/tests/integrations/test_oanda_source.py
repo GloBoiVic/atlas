@@ -120,6 +120,51 @@ def test_execution_m1_requests_sparse_bid_ask_without_mid() -> None:
     ]
 
 
+def test_execution_m1_omits_provider_closure_boundaries_without_splitting_request() -> (
+    None
+):
+    closure_start = datetime(2026, 1, 9, 21, 59, tzinfo=UTC)
+    closure_end = datetime(2026, 1, 11, 22, 5, tzinfo=UTC)
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "candles": [
+                    candle(closure_start - timedelta(minutes=1)),
+                    candle(closure_start),
+                    candle(closure_end - timedelta(minutes=1)),
+                    candle(closure_end),
+                ]
+            },
+        )
+
+    result = source(handler).fetch_execution_m1(
+        closure_start - timedelta(minutes=1), closure_end + timedelta(minutes=1)
+    )
+
+    assert len(requests) == 1
+    assert [bar.start_time for bar in result.bars[::2]] == [
+        closure_start - timedelta(minutes=1),
+        closure_end,
+    ]
+
+
+def test_native_m15_does_not_apply_m1_closure_filter() -> None:
+    closure_boundary = datetime(2026, 1, 9, 22, tzinfo=UTC)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"candles": [candle(closure_boundary)]})
+
+    result = source(handler).fetch_native_m15(
+        closure_boundary, closure_boundary + timedelta(minutes=15)
+    )
+
+    assert [bar.start_time for bar in result.bars] == [closure_boundary]
+
+
 def test_paginates_at_4000_minutes_and_filters_boundaries() -> None:
     requests: list[httpx.Request] = []
 

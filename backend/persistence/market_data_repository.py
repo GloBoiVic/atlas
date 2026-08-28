@@ -6,11 +6,12 @@ caller can compose them in one PostgreSQL transaction.
 """
 
 import json
+import time
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
-from typing import cast
+from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy import case, select
@@ -20,6 +21,7 @@ from sqlalchemy.orm import Session
 from backend.domain.market_data import (
     ALIGNMENT_CONVENTION,
     FINGERPRINT_SCHEMA,
+    GAP_POLICY_V1,
     SESSION_POLICY,
     Bar,
     DatasetSnapshot,
@@ -271,8 +273,17 @@ class MarketDataRepository:
     ) -> Iterable[Bar]:
         """Yield ordered current bars without an ORM result-list allocation."""
         venue_row, instrument = self._venue_rows(session, venue_instrument_id)
-        rows = session.scalars(
-            select(MarketBarModel)
+        rows = session.execute(
+            select(
+                MarketBarModel.start_time,
+                MarketBarModel.end_time,
+                MarketBarModel.open_price,
+                MarketBarModel.high_price,
+                MarketBarModel.low_price,
+                MarketBarModel.close_price,
+                MarketBarModel.volume,
+                MarketBarModel.price_component,
+            )
             .where(
                 MarketBarModel.venue_instrument_id == venue_instrument_id,
                 MarketBarModel.resolution == _encode_resolution(timeframe),
@@ -289,9 +300,25 @@ class MarketDataRepository:
                     else_=2,
                 ),
             )
+            .execution_options(
+                stream_results=True,
+                max_row_buffer=_SNAPSHOT_MEMBERSHIP_BATCH_SIZE,
+            )
         ).yield_per(_SNAPSHOT_MEMBERSHIP_BATCH_SIZE)
         for row in rows:
-            yield _bar(row, _venue(venue_row, instrument))
+            yield Bar(
+                instrument=Instrument(instrument.code),
+                provider=Provider(venue_row.provider),
+                timeframe=timeframe,
+                price_component=PriceComponent(row.price_component),
+                start_time=_database_utc(row.start_time),
+                end_time=_database_utc(row.end_time),
+                open=row.open_price,
+                high=row.high_price,
+                low=row.low_price,
+                close=row.close_price,
+                volume=row.volume,
+            )
 
     def current_bar_rows_stream(
         self,
@@ -301,9 +328,21 @@ class MarketDataRepository:
         end: datetime,
         components: Sequence[PriceComponent],
         timeframe: Timeframe = Timeframe.M1,
-    ) -> Iterable[MarketBarModel]:
-        rows = session.scalars(
-            select(MarketBarModel)
+    ) -> Iterable[Any]:
+        rows = session.execute(
+            select(
+                MarketBarModel.id,
+                MarketBarModel.venue_instrument_id,
+                MarketBarModel.start_time,
+                MarketBarModel.end_time,
+                MarketBarModel.open_price,
+                MarketBarModel.high_price,
+                MarketBarModel.low_price,
+                MarketBarModel.close_price,
+                MarketBarModel.volume,
+                MarketBarModel.price_component,
+                MarketBarModel.is_current,
+            )
             .where(
                 MarketBarModel.venue_instrument_id == venue_instrument_id,
                 MarketBarModel.resolution == _encode_resolution(timeframe),
@@ -319,6 +358,10 @@ class MarketDataRepository:
                     (MarketBarModel.price_component == PriceComponent.ASK.value, 1),
                     else_=2,
                 ),
+            )
+            .execution_options(
+                stream_results=True,
+                max_row_buffer=_SNAPSHOT_MEMBERSHIP_BATCH_SIZE,
             )
         ).yield_per(_SNAPSHOT_MEMBERSHIP_BATCH_SIZE)
         yield from rows
@@ -331,13 +374,13 @@ class MarketDataRepository:
         end: datetime,
         components: Sequence[PriceComponent],
         timeframe: Timeframe = Timeframe.M1,
-    ) -> tuple[BarRange, ...]:
+    ) -> Iterable[BarRange]:
+        """Yield missing spans while retaining only the current row frontier."""
         wanted = tuple(sorted(set(components), key=lambda c: c.value))
         existing = self.current_bar_rows_stream(
             session, venue_instrument_id, start, end, wanted, timeframe
         )
         current = next(iter(existing), None)
-        ranges: list[BarRange] = []
         step = timedelta(minutes=1 if timeframe is Timeframe.M1 else 15)
         cursor = start
         while cursor < end:
@@ -347,24 +390,12 @@ class MarketDataRepository:
                 current = next(existing, None)
             missing = tuple(c for c in wanted if c not in present)
             if missing:
-                if (
-                    ranges
-                    and ranges[-1].end == cursor
-                    and ranges[-1].components == missing
-                ):
-                    ranges[-1] = BarRange(ranges[-1].start, cursor + step, missing)
-                else:
-                    ranges.append(BarRange(cursor, cursor + step, missing))
+                yield BarRange(cursor, cursor + step, missing)
             cursor += step
-        return tuple(ranges)
 
     def acquired_windows(
         self, session, venue_instrument_id, resolution, components, start, end
     ):
-        # Sparse acquisition reuse is deliberately an M1 execution rule. Native
-        # M15 gaps remain observable/strict even after a successful request.
-        if resolution is not Timeframe.M1:
-            return ()
         key = ",".join(sorted(c.value for c in components))
         return session.scalars(
                 select(HistoricalAcquisitionWindowModel)
@@ -562,6 +593,9 @@ class MarketDataRepository:
 class DatasetSnapshotRepository:
     """Atomic creation and immutable membership reads."""
 
+    def __init__(self) -> None:
+        self.last_v2_finalization_telemetry: dict[str, float | int] = {}
+
     def by_fingerprint(self, session: Session, fingerprint: str) -> DatasetSnapshot:
         """Load a snapshot descriptor without consulting mutable bar heads."""
         row = session.scalar(
@@ -754,15 +788,28 @@ class DatasetSnapshotRepository:
         # objects and made a month-long load spend most of its time in the
         # post-persistence snapshot phase.  Explicit values retain the same
         # database checks/triggers and make the operation one bounded unit.
-        def insert_batches(table, values):
+        batch_counts = {"analytical": 0, "execution": 0, "gap": 0}
+        stage_seconds: dict[str, float] = {}
+
+        def insert_batches(table, values, stage):
             batch = []
             for value in values:
                 batch.append(value)
                 if len(batch) == _SNAPSHOT_MEMBERSHIP_BATCH_SIZE:
+                    began = time.perf_counter()
                     session.execute(insert(table), batch)
+                    stage_seconds[stage] = (
+                        stage_seconds.get(stage, 0.0) + time.perf_counter() - began
+                    )
+                    batch_counts[stage] += 1
                     batch = []
             if batch:
+                began = time.perf_counter()
                 session.execute(insert(table), batch)
+                stage_seconds[stage] = (
+                    stage_seconds.get(stage, 0.0) + time.perf_counter() - began
+                )
+                batch_counts[stage] += 1
 
         fingerprint = V2FingerprintBuilder(metadata or {})
         analytical_count = 0
@@ -804,7 +851,9 @@ class DatasetSnapshotRepository:
                     "retrieved_at": snapshot.created_at,
                 }
 
-        insert_batches(DatasetSnapshotAnalyticalBarModel.__table__, analytical_rows())
+        insert_batches(
+            DatasetSnapshotAnalyticalBarModel.__table__, analytical_rows(), "analytical"
+        )
         execution_count = 0
         last_execution_by_component = {}
 
@@ -846,13 +895,19 @@ class DatasetSnapshotRepository:
                 }
 
         insert_batches(
-            DatasetSnapshotExecutionObservationModel.__table__, execution_rows()
+            DatasetSnapshotExecutionObservationModel.__table__,
+            execution_rows(),
+            "execution",
         )
         if gaps is None:
-            analytical_rows_for_gaps = session.scalars(
-                select(DatasetSnapshotAnalyticalBarModel)
+            analytical_rows_for_gaps = session.execute(
+                select(DatasetSnapshotAnalyticalBarModel.start_time)
                 .where(DatasetSnapshotAnalyticalBarModel.dataset_snapshot_id == row.id)
                 .order_by(DatasetSnapshotAnalyticalBarModel.sequence)
+                .execution_options(
+                    stream_results=True,
+                    max_row_buffer=_SNAPSHOT_MEMBERSHIP_BATCH_SIZE,
+                )
             ).yield_per(_SNAPSHOT_MEMBERSHIP_BATCH_SIZE)
 
             def generated_gaps():
@@ -869,7 +924,7 @@ class DatasetSnapshotRepository:
                             "classification": "NON_BLOCKING",
                             "affected_state": None,
                             "affected_event": None,
-                            "policy_version": "GAP_POLICY_V1",
+                            "policy_version": GAP_POLICY_V1,
                             "blocked": False,
                         }
                         cursor += timedelta(minutes=15)
@@ -885,7 +940,7 @@ class DatasetSnapshotRepository:
                         "classification": "NON_BLOCKING",
                         "affected_state": None,
                         "affected_event": None,
-                        "policy_version": "GAP_POLICY_V1",
+                        "policy_version": GAP_POLICY_V1,
                         "blocked": False,
                     }
                     cursor += timedelta(minutes=15)
@@ -894,12 +949,16 @@ class DatasetSnapshotRepository:
         else:
             gap_values = gaps
 
+        gap_count = 0
+
         def gap_rows():
+            nonlocal gap_count
             for sequence, gap in enumerate(gap_values, 1):
+                gap_count += 1
                 fingerprint.add("gap", gap)
                 yield {"dataset_snapshot_id": row.id, "sequence": sequence, **gap}
 
-        insert_batches(DatasetSnapshotGapModel.__table__, gap_rows())
+        insert_batches(DatasetSnapshotGapModel.__table__, gap_rows(), "gap")
         actual_fingerprint = fingerprint.hexdigest()
         if metadata is not None and (
             snapshot.fingerprint not in ("", "0" * 64)
@@ -908,8 +967,20 @@ class DatasetSnapshotRepository:
             raise ValueError("snapshot fingerprint does not match membership")
         summary = dict(snapshot.integrity_summary)
         summary.update(
-            analytical_count=analytical_count, execution_count=execution_count
+            analytical_count=analytical_count,
+            execution_count=execution_count,
         )
+        self.last_v2_finalization_telemetry = {
+            "analytical_rows": analytical_count,
+            "execution_rows": execution_count,
+            "gap_rows": gap_count,
+            "analytical_batches": batch_counts["analytical"],
+            "execution_batches": batch_counts["execution"],
+            "gap_batches": batch_counts["gap"],
+            "analytical_insert_seconds": stage_seconds.get("analytical", 0.0),
+            "execution_insert_seconds": stage_seconds.get("execution", 0.0),
+            "gap_insert_seconds": stage_seconds.get("gap", 0.0),
+        }
         return replace(
             snapshot, fingerprint=actual_fingerprint, integrity_summary=summary
         )
