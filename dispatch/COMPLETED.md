@@ -1,5 +1,27 @@
 # Completed
 
+<!-- completion-id: foundation-freeze-06-strategy-extensibility-proof -->
+## Foundation Freeze 06 — Strategy Extensibility Proof — completion record
+
+- **Date/status:** 2026-08-29 — terminal closure approved; targeted validation
+  and targeted review **PASS**; merged and pushed.
+- **Commit:** `25497d7` Complete Foundation Freeze 06 strategy extensibility
+  proof; merge commit `a23aa18`.
+- **Scope:** constrained generic Strategy parameter/state/evidence/market
+  contracts, Candle Confirmation Break v1 registration and behavior, immutable
+  Experiment/V2 execution and inspection proof, schema-driven UI, and preserved
+  EMA compatibility/provenance. No EMA source/fingerprint, migration,
+  checkpoint persistence, or PAPER/LIVE behavior changed.
+- **Validation:** targeted remediation validation **PASS**; R-001 through R-004
+  resolved; candidate PostgreSQL vertical regression and directly affected
+  Strategy/result evidence passed. No full matrix was rerun during final
+  remediation, per approval.
+- **Review:** `dispatch/workstreams/foundation-freeze-06-strategy-extensibility-proof/REVIEW.md`
+  — targeted review **PASS**; no unresolved Critical or Important findings.
+- **Git/state:** Feature branch pushed, merged into `main`, and `main` pushed.
+  `.codegraph/` and `frontend/.env.local` were preserved and excluded. Active
+  dispatch state cleared. Freeze 07 was not started.
+
 <!-- completion-id: foundation-freeze-05-trader-product-ui-completion -->
 ## Foundation Freeze 05 — Trader Product UI Completion — completion record
 
