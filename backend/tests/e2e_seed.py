@@ -11,9 +11,11 @@ from alembic.config import Config
 from sqlalchemy import create_engine, select, text, update
 from sqlalchemy.orm import Session
 
+from backend.experiments.runner import ExperimentRunner
 from backend.persistence.database import configure_utc_session_timezone
 from backend.persistence.experiment_repository import ExperimentRepository
 from backend.persistence.models import ExperimentModel
+from backend.strategies.production import create_production_strategy_registry
 from backend.tests.integration.test_golden_flows import _seed
 
 ROOT = Path(__file__).parents[2]
@@ -51,6 +53,30 @@ def main() -> None:
             )
             valid_experiment = session.get(ExperimentModel, valid_id)
             assert valid_experiment is not None
+            runner = ExperimentRunner(
+                strategy_registry=create_production_strategy_registry(ROOT)
+            )
+            assert runner.run(session, valid_id).status == "COMPLETED"
+            comparison_experiment = ExperimentRepository().create(
+                session,
+                strategy_version_id=valid_experiment.strategy_version_id,
+                dataset_snapshot_id=valid_experiment.dataset_snapshot_id,
+                venue_instrument_id=valid_experiment.venue_instrument_id,
+                trading_start=valid_experiment.trading_start,
+                trading_end=valid_experiment.trading_end,
+                starting_capital=valid_experiment.starting_capital,
+                risk_per_trade=valid_experiment.risk_per_trade,
+                parameter_snapshot=valid_experiment.parameter_snapshot,
+                risk_config=valid_experiment.risk_config,
+                simulation_config=valid_experiment.simulation_config,
+                model_version=valid_experiment.model_version,
+            )
+            ExperimentRepository().create_account_and_position(
+                session, comparison_experiment
+            )
+            assert (
+                runner.run(session, comparison_experiment.id).status == "COMPLETED"
+            )
             failed_experiment = ExperimentRepository().create(
                 session,
                 strategy_version_id=valid_experiment.strategy_version_id,
@@ -73,9 +99,11 @@ def main() -> None:
             )
             failed_id = failed_experiment.id
             _, zero_snapshot_id, _ = _seed(
-                session, "LONG", complete_execution=True
+                session, "LONG", complete_execution=True, m15_count=103
             )
-            invalid_id, invalid_snapshot_id, _ = _seed(session, "LONG")
+            # Keep the invalid snapshot's coverage facts distinct from the
+            # valid zero-Trade fixture; its sparse execution remains invalid.
+            invalid_id, invalid_snapshot_id, _ = _seed(session, "LONG", m15_count=104)
             # The test database may still contain the retired Phase 4 insert
             # trigger, which changes current-model inserts from PENDING to
             # RUNNING. Restore the intended command boundary for these E2E
@@ -92,7 +120,7 @@ def main() -> None:
                 update(ExperimentModel)
                 .where(
                     ExperimentModel.id.in_(
-                        (valid_id, failed_id, zero_experiment.id, invalid_id)
+                        (failed_id, zero_experiment.id, invalid_id)
                     )
                 )
                 .values(status="PENDING")

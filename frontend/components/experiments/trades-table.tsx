@@ -9,6 +9,7 @@ import {
   text,
 } from './shared';
 import type { Json } from './shared';
+import { useDisplayTimeZone } from '../../app/providers';
 export function TradesTable({
   id,
   trades,
@@ -20,6 +21,7 @@ export function TradesTable({
   error?: string;
   retry?: () => void;
 }) {
+  const { timeZone } = useDisplayTimeZone();
   return error ? (
     <p role="status" className="text-atlas-negative">
       {error}
@@ -62,8 +64,12 @@ export function TradesTable({
                   </Link>
                 </td>
                 <td className="px-4 py-3">{text(t.direction)}</td>
-                <td className="px-4 py-3">{dateLabel(t.opened_at)}</td>
-                <td className="px-4 py-3">{dateLabel(t.closed_at)}</td>
+                <td className="px-4 py-3">
+                  {dateLabel(t.opened_at, timeZone)}
+                </td>
+                <td className="px-4 py-3">
+                  {dateLabel(t.closed_at, timeZone)}
+                </td>
                 <td className="px-4 py-3 tabular-nums">
                   {priceLabel(t.entry_price)}
                 </td>

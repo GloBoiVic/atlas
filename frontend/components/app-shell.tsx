@@ -41,18 +41,29 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               aria-label="Primary"
               className="flex items-center gap-1 overflow-x-auto"
             >
-              {navigation.map(({ label, href, icon: Icon, disabled }) => (
-                <Link
-                  key={label}
-                  href={href}
-                  aria-disabled={disabled}
-                  tabIndex={disabled ? -1 : undefined}
-                  className={`nav-link ${href !== '#' && pathname.startsWith(href) && !disabled ? 'nav-link-active' : ''} ${disabled ? 'nav-link-disabled' : ''}`}
-                >
-                  <Icon aria-hidden className="size-4" />
-                  {label}
-                </Link>
-              ))}
+              {navigation.map(({ label, href, icon: Icon, disabled }) =>
+                disabled ? (
+                  <span
+                    key={label}
+                    aria-disabled="true"
+                    className="nav-link nav-link-disabled"
+                    title={`${label} is planned for a later Atlas phase`}
+                  >
+                    <Icon aria-hidden className="size-4" />
+                    {label}
+                    <span className="sr-only"> — future capability</span>
+                  </span>
+                ) : (
+                  <Link
+                    key={label}
+                    href={href}
+                    className={`nav-link ${pathname.startsWith(href) ? 'nav-link-active' : ''}`}
+                  >
+                    <Icon aria-hidden className="size-4" />
+                    {label}
+                  </Link>
+                ),
+              )}
             </nav>
           </div>
           <div className="flex shrink-0 items-center gap-4 text-sm">
@@ -77,6 +88,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </div>
       </header>
+      <div className="border-b border-atlas-border bg-atlas-background">
+        <div className="mx-auto flex max-w-[1440px] flex-wrap items-center gap-x-5 gap-y-1 px-6 py-2.5 text-xs lg:px-10">
+          <span className="font-semibold uppercase tracking-[0.14em] text-atlas-primary">
+            Historical research
+          </span>
+          <span className="text-atlas-foreground-muted">
+            Experiments are available now
+          </span>
+          <span className="text-atlas-foreground-disabled" aria-hidden>
+            /
+          </span>
+          <span className="text-atlas-foreground-disabled">
+            PAPER and LIVE are future-only
+          </span>
+        </div>
+      </div>
       <main className="mx-auto max-w-[1440px] px-6 py-12 lg:px-10">
         <p className="mb-6 text-xs text-atlas-foreground-muted" role="status">
           Times shown in {timeZone}

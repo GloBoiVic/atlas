@@ -47,6 +47,14 @@ class ExperimentCreateRequest(PeriodRequest):
         return str(value)
 
 
+class ExperimentStrategyVersionMarketRequirementsResponse(StrictModel):
+    instrument: str
+    resolution: str
+    price_component: str
+    required_historical_context_bars: int
+    completed_only: bool
+
+
 class ExperimentStrategyVersionOptionResponse(StrictModel):
     id: UUID
     strategy_key: str
@@ -61,6 +69,7 @@ class ExperimentStrategyVersionOptionResponse(StrictModel):
     architecture: str
     execution_available: bool
     unavailable_reason: str | None
+    market_requirements: ExperimentStrategyVersionMarketRequirementsResponse
 
 
 class ExperimentDatasetSnapshotOptionResponse(StrictModel):

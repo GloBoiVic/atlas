@@ -137,18 +137,21 @@ def _failure(row: ExperimentModel) -> dict[str, Any] | None:
 
 
 def _identity(
-    db: Session, row: ExperimentModel, strategy_version: Any = None
+    db: Session,
+    row: ExperimentModel,
+    strategy_version: Any = None,
+    *,
+    snapshot: Any = None,
+    venue: Any = None,
+    instrument: Any = None,
 ) -> dict[str, Any]:
     """Expose immutable Experiment identity assembled from persisted facts."""
-    snapshot = db.get(DatasetSnapshotModel, row.dataset_snapshot_id)
-    venue = (
-        db.get(VenueInstrumentModel, snapshot.venue_instrument_id)
-        if snapshot is not None
-        else None
-    )
-    instrument = (
-        db.get(InstrumentModel, venue.instrument_id) if venue is not None else None
-    )
+    if snapshot is None:
+        snapshot = db.get(DatasetSnapshotModel, row.dataset_snapshot_id)
+    if venue is None and snapshot is not None:
+        venue = db.get(VenueInstrumentModel, snapshot.venue_instrument_id)
+    if instrument is None and venue is not None:
+        instrument = db.get(InstrumentModel, venue.instrument_id)
     components = snapshot.components if snapshot is not None else []
     strategy = (
         None
@@ -321,20 +324,16 @@ def create_experiment_router(
         versions = []
         for row in strategy_repo.list_all_versions(db):
             try:
-                configuration.registry.get(
+                registration = configuration.registry.get(
                     row.strategy.strategy_key,
                     implementation_key=row.implementation_key,
                     source_fingerprint=row.source_fingerprint,
                 )
-                execution_available = True
-                unavailable_reason = None
             except StrategyVersionUnavailableError:
-                execution_available = False
-                unavailable_reason = "No exact local implementation is registered for this StrategyVersion."
-            # Configuration options are executable catalog entries, not a
-            # version-suffix allowlist.  This keeps the API aligned with the
-            # exact immutable StrategyVersion provenance in the registry.
-            if not execution_available:
+                # Configuration options are executable catalog entries, not a
+                # version-suffix allowlist.  This keeps the API aligned with
+                # the exact immutable StrategyVersion provenance in the
+                # registry.
                 continue
             versions.append(
                 {
@@ -349,8 +348,15 @@ def create_experiment_router(
                     "parameterSchema": row.parameter_schema,
                     "requiredHistoricalContextBars": row.required_historical_context_bars,
                     "architecture": "HISTORICAL_EXECUTION",
-                    "executionAvailable": execution_available,
-                    "unavailableReason": unavailable_reason,
+                    "executionAvailable": True,
+                    "unavailableReason": None,
+                    "marketRequirements": {
+                        "instrument": registration.definition.required_instrument.value,
+                        "resolution": registration.definition.required_resolution.value,
+                        "priceComponent": registration.definition.required_price_component.value,
+                        "requiredHistoricalContextBars": row.required_historical_context_bars,
+                        "completedOnly": registration.definition.completed_only,
+                    },
                 }
             )
         snapshots = []
@@ -482,24 +488,49 @@ def create_experiment_router(
         before_created_at = before_id = None
         if cursor:
             before_created_at, before_id = _decode_cursor(cursor)
-        rows = results.list(
+        projections = results.list_projection(
             db,
             limit,
             before_created_at=before_created_at,
             before_id=before_id,
         )
+        rows = tuple(item.experiment for item in projections)
         next_cursor = _cursor(rows[-1]) if len(rows) == limit else None
+        experiment_ids = tuple(row.id for row in rows)
+        result_rows = results.list_result_rows(db, experiment_ids)
+        gap_rows = results.list_gap_decision_rows(db, experiment_ids)
         items = []
-        for row in rows:
-            composed = results.detail(db, row.id)
+        for projection in projections:
+            row = projection.experiment
+            # Result rows are authoritative only after the Experiment reaches
+            # COMPLETED. Do not let an orphaned/premature persisted row bypass
+            # the completed-only result contract on the optimized list path.
+            result = (
+                result_rows.get(row.id) if row.status == "COMPLETED" else None
+            )
+            if row.status == "COMPLETED" and result is None:
+                raise _error(
+                    "INCOMPLETE_RESULT",
+                    "Completed Experiment result is unavailable",
+                    http_status=409,
+                )
             items.append(
                 _detail(
                     row,
-                    _metrics_payload(composed["metrics"]),
-                    composed["result"],
-                    results.gap_decisions(db, row.id),
-                    composed.get("strategy_version"),
-                    _identity(db, row, composed.get("strategy_version")),
+                    _metrics_payload(results.persisted_metrics(result))
+                    if result is not None
+                    else None,
+                    result,
+                    gap_rows.get(row.id, ()),
+                    projection.strategy_version,
+                    _identity(
+                        db,
+                        row,
+                        projection.strategy_version,
+                        snapshot=projection.snapshot,
+                        venue=projection.venue,
+                        instrument=projection.instrument,
+                    ),
                 )
             )
         return {"items": items, "nextCursor": next_cursor}

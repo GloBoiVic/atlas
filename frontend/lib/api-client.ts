@@ -150,7 +150,9 @@ export const atlasApi = {
     );
   },
   configurationOptions: () =>
-    request<unknown>('/api/v1/experiments/configuration-options'),
+    request<components['schemas']['ExperimentConfigurationOptionsResponse']>(
+      '/api/v1/experiments/configuration-options',
+    ),
   validateCoverage: (body: components['schemas']['PeriodRequest']) =>
     request<unknown>('/api/v1/experiments/coverage-validations', {
       method: 'POST',

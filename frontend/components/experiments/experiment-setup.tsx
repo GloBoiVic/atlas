@@ -54,6 +54,7 @@ import {
   scalarFields,
   parameterDefaults,
   snapshotLabel,
+  snapshotOptionState,
   diagnosticLabel,
   formattedMetric,
   metricState,
@@ -67,6 +68,8 @@ import { StatusBadge, ErrorPanel } from './load-status';
 
 export function ExperimentForm() {
   const router = useRouter();
+  const search = useSearchParams();
+  const requestedStrategyVersion = search.get('strategyVersionId') ?? '';
   const [options, setOptions] = useState<Json>({});
   const [formError, setFormError] = useState<unknown>('');
   const [coverage, setCoverage] = useState<Json | null>(null);
@@ -108,13 +111,20 @@ export function ExperimentForm() {
         const preferred = [...available].sort(
           (a, b) => Number(object(b).version) - Number(object(a).version),
         )[0];
-        setStrategy(text(object(preferred).id, ''));
-        setParameters(parameterDefaults(preferred));
-        setSnapshot(text(object(snapshots[0]).id, ''));
+        const requested = available.find(
+          (value) => text(object(value).id, '') === requestedStrategyVersion,
+        );
+        const initialVersion = requested ?? preferred;
+        setStrategy(text(object(initialVersion).id, ''));
+        setParameters(parameterDefaults(initialVersion));
+        const initialSnapshot = snapshots.find(
+          (value) => !snapshotOptionState(object(value), snapshots).disabled,
+        );
+        setSnapshot(text(object(initialSnapshot).id, ''));
       })
       .catch((error) => setFormError(error))
       .finally(() => setOptionsLoading(false));
-  }, []);
+  }, [requestedStrategyVersion]);
   const refreshOptions = useCallback(async () => {
     const value = object(await atlasApi.configurationOptions());
     setOptions(value);
@@ -353,9 +363,15 @@ export function ExperimentForm() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void refreshOptions().then((items) => {
       const id = text(object(historicalLoad?.snapshot).id, '');
-      if (id && items.some((item) => text(object(item).id) === id))
-        setSnapshot(id);
-      void validate(id);
+      const completedSnapshot = items.find(
+        (item) => text(object(item).id) === id,
+      );
+      const completedSnapshotSelectable = Boolean(
+        completedSnapshot &&
+        !snapshotOptionState(completedSnapshot, items).disabled,
+      );
+      if (id && completedSnapshotSelectable) setSnapshot(id);
+      if (id && completedSnapshotSelectable) void validate(id);
     });
     // Completion is a durable event; this effect intentionally runs once per request id.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -475,6 +491,13 @@ export function ExperimentForm() {
       object(historicalLoad?.snapshot),
   );
   const selectedSnapshotIntegrity = object(selectedSnapshot.integrity);
+  const snapshotSelectionBlocked = Boolean(
+    snapshot && snapshotOptionState(selectedSnapshot, snapshots).disabled,
+  );
+  const snapshotOptions = snapshots.map((value) => {
+    const item = object(value);
+    return { item, ...snapshotOptionState(item, snapshots) };
+  });
   const proofSource = object(historicalLoad?.source ?? capability);
   const proofFingerprint = text(selectedSnapshot.fingerprint, 'awaiting data');
   const proofStatus = historicalLoad
@@ -489,7 +512,7 @@ export function ExperimentForm() {
     <AppShell>
       <section
         aria-labelledby="new-experiment-heading"
-        className="max-w-4xl space-y-8"
+        className="flex max-w-4xl flex-col gap-8"
       >
         <header>
           <Link
@@ -506,16 +529,24 @@ export function ExperimentForm() {
             New Experiment
           </h1>
           <p className="mt-2 text-sm text-atlas-foreground-muted">
-            Strategy configuration and historical data readiness
+            StrategyVersion → requested period &amp; data readiness →
+            configuration → review &amp; run
           </p>
         </header>
         {Boolean(formError) && <ErrorPanel error={formError} />}
-        <form onSubmit={submit} className="space-y-6">
-          <fieldset className="space-y-4 rounded-lg border border-atlas-border bg-atlas-surface p-5">
-            <legend className="px-1 text-base font-medium">Strategy</legend>
+        <form onSubmit={submit} className="flex flex-col gap-6">
+          <fieldset className="flex flex-col gap-4 rounded-lg border border-atlas-border bg-atlas-surface p-5">
+            <legend className="px-1 text-base font-medium">
+              1 · StrategyVersion
+            </legend>
+            <p className="max-w-2xl text-sm leading-6 text-atlas-foreground-muted">
+              Start with the immutable methodology snapshot that will be
+              captured in the Experiment. Parameter changes belong to this run;
+              they never mutate the StrategyVersion.
+            </p>
             <div className="grid gap-4 md:grid-cols-2">
               <label className="space-y-2 text-sm font-medium">
-                Strategy
+                StrategyVersion
                 <Select
                   required
                   disabled={loadActive}
@@ -530,7 +561,7 @@ export function ExperimentForm() {
                   }}
                   className="form-control"
                 >
-                  <option value="">Choose a Strategy</option>
+                  <option value="">Choose a StrategyVersion</option>
                   {versions.map((value) => {
                     const item = object(value);
                     return (
@@ -556,29 +587,41 @@ export function ExperimentForm() {
                   </span>
                 )}
               </label>
-              <label className="space-y-2 text-sm font-medium">
-                Data
-                <Select
-                  required
-                  disabled={loadActive}
-                  value={snapshot}
-                  onChange={(e) => {
-                    setSnapshot(e.target.value);
-                    invalidate();
-                  }}
-                  className="form-control"
-                >
-                  <option value="">Choose historical data</option>
-                  {snapshots.map((value) => {
-                    const item = object(value);
-                    return (
-                      <option key={text(item.id)} value={text(item.id)}>
-                        {snapshotLabel(item)}
-                      </option>
-                    );
-                  })}
-                </Select>
-              </label>
+            </div>
+            <div className="grid gap-4 border-t border-atlas-border pt-4 text-sm sm:grid-cols-3">
+              <div>
+                <p className="text-xs text-atlas-foreground-muted">Market</p>
+                <p className="font-medium">
+                  {text(
+                    object(selectedVersion.marketRequirements).instrument,
+                    'Unavailable from this StrategyVersion response',
+                  )}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-atlas-foreground-muted">Analysis</p>
+                <p className="font-medium">
+                  {text(
+                    object(selectedVersion.marketRequirements).resolution,
+                    text(
+                      selectedVersion.timeframe,
+                      'Unavailable from this StrategyVersion response',
+                    ),
+                  )}{' '}
+                  {text(
+                    object(selectedVersion.marketRequirements).priceComponent,
+                    'Unavailable from this StrategyVersion response',
+                  )}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-atlas-foreground-muted">Warm-up</p>
+                <p className="font-medium">
+                  {Number.isFinite(requiredHistoricalContextBars)
+                    ? `${requiredHistoricalContextBars} completed bars`
+                    : 'Requirement unavailable'}
+                </p>
+              </div>
             </div>
             {selectedVersion.executionAvailable === false && (
               <p className="rounded-md border border-atlas-warning bg-atlas-warning-muted p-3 text-sm text-atlas-warning">
@@ -588,76 +631,49 @@ export function ExperimentForm() {
               </p>
             )}
           </fieldset>
-          {schema.length > 0 && (
-            <fieldset className="space-y-4 rounded-lg border border-atlas-border bg-atlas-surface p-5">
-              <legend className="px-1 text-base font-medium">
-                Strategy settings
-              </legend>
-              <p className="max-w-2xl text-sm leading-6 text-atlas-foreground-muted">
-                Values are captured in this Experiment only. Enter a value
-                within the bounds defined by the selected StrategyVersion.
-              </p>
-              <div className="grid gap-4 md:grid-cols-2">
-                {schema.map((value) => {
-                  const descriptor = object(value);
-                  const key = text(descriptor.key, '');
-                  const fixed =
-                    Number(descriptor.min) === Number(descriptor.max);
-                  const error = text(parameterErrors[key], '');
-                  return (
-                    <label key={key} className="space-y-2 text-sm font-medium">
-                      <span className="block">
-                        {text(descriptor.label, key)}
-                      </span>
-                      <input
-                        aria-describedby={`${key}-hint ${key}-error`}
-                        aria-invalid={Boolean(error)}
-                        className={`form-control ${fixed ? 'bg-atlas-surface-hover text-atlas-foreground-muted' : ''}`}
-                        inputMode={
-                          text(descriptor.type) === 'integer'
-                            ? 'numeric'
-                            : 'decimal'
-                        }
-                        readOnly={fixed}
-                        type="text"
-                        value={parameters[key] ?? ''}
-                        onChange={(event) => {
-                          setParameters((current) => ({
-                            ...current,
-                            [key]: event.target.value,
-                          }));
-                          invalidate();
-                        }}
-                      />
-                      <span
-                        id={`${key}-hint`}
-                        className="block text-xs font-normal text-atlas-foreground-muted"
-                      >
-                        {fixed
-                          ? 'Fixed by methodology.'
-                          : `${text(descriptor.type)} · ${text(descriptor.min)} to ${text(descriptor.max)}`}
-                        {text(descriptor.description, '')
-                          ? ` · ${text(descriptor.description, '')}`
-                          : ''}
-                      </span>
-                      {error && (
-                        <span
-                          id={`${key}-error`}
-                          className="block text-xs font-normal text-atlas-negative"
-                        >
-                          {error}
-                        </span>
-                      )}
-                    </label>
-                  );
-                })}
-              </div>
-            </fieldset>
-          )}
-          <fieldset className="space-y-4 rounded-lg border border-atlas-border bg-atlas-surface p-5">
+          <fieldset className="flex flex-col gap-4 rounded-lg border border-atlas-border bg-atlas-surface p-5">
             <legend className="px-1 text-base font-medium">
-              Requested period
+              2 · Requested period &amp; data readiness
             </legend>
+            <p className="max-w-2xl text-sm leading-6 text-atlas-foreground-muted">
+              Choose the UTC trading window, then confirm native M15 MID and
+              sparse M1 BID/ASK coverage before configuring the run.
+            </p>
+            <label className="max-w-xl space-y-2 text-sm font-medium">
+              DatasetSnapshot
+              <Select
+                required
+                disabled={loadActive}
+                value={snapshot}
+                onChange={(e) => {
+                  setSnapshot(e.target.value);
+                  invalidate();
+                }}
+                className="form-control"
+              >
+                <option value="">Choose historical data</option>
+                {snapshotOptions.map(({ item, label, disabled }) => (
+                  <option
+                    key={text(item.id)}
+                    value={text(item.id)}
+                    disabled={disabled}
+                  >
+                    {label}
+                  </option>
+                ))}
+              </Select>
+              {snapshotOptions.some(({ disabled }) => disabled) && (
+                <span className="block text-xs font-normal text-atlas-warning">
+                  Some snapshots are unavailable because their visible coverage
+                  facts are identical. Choose an unambiguous snapshot before
+                  validating or running.
+                </span>
+              )}
+              <span className="block text-xs font-normal text-atlas-foreground-muted">
+                Atlas captures the selected immutable snapshot in the
+                Experiment.
+              </span>
+            </label>
             <section
               aria-labelledby="available-data-heading"
               className="rounded-md border border-atlas-border bg-atlas-surface-hover p-4 text-sm"
@@ -841,29 +857,32 @@ export function ExperimentForm() {
               </div>
             )}
           </fieldset>
-          {/* 3-step directions — makes the month flow impossible to miss */}
           <div className="rounded-lg border border-atlas-border bg-atlas-surface p-4">
             <div className="flex flex-wrap items-center gap-2 text-sm">
-              <span
-                className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium ${status === 'COMPLETED' ? 'bg-atlas-positive-muted text-atlas-positive' : status === 'PENDING' || status === 'RUNNING' ? 'bg-atlas-primary-muted text-atlas-primary' : 'bg-atlas-surface-selected text-atlas-foreground-muted'}`}
-              >
-                1. Pick dates (UTC)
+              <span className="inline-flex items-center gap-1 rounded-full bg-atlas-positive-muted px-3 py-1 text-xs font-medium text-atlas-positive">
+                {strategyReady
+                  ? '1. StrategyVersion selected'
+                  : '1. Select StrategyVersion'}
+              </span>
+              <span aria-hidden className="text-atlas-foreground-disabled">
+                →
+              </span>
+              <span className="inline-flex items-center gap-1 rounded-full bg-atlas-primary-muted px-3 py-1 text-xs font-medium text-atlas-primary">
+                2. Period &amp; data readiness
+              </span>
+              <span aria-hidden className="text-atlas-foreground-disabled">
+                →
+              </span>
+              <span className="inline-flex items-center gap-1 rounded-full bg-atlas-surface-selected px-3 py-1 text-xs font-medium text-atlas-foreground-muted">
+                3. Configuration
               </span>
               <span aria-hidden className="text-atlas-foreground-disabled">
                 →
               </span>
               <span
-                className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium ${status === 'COMPLETED' ? 'bg-atlas-positive-muted text-atlas-positive' : status === 'PENDING' || status === 'RUNNING' ? 'bg-atlas-warning-muted text-atlas-warning animate-pulse' : 'bg-atlas-surface-selected text-atlas-foreground-muted'}`}
+                className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium ${coverage?.valid && !loadBlocksCreation ? 'bg-atlas-positive-muted text-atlas-positive' : 'bg-atlas-surface-selected text-atlas-foreground-muted'}`}
               >
-                2. Prepare data
-              </span>
-              <span aria-hidden className="text-atlas-foreground-disabled">
-                →
-              </span>
-              <span
-                className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium ${coverage?.valid && !loadBlocksCreation ? 'bg-atlas-positive text-atlas-positive-foreground animate-pulse' : 'bg-atlas-surface-selected text-atlas-foreground-muted'}`}
-              >
-                3. Run Experiment
+                4. Review &amp; run
               </span>
             </div>
             <p className="mt-2 text-xs text-atlas-foreground-muted">
@@ -1076,9 +1095,70 @@ export function ExperimentForm() {
               </div>
             </div>
           </section>
-          <fieldset className="space-y-4 rounded-lg border border-atlas-border bg-atlas-surface p-5">
+          <fieldset className="flex flex-col gap-4 rounded-lg border border-atlas-border bg-atlas-surface p-5">
             <legend className="px-1 text-base font-medium">
-              Strategy settings
+              3 · Strategy &amp; risk configuration
+            </legend>
+            <p className="max-w-2xl text-sm leading-6 text-atlas-foreground-muted">
+              Values are captured in this Experiment only. Enter a value within
+              the bounds defined by the selected StrategyVersion.
+            </p>
+            <div className="grid gap-4 md:grid-cols-2">
+              {schema.map((value) => {
+                const descriptor = object(value);
+                const key = text(descriptor.key, '');
+                const fixed = Number(descriptor.min) === Number(descriptor.max);
+                const error = text(parameterErrors[key], '');
+                return (
+                  <label key={key} className="space-y-2 text-sm font-medium">
+                    <span className="block">{text(descriptor.label, key)}</span>
+                    <input
+                      aria-describedby={`${key}-hint ${key}-error`}
+                      aria-invalid={Boolean(error)}
+                      className={`form-control ${fixed ? 'bg-atlas-surface-hover text-atlas-foreground-muted' : ''}`}
+                      inputMode={
+                        text(descriptor.type) === 'integer'
+                          ? 'numeric'
+                          : 'decimal'
+                      }
+                      readOnly={fixed}
+                      type="text"
+                      value={parameters[key] ?? ''}
+                      onChange={(event) => {
+                        setParameters((current) => ({
+                          ...current,
+                          [key]: event.target.value,
+                        }));
+                        invalidate();
+                      }}
+                    />
+                    <span
+                      id={`${key}-hint`}
+                      className="block text-xs font-normal text-atlas-foreground-muted"
+                    >
+                      {fixed
+                        ? 'Fixed by methodology.'
+                        : `${text(descriptor.type)} · ${text(descriptor.min)} to ${text(descriptor.max)}`}
+                      {text(descriptor.description, '')
+                        ? ` · ${text(descriptor.description, '')}`
+                        : ''}
+                    </span>
+                    {error && (
+                      <span
+                        id={`${key}-error`}
+                        className="block text-xs font-normal text-atlas-negative"
+                      >
+                        {error}
+                      </span>
+                    )}
+                  </label>
+                );
+              })}
+            </div>
+          </fieldset>
+          <fieldset className="flex flex-col gap-4 rounded-lg border border-atlas-border bg-atlas-surface p-5">
+            <legend className="px-1 text-base font-medium">
+              Account &amp; risk configuration
             </legend>
             <div className="grid gap-4 md:grid-cols-2">
               <label className="space-y-2 text-sm font-medium">
@@ -1116,7 +1196,7 @@ export function ExperimentForm() {
           </fieldset>
           <fieldset className="space-y-4 rounded-lg border border-atlas-border bg-atlas-surface p-5">
             <legend className="px-1 text-base font-medium">
-              Trading costs
+              Simulation costs
             </legend>
             <div className="grid gap-4 md:grid-cols-2">
               <label className="space-y-2 text-sm font-medium">
@@ -1171,7 +1251,42 @@ export function ExperimentForm() {
                 aria-hidden
               />
               <div>
-                <h2 className="font-medium">Coverage validation</h2>
+                <h2 className="font-medium">4 · Review &amp; run Experiment</h2>
+                <p className="mt-1 text-xs text-atlas-foreground-muted">
+                  Coverage is the final gate. Atlas will capture these immutable
+                  inputs only after the selected period validates successfully.
+                </p>
+                <dl className="mt-4 grid gap-3 border-y border-atlas-border py-3 text-sm sm:grid-cols-3">
+                  <div>
+                    <dt className="text-atlas-foreground-muted">
+                      StrategyVersion
+                    </dt>
+                    <dd className="font-medium">
+                      {text(selectedVersion.displayName, 'Not selected')}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-atlas-foreground-muted">
+                      Requested period
+                    </dt>
+                    <dd className="font-medium">
+                      {start && end
+                        ? `${dateLabel(iso(start), 'UTC')} → ${dateLabel(iso(end), 'UTC')}`
+                        : 'Not selected'}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-atlas-foreground-muted">
+                      DatasetSnapshot
+                    </dt>
+                    <dd className="font-medium">
+                      {snapshot
+                        ? snapshotLabel(selectedSnapshot)
+                        : 'Not selected'}
+                    </dd>
+                  </div>
+                </dl>
+                <h3 className="mt-4 font-medium">Coverage validation</h3>
                 {!coverage ? (
                   <p className="mt-1 text-sm text-atlas-foreground-muted">
                     Validate the selected period to check required historical
@@ -1238,6 +1353,7 @@ export function ExperimentForm() {
                 validating ||
                 !strategy ||
                 !snapshot ||
+                snapshotSelectionBlocked ||
                 !start ||
                 !end ||
                 ['PENDING', 'RUNNING'].includes(
@@ -1258,9 +1374,11 @@ export function ExperimentForm() {
               title={
                 !coverage?.valid
                   ? 'Validate coverage first'
-                  : loadBlocksCreation
-                    ? 'Historical load must complete successfully first'
-                    : undefined
+                  : snapshotSelectionBlocked
+                    ? 'This snapshot cannot be selected because its visible facts are ambiguous'
+                    : loadBlocksCreation
+                      ? 'Historical load must complete successfully first'
+                      : undefined
               }
               className={
                 coverage?.valid && !loadBlocksCreation && !submitting
@@ -1271,6 +1389,7 @@ export function ExperimentForm() {
                 submitting ||
                 !coverage?.valid ||
                 loadBlocksCreation ||
+                snapshotSelectionBlocked ||
                 selectedVersion.executionAvailable === false ||
                 Object.keys(parameterErrors).length > 0
               }

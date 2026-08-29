@@ -100,10 +100,9 @@ def create_strategy_router(
     @router.get("", response_model=StrategyCatalogResponse)
     def listing(db: Session = Depends(session)) -> dict[str, Any]:
         items = []
-        for strategy in repo.list_strategy_summaries(db):
-            versions = repo.list_versions(db, strategy.strategy_key)
-            usage = repo.strategy_usage(db, strategy.id)
-            latest = versions[-1] if versions else None
+        for projection in repo.list_catalog_projections(db):
+            strategy = projection.strategy
+            latest = projection.latest_version
             items.append(
                 {
                     "strategyKey": strategy.strategy_key,
@@ -116,9 +115,9 @@ def create_strategy_router(
                     }
                     if latest
                     else None,
-                    "versionCount": len(versions),
-                    "experimentCount": usage.count,
-                    "lastExperimentAt": _utc(usage.last_used_at),
+                    "versionCount": projection.version_count,
+                    "experimentCount": projection.experiment_count,
+                    "lastExperimentAt": _utc(projection.last_experiment_at),
                 }
             )
         return {"items": items}

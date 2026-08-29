@@ -133,5 +133,6 @@ describe('Phase 6 strategy and comparison views', () => {
       expect(mocks.compareExperiments).toHaveBeenCalledWith(['one', 'two']),
     );
     expect(screen.getByText('UNAVAILABLE · ZERO_TRADES')).toBeInTheDocument();
+    expect(screen.queryByText(/winner|best|optimal/i)).not.toBeInTheDocument();
   });
 });

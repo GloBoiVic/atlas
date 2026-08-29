@@ -6,7 +6,7 @@ from threading import Thread
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine, event, func, select
 from sqlalchemy.orm import Session
 
 from backend.api.app import create_app
@@ -77,6 +77,36 @@ def test_dataset_snapshot_option_accepts_v1_and_v2_schema_aliases():
         )
         assert value.snapshot_schema == schema
         assert value.model_dump(by_alias=True)["snapshotSchema"] == schema
+
+
+def test_configuration_options_preserve_strategy_version_market_requirements(
+    database_url,
+):
+    engine = configure_utc_session_timezone(create_engine(database_url))
+    try:
+        experiment_id = _complete_experiment(database_url, direction="LONG")
+        with Session(engine) as session:
+            experiment = session.get(ExperimentModel, experiment_id)
+            assert experiment is not None
+            version_id = experiment.strategy_version_id
+        app = create_app(engine=engine, registry=_registry())
+        with TestClient(app) as client:
+            response = client.get("/api/v1/experiments/configuration-options")
+            assert response.status_code == 200, response.text
+            selected = next(
+                item
+                for item in response.json()["strategyVersions"]
+                if item["id"] == str(version_id)
+            )
+            assert selected["marketRequirements"] == {
+                "instrument": "EUR/USD",
+                "resolution": "15m",
+                "priceComponent": "MID",
+                "requiredHistoricalContextBars": 100,
+                "completedOnly": True,
+            }
+    finally:
+        engine.dispose()
 
 
 def test_http_status_poll_observes_running_while_run_is_gated(database_url):
@@ -251,12 +281,26 @@ def test_completed_experiment_list_reuses_detail_metrics_and_pagination(database
         assert detail_metrics["tradeCount"]["state"] == "VALUE"
         assert detail_metrics["tradeCount"]["value"] == "0"
 
-        listing = client.get("/api/v1/experiments?limit=1")
+        statements: list[str] = []
+
+        def record_select(
+            _conn, _cursor, statement, _parameters, _context, _executemany
+        ):
+            if statement.lstrip().upper().startswith("SELECT"):
+                statements.append(statement)
+
+        event.listen(engine, "before_cursor_execute", record_select)
+        try:
+            listing = client.get("/api/v1/experiments?limit=1")
+        finally:
+            event.remove(engine, "before_cursor_execute", record_select)
         assert listing.status_code == 200
         item = next(
             row for row in listing.json()["items"] if row["id"] == str(experiment_id)
         )
         assert item["metrics"] == detail_metrics
+        assert item["identity"] == detail.json()["identity"]
+        assert len(statements) == 3
         assert listing.json()["nextCursor"]
 
         page = client.get(
@@ -264,6 +308,78 @@ def test_completed_experiment_list_reuses_detail_metrics_and_pagination(database
         )
         assert page.status_code == 200
         assert all(row["id"] != str(experiment_id) for row in page.json()["items"])
+    engine.dispose()
+
+
+def test_non_completed_experiment_list_hides_persisted_result(database_url):
+    engine = configure_utc_session_timezone(create_engine(database_url))
+    with Session(engine) as session, session.begin():
+        experiment_id, _, _ = _seed(session, "LONG")
+        ExperimentRepository().create_result(
+            session,
+            experiment_id=experiment_id,
+            result_schema_version="TEST_RESULT_V1",
+            trade_count=1,
+            ambiguous_trade_count=0,
+            gross_pnl="100",
+            commission_cost="0",
+            financing_cost="0",
+            modeled_net_pnl="100",
+            ending_balance="10100",
+            ending_equity="10100",
+            net_return="0.01",
+            max_drawdown_amount="0",
+            max_drawdown_percent="0",
+            financing_disclosure="EXCLUDED",
+            completed_market_time=START + timedelta(days=2),
+            output_fingerprint="2" * 64,
+            metric_states={
+                "net_return": {"state": "VALUE", "reason": None},
+                "max_drawdown_amount": {"state": "VALUE", "reason": None},
+                "max_drawdown_percent": {"state": "VALUE", "reason": None},
+                "sharpe_ratio": {"state": "VALUE", "reason": None},
+                "profit_factor": {"state": "VALUE", "reason": None},
+                "win_rate": {"state": "VALUE", "reason": None},
+                "expectancy_net_pnl": {"state": "VALUE", "reason": None},
+            },
+        )
+
+    app = create_app(engine=engine, registry=_registry(), runner=GatedRunner())
+    with TestClient(app) as client:
+        response = client.get("/api/v1/experiments?limit=1")
+        assert response.status_code == 200, response.text
+        item = next(
+            row for row in response.json()["items"] if row["id"] == str(experiment_id)
+        )
+        assert item["status"] != "COMPLETED"
+        assert item["metrics"] is None
+        assert item["result"] is None
+        assert item["resultQuality"] is None
+        assert item["resultSchemaVersion"] is None
+    engine.dispose()
+
+
+def test_strategy_catalog_projection_uses_one_bounded_read(database_url):
+    engine = configure_utc_session_timezone(create_engine(database_url))
+    _create(engine)
+    app = create_app(engine=engine, registry=_registry())
+    with TestClient(app) as client:
+        statements: list[str] = []
+
+        def record_select(
+            _conn, _cursor, statement, _parameters, _context, _executemany
+        ):
+            if statement.lstrip().upper().startswith("SELECT"):
+                statements.append(statement)
+
+        event.listen(engine, "before_cursor_execute", record_select)
+        try:
+            response = client.get("/api/v1/strategies")
+        finally:
+            event.remove(engine, "before_cursor_execute", record_select)
+        assert response.status_code == 200
+        assert response.json()["items"]
+        assert len(statements) == 1
     engine.dispose()
 
 

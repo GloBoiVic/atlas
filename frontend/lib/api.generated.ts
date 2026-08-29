@@ -140,6 +140,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/v1/historical-data/load-requests/{request_id}/resume': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Resume */
+    post: operations['resume_api_v1_historical_data_load_requests__request_id__resume_post'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/v1/experiments/configuration-options': {
     parameters: {
       query?: never;
@@ -472,6 +489,84 @@ export interface components {
         [key: string]: unknown;
       };
     };
+    /** ExperimentIdentity */
+    ExperimentIdentity: {
+      strategyVersion:
+        components['schemas']['ExperimentIdentityStrategyVersion'] | null;
+      instrument: components['schemas']['ExperimentIdentityInstrument'] | null;
+      analytical: components['schemas']['ExperimentIdentityAnalytical'];
+      provider: components['schemas']['ExperimentIdentityProvider'] | null;
+      tradingPeriod: components['schemas']['ExperimentIdentityPeriod'];
+    };
+    /** ExperimentIdentityAnalytical */
+    ExperimentIdentityAnalytical: {
+      /** Resolution */
+      resolution: string | null;
+      /** Pricecomponent */
+      priceComponent: string | null;
+    };
+    /** ExperimentIdentityInstrument */
+    ExperimentIdentityInstrument: {
+      /** Code */
+      code: string | null;
+      /** Basecurrency */
+      baseCurrency: string | null;
+      /** Quotecurrency */
+      quoteCurrency: string | null;
+    };
+    /** ExperimentIdentityPeriod */
+    ExperimentIdentityPeriod: {
+      /** Start */
+      start: string;
+      /** End */
+      end: string;
+    };
+    /** ExperimentIdentityProvider */
+    ExperimentIdentityProvider: {
+      /** Name */
+      name: string | null;
+      /** Symbol */
+      symbol: string | null;
+    };
+    /** ExperimentIdentityStrategyVersion */
+    ExperimentIdentityStrategyVersion: {
+      /** Id */
+      id: string | null;
+      /** Displayname */
+      displayName: string | null;
+      /** Key */
+      key: string | null;
+      /** Version */
+      version: number | null;
+    };
+    /** ExperimentListResponse */
+    ExperimentListResponse: {
+      /** Items */
+      items: components['schemas']['ExperimentReadResponse'][];
+      /** Next Cursor */
+      next_cursor?: string | null;
+    } & {
+      [key: string]: unknown;
+    };
+    /** ExperimentReadResponse */
+    ExperimentReadResponse: {
+      identity: components['schemas']['ExperimentIdentity'];
+    } & {
+      [key: string]: unknown;
+    };
+    /** ExperimentStrategyVersionMarketRequirementsResponse */
+    ExperimentStrategyVersionMarketRequirementsResponse: {
+      /** Instrument */
+      instrument: string;
+      /** Resolution */
+      resolution: string;
+      /** Pricecomponent */
+      priceComponent: string;
+      /** Requiredhistoricalcontextbars */
+      requiredHistoricalContextBars: number;
+      /** Completedonly */
+      completedOnly: boolean;
+    };
     /** ExperimentStrategyVersionOptionResponse */
     ExperimentStrategyVersionOptionResponse: {
       /**
@@ -497,7 +592,7 @@ export interface components {
       parameterSchema: {
         [key: string]: unknown;
       }[];
-      /** Required historical context bars */
+      /** Requiredhistoricalcontextbars */
       requiredHistoricalContextBars: number;
       /** Architecture */
       architecture: string;
@@ -505,6 +600,7 @@ export interface components {
       executionAvailable: boolean;
       /** Unavailablereason */
       unavailableReason: string | null;
+      marketRequirements: components['schemas']['ExperimentStrategyVersionMarketRequirementsResponse'];
     };
     /** HTTPValidationError */
     HTTPValidationError: {
@@ -528,10 +624,10 @@ export interface components {
       provider: string;
       /** Instrument */
       instrument: string;
-      /** Resolution */
-      resolution: string;
-      /** Components */
-      components: string[];
+      /** Products */
+      products: {
+        [key: string]: unknown;
+      }[];
       /** Available */
       available: boolean;
       /** Reasoncode */
@@ -630,81 +726,183 @@ export interface components {
        */
       tradingEnd: string;
     };
+    /** PriceAnalysisBarResponse */
     PriceAnalysisBarResponse: {
+      /** T */
       t: string;
+      /** O */
       o: string;
+      /** H */
       h: string;
+      /** L */
       l: string;
+      /** C */
       c: string;
     };
+    /** PriceAnalysisDiagnosticsResponse */
     PriceAnalysisDiagnosticsResponse: {
+      /** Truncated */
       truncated: boolean;
+      /** Emaperiod */
       emaPeriod: number;
+      /** Requiredhistoricalcontextbars */
       requiredHistoricalContextBars: number;
+      /** Snapshotfingerprint */
       snapshotFingerprint: string;
+      /** M15Eligiblecount */
       m15EligibleCount: number;
+      /** M15Returnedcount */
       m15ReturnedCount: number;
+      /** Tradeeligiblecount */
       tradeEligibleCount: number;
+      /** Tradereturnedcount */
       tradeReturnedCount: number;
-      omittedRange: { [key: string]: string } | null;
+      /** Omittedrange */
+      omittedRange: {
+        [key: string]: string;
+      } | null;
+      /** Omittedm15Count */
       omittedM15Count: number;
+      /** Omittedtradecount */
       omittedTradeCount: number;
     };
-    PriceAnalysisEmaResponse: { t: string; v: string };
+    /** PriceAnalysisEmaResponse */
+    PriceAnalysisEmaResponse: {
+      /** T */
+      t: string;
+      /** V */
+      v: string;
+    };
+    /** PriceAnalysisFactResponse */
     PriceAnalysisFactResponse: {
+      /** Tradesequence */
       tradeSequence: number;
-      reference: { [key: string]: string };
-      sweep: { [key: string]: string };
-      confirmation: { [key: string]: string };
+      /** Reference */
+      reference: {
+        [key: string]: string;
+      };
+      /** Sweep */
+      sweep: {
+        [key: string]: string;
+      };
+      /** Confirmation */
+      confirmation: {
+        [key: string]: string;
+      };
+      /** Trendrelation */
+      trendRelation?: string | null;
+      /** Atr */
+      atr?: string | null;
+      /** Stopprice */
+      stopPrice?: string | null;
+      /** Triggerprice */
+      triggerPrice?: string | null;
     };
-    PriceAnalysisPointResponse: { t: string; price: string };
-    PriceAnalysisRangeResponse: { price: string; from: string; to: string };
-    PriceAnalysisResponse: {
-      m15: components['schemas']['PriceAnalysisBarResponse'][];
-      ema: components['schemas']['PriceAnalysisEmaResponse'][];
-      tradingWindow: components['schemas']['PriceAnalysisWindowResponse'];
-      trades: components['schemas']['PriceAnalysisTradeResponse'][];
-      reference: components['schemas']['PriceAnalysisFactResponse'][];
-      diagnostics: components['schemas']['PriceAnalysisDiagnosticsResponse'];
-      provenance?: { [key: string]: unknown };
-      gaps?: { [key: string]: unknown }[];
-      evidence?: components['schemas']['PriceAnalysisEvidenceResponse'][];
-      landmarks?: components['schemas']['PriceAnalysisLandmarkResponse'][];
-      proposalDiagnostics?: components['schemas']['ProposalStatusResponse'][];
-      setupFacts?: { [key: string]: unknown }[];
-    };
-    PriceAnalysisEvidenceResponse: {
-      tradeSequence: number;
-      setup: { [key: string]: unknown };
-    };
+    /** PriceAnalysisLandmarkResponse */
     PriceAnalysisLandmarkResponse: {
+      /** Kind */
       kind: string;
+      /** Tradesequence */
       tradeSequence: number;
+      /** Time */
       time: string;
+      /** High */
       high?: string | null;
+      /** Low */
       low?: string | null;
+      /** Price */
       price?: string | null;
+      /** Basis */
       basis?: string | null;
     };
-    ProposalStatusResponse: {
-      tradeSequence: number;
-      entryPolicy?: string | null;
-      triggerPrice?: string | null;
-      triggerPriceBasis?: string | null;
-      expiry?: string | null;
-      expiryBars?: number | null;
-      proposalStatus: string;
-      diagnostics: { [key: string]: unknown };
+    /** PriceAnalysisPointResponse */
+    PriceAnalysisPointResponse: {
+      /** T */
+      t: string;
+      /** Price */
+      price: string;
     };
+    /** PriceAnalysisRangeResponse */
+    PriceAnalysisRangeResponse: {
+      /** Price */
+      price: string;
+      /** From */
+      from: string;
+      /** To */
+      to: string;
+    };
+    /** PriceAnalysisResponse */
+    PriceAnalysisResponse: {
+      /** M15 */
+      m15: components['schemas']['PriceAnalysisBarResponse'][];
+      /** Ema */
+      ema: components['schemas']['PriceAnalysisEmaResponse'][];
+      tradingWindow: components['schemas']['PriceAnalysisWindowResponse'];
+      /** Trades */
+      trades: components['schemas']['PriceAnalysisTradeResponse'][];
+      /** Reference */
+      reference: components['schemas']['PriceAnalysisFactResponse'][];
+      diagnostics: components['schemas']['PriceAnalysisDiagnosticsResponse'];
+      /** Provenance */
+      provenance?: {
+        [key: string]: unknown;
+      };
+      /** Gaps */
+      gaps?: {
+        [key: string]: unknown;
+      }[];
+      /** Evidence */
+      evidence?: {
+        [key: string]: unknown;
+      }[];
+      /** Landmarks */
+      landmarks?: components['schemas']['PriceAnalysisLandmarkResponse'][];
+      /** Proposaldiagnostics */
+      proposalDiagnostics?: components['schemas']['ProposalStatusResponse'][];
+      /** Setupfacts */
+      setupFacts?: {
+        [key: string]: unknown;
+      }[];
+    };
+    /** PriceAnalysisTradeResponse */
     PriceAnalysisTradeResponse: {
+      /** Sequence */
       sequence: number;
+      /** Direction */
       direction: string;
       entry: components['schemas']['PriceAnalysisPointResponse'];
       exit: components['schemas']['PriceAnalysisPointResponse'] | null;
       stop: components['schemas']['PriceAnalysisRangeResponse'] | null;
       target: components['schemas']['PriceAnalysisRangeResponse'] | null;
     };
-    PriceAnalysisWindowResponse: { start: string; end: string };
+    /** PriceAnalysisWindowResponse */
+    PriceAnalysisWindowResponse: {
+      /** Start */
+      start: string;
+      /** End */
+      end: string;
+    };
+    /** ProposalStatusResponse */
+    ProposalStatusResponse: {
+      /** Tradesequence */
+      tradeSequence: number;
+      /** Entrypolicy */
+      entryPolicy?: string | null;
+      /** Triggerprice */
+      triggerPrice?: string | null;
+      /** Triggerpricebasis */
+      triggerPriceBasis?: string | null;
+      /** Expiry */
+      expiry?: string | null;
+      /** Expirybars */
+      expiryBars?: number | null;
+      /** Proposalstatus */
+      proposalStatus: string;
+      /** Diagnostics */
+      diagnostics?: {
+        [key: string]: unknown;
+      };
+    };
     /** StrategyCatalogItemResponse */
     StrategyCatalogItemResponse: {
       /** Strategykey */
@@ -795,7 +993,7 @@ export interface components {
       contextTimeframes: string[];
       /** Timeframe */
       timeframe: string;
-      /** Required historical context bars */
+      /** Requiredhistoricalcontextbars */
       requiredHistoricalContextBars: number;
       /** Stateschemaversion */
       stateSchemaVersion: number;
@@ -809,11 +1007,11 @@ export interface components {
       executionAvailable: boolean;
       /** Unavailablereason */
       unavailableReason: string | null;
-      /** Market requirements */
+      /** Marketrequirements */
       marketRequirements: {
         [key: string]: unknown;
       };
-      /** Trader-readable methodology */
+      /** Methodology */
       methodology: {
         [key: string]: unknown;
       };
@@ -840,29 +1038,6 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
-  price_analysis_api_v1_experiments__experiment_id__price_analysis_get: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: { experiment_id: string };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      200: {
-        headers: { [name: string]: unknown };
-        content: {
-          'application/json': components['schemas']['PriceAnalysisResponse'];
-        };
-      };
-      422: {
-        headers: { [name: string]: unknown };
-        content: {
-          'application/json': components['schemas']['HTTPValidationError'];
-        };
-      };
-    };
-  };
   live_health_live_get: {
     parameters: {
       query?: never;
@@ -1060,6 +1235,37 @@ export interface operations {
       };
     };
   };
+  resume_api_v1_historical_data_load_requests__request_id__resume_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        request_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HistoricalDataLoadStatusResponse'];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
   options_api_v1_experiments_configuration_options_get: {
     parameters: {
       query?: never;
@@ -1133,9 +1339,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': {
-            [key: string]: unknown;
-          };
+          'application/json': components['schemas']['ExperimentListResponse'];
         };
       };
       /** @description Validation Error */
@@ -1168,9 +1372,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': {
-            [key: string]: unknown;
-          };
+          'application/json': components['schemas']['ExperimentReadResponse'];
         };
       };
       /** @description Validation Error */
@@ -1232,9 +1434,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': {
-            [key: string]: unknown;
-          };
+          'application/json': components['schemas']['ExperimentReadResponse'];
         };
       };
       /** @description Validation Error */
@@ -1299,6 +1499,37 @@ export interface operations {
         };
         content: {
           'application/json': unknown;
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  price_analysis_api_v1_experiments__experiment_id__price_analysis_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        experiment_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['PriceAnalysisResponse'];
         };
       };
       /** @description Validation Error */

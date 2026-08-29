@@ -199,61 +199,66 @@ export function ExperimentStatusPage() {
             retry={() => void load()}
           />
         )}
-        <div className="rounded-lg border border-atlas-border bg-atlas-surface p-5">
-          <h2 className="font-medium">Run status</h2>
-          {status === 'PENDING' && (
-            <>
-              <p className="mt-2 text-sm text-atlas-foreground-muted">
-                Configuration is saved. Start the Experiment when ready.
-              </p>
-              <Button className="mt-4" onClick={() => void run()}>
-                <RefreshCw className="mr-2 size-4" aria-hidden />
-                Run Experiment
-              </Button>
-            </>
-          )}
-          {status === 'RUNNING' && (
-            <div className="mt-4 space-y-4" role="status" aria-live="polite">
-              <div className="flex items-center gap-3 text-sm">
-                <span className="inline-flex size-2 animate-pulse rounded-full bg-atlas-positive" />
-                <span>Running deterministic simulation</span>
-                <span className="text-atlas-foreground-muted">
-                  {elapsedLabel}
-                </span>
+        {status !== 'COMPLETED' && (
+          <div className="rounded-lg border border-atlas-border bg-atlas-surface p-5">
+            <h2 className="font-medium">Run status</h2>
+            {status === 'PENDING' && (
+              <>
+                <p className="mt-2 text-sm text-atlas-foreground-muted">
+                  Configuration is saved. Start the Experiment when ready.
+                </p>
+                <Button className="mt-4" onClick={() => void run()}>
+                  <RefreshCw className="mr-2 size-4" aria-hidden />
+                  Run Experiment
+                </Button>
+              </>
+            )}
+            {status === 'RUNNING' && (
+              <div
+                className="mt-4 flex flex-col gap-4"
+                role="status"
+                aria-live="polite"
+              >
+                <div className="flex items-center gap-3 text-sm">
+                  <span className="inline-flex size-2 animate-pulse rounded-full bg-atlas-positive" />
+                  <span>Running deterministic simulation</span>
+                  <span className="text-atlas-foreground-muted">
+                    {elapsedLabel}
+                  </span>
+                </div>
+                <div className="h-1 overflow-hidden rounded-full bg-atlas-surface-selected">
+                  <div className="atlas-progress-indeterminate h-full w-1/3 rounded-full bg-atlas-primary" />
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-atlas-foreground-muted">
+                  <span>
+                    Atlas is working through the selected historical period.
+                  </span>
+                  <span>Last checked just now · updates every 2s</span>
+                </div>
               </div>
-              <div className="h-1 overflow-hidden rounded-full bg-atlas-surface-selected">
-                <div className="atlas-progress-indeterminate h-full w-1/3 rounded-full bg-atlas-primary" />
+            )}
+            {status === 'FAILED' && (
+              <div className="mt-3 rounded-md border border-atlas-negative bg-atlas-negative-muted p-4 text-sm text-atlas-negative">
+                <p className="font-medium">
+                  No trustworthy full result was created.
+                </p>
+                <p className="mt-1">
+                  {text(
+                    failure.detail,
+                    'The Experiment failed before a complete result was available.',
+                  )}
+                </p>
+                <p className="mt-3 text-atlas-negative">
+                  Review the configuration or data, then create a new
+                  Experiment.
+                </p>
               </div>
-              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-atlas-foreground-muted">
-                <span>
-                  Atlas is working through the selected historical period.
-                </span>
-                <span>Last checked just now · updates every 2s</span>
-              </div>
-            </div>
-          )}
-          {status === 'FAILED' && (
-            <div className="mt-3 rounded-md border border-atlas-negative bg-atlas-negative-muted p-4 text-sm text-atlas-negative">
-              <p className="font-medium">
-                No trustworthy full result was created.
-              </p>
-              <p className="mt-1">
-                {text(
-                  failure.detail,
-                  'The Experiment failed before a complete result was available.',
-                )}
-              </p>
-              <p className="mt-3 text-atlas-negative">
-                Review the configuration or data, then create a new Experiment.
-              </p>
-            </div>
-          )}
-          {status === 'COMPLETED' && (
-            <div className="mt-6">
-              <ExperimentResults id={id} data={data ?? {}} />
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        )}
+        {status === 'COMPLETED' && (
+          <ExperimentResults id={id} data={data ?? {}} />
+        )}
         <dl className="grid gap-4 sm:grid-cols-2">
           <div className="border-t border-atlas-border pt-3">
             <dt className="text-xs font-medium text-atlas-foreground-muted">

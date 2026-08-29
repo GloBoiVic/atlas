@@ -1,10 +1,11 @@
 """Focused create/read repository for Strategy and immutable StrategyVersion."""
 
 from collections.abc import Sequence
-from datetime import UTC
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -21,6 +22,17 @@ class StrategyVersionUsage:
     def __init__(self, count: int, last_used_at):
         self.count = count
         self.last_used_at = last_used_at
+
+
+@dataclass(frozen=True)
+class StrategyCatalogProjection:
+    """Catalog facts composed by one bounded aggregate query."""
+
+    strategy: StrategyModel
+    latest_version: StrategyVersionModel | None
+    version_count: int
+    experiment_count: int
+    last_experiment_at: datetime | None
 
 
 class StrategyRepository:
@@ -71,6 +83,70 @@ class StrategyRepository:
                 StrategyModel.name, StrategyModel.strategy_key
             )
         ).all()
+
+    def list_catalog_projections(
+        self, session: Session
+    ) -> tuple[StrategyCatalogProjection, ...]:
+        """Return catalog metadata without per-Strategy version/usage reads."""
+        latest_version_number = (
+            select(func.max(StrategyVersionModel.version_number))
+            .where(StrategyVersionModel.strategy_id == StrategyModel.id)
+            .correlate(StrategyModel)
+            .scalar_subquery()
+        )
+        version_count = (
+            select(func.count(StrategyVersionModel.id))
+            .where(StrategyVersionModel.strategy_id == StrategyModel.id)
+            .correlate(StrategyModel)
+            .scalar_subquery()
+        )
+        experiment_count = (
+            select(func.count(ExperimentModel.id))
+            .join(
+                StrategyVersionModel,
+                ExperimentModel.strategy_version_id == StrategyVersionModel.id,
+            )
+            .where(StrategyVersionModel.strategy_id == StrategyModel.id)
+            .correlate(StrategyModel)
+            .scalar_subquery()
+        )
+        last_experiment_at = (
+            select(func.max(ExperimentModel.created_at))
+            .join(
+                StrategyVersionModel,
+                ExperimentModel.strategy_version_id == StrategyVersionModel.id,
+            )
+            .where(StrategyVersionModel.strategy_id == StrategyModel.id)
+            .correlate(StrategyModel)
+            .scalar_subquery()
+        )
+        rows = session.execute(
+            select(
+                StrategyModel,
+                StrategyVersionModel,
+                version_count,
+                experiment_count,
+                last_experiment_at,
+            )
+            .outerjoin(
+                StrategyVersionModel,
+                and_(
+                    StrategyVersionModel.strategy_id == StrategyModel.id,
+                    StrategyVersionModel.version_number == latest_version_number,
+                ),
+            )
+            .order_by(StrategyModel.name, StrategyModel.strategy_key)
+        ).all()
+        return tuple(
+            StrategyCatalogProjection(
+                strategy=row[0],
+                latest_version=row[1],
+                version_count=int(row[2] or 0),
+                experiment_count=int(row[3] or 0),
+                last_experiment_at=row[4],
+            )
+            for row in rows
+        )
 
     def strategy_usage(
         self, session: Session, strategy_id: UUID
