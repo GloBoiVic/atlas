@@ -1,5 +1,15 @@
 # Completed
 
+<!-- completion-id: foundation-freeze-04-experiment-engine-simplification -->
+## Foundation Freeze 04 — Experiment Engine Simplification — completion record
+
+- **Date/status:** 2026-08-29 — terminal closure approved; validation and fresh independent review **PASS**; merged and pushed.
+- **Commit:** `6c41602` Simplify Experiment engine authority.
+- **Scope:** One authoritative V2 Experiment runner path; removal of superseded Phase 4 execution and obsolete V1 acquisition/CLI paths; explicit immutable V1 read boundary; pending-trigger and W1–W6/no-lookahead regressions; legacy Strategy isolation; E2E harness and fixture remediation; RiskConfig fail-closed ordering.
+- **Validation:** Full backend and integration suites, migration/head checks, golden replay and fact immutability, Freeze 01–03 regressions, exact Ruff/Pyright differential, web tests/typecheck/build, and Playwright E2E **5/5** passed. No current-only Freeze 04 lint/type findings; remaining quality findings are exact baseline debt.
+- **Review:** `dispatch/workstreams/foundation-freeze-04-experiment-engine-simplification/REVIEW.md` — **PASS**; no Critical or Important findings.
+- **Git/state:** Branch pushed, fast-forward merged into `main`, and `main` pushed. `.codegraph/` and `frontend/.env.local` were preserved and excluded. Freeze 05 was not started.
+
 <!-- completion-id: foundation-freeze-03-historical-data-foundation -->
 ## Foundation Freeze 03 — Historical Data Foundation — completion record
 
