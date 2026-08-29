@@ -1,19 +1,27 @@
+from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
+from typing import NoReturn
 from uuid import uuid4
 
 import pytest
 
 import backend.experiments.results as results_module
 from backend.api.experiments import _metrics_payload
-from backend.domain.market_data import Bar, Instrument, PriceComponent, Timeframe
+from backend.domain.market_data import (
+    SNAPSHOT_SCHEMA_V1,
+    Bar,
+    Instrument,
+    PriceComponent,
+    Timeframe,
+)
 from backend.experiments.metrics import calculate_metrics
 from backend.experiments.results import ExperimentResultReadService, ResultReadError
 from backend.persistence.models import DatasetSnapshotModel
 from backend.strategies.indicators_v2 import ema
 
-NOW = datetime(2026, 1, 1, tzinfo=UTC)
+NOW = datetime(2026, 8, 17, tzinfo=UTC)
 
 
 def _experiment(status: str = "COMPLETED") -> SimpleNamespace:
@@ -28,6 +36,34 @@ def _experiment(status: str = "COMPLETED") -> SimpleNamespace:
         risk_config={"risk_per_trade": "0.01"},
         simulation_config={"financing_model": {"disclosure": "FINANCING EXCLUDED"}},
         model_version="PHASE4_HISTORICAL_EXECUTION_V1",
+    )
+
+
+def _snapshot(fingerprint: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=uuid4(),
+        fingerprint=fingerprint,
+        snapshot_schema=SNAPSHOT_SCHEMA_V1,
+        coverage_start=NOW,
+        coverage_end=NOW + timedelta(days=365),
+    )
+
+
+def _m1_members(bars: Iterable[Bar]) -> tuple[Bar, ...]:
+    return tuple(
+        Bar(
+            bar.instrument,
+            Timeframe.M1,
+            PriceComponent.MID,
+            bar.start_time + timedelta(minutes=offset),
+            bar.start_time + timedelta(minutes=offset + 1),
+            bar.open if offset == 0 else bar.close,
+            bar.high,
+            bar.low,
+            bar.close if offset == 14 else bar.open,
+        )
+        for bar in bars
+        for offset in range(15)
     )
 
 
@@ -130,6 +166,51 @@ def test_legacy_result_detail_does_not_recalculate_mutable_facts() -> None:
     assert repo.mutations == 0
 
 
+def test_completed_result_detail_uses_persisted_metric_states_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    experiment = _experiment()
+    result = SimpleNamespace(
+        metric_states={
+            "net_return": {"state": "VALUE", "unit": "ratio"},
+            "max_drawdown_amount": {"state": "VALUE", "unit": "USD"},
+            "max_drawdown_percent": {"state": "VALUE", "unit": "ratio"},
+            "sharpe_ratio": {
+                "state": "UNAVAILABLE", "unit": "ratio", "reason": "ZERO_VARIANCE"
+            },
+            "profit_factor": {
+                "state": "INFINITE", "unit": "ratio", "reason": "NO_LOSING_TRADES"
+            },
+            "win_rate": {"state": "VALUE", "unit": "ratio"},
+            "expectancy_net_pnl": {"state": "VALUE", "unit": "USD"},
+        },
+        net_return=Decimal("0.25"),
+        max_drawdown_amount=Decimal("3"),
+        max_drawdown_percent=Decimal("0.03"),
+        sharpe_ratio=None,
+        profit_factor=None,
+        win_rate=Decimal("1"),
+        expectancy_net_pnl=Decimal("12"),
+        trade_count=1,
+    )
+    repo = FakeRepo(experiment)
+    repo.result_row = result
+    def reject_metrics(*_args: object, **_kwargs: object) -> NoReturn:
+        pytest.fail("read path recalculated metrics")
+
+    monkeypatch.setattr(results_module, "calculate_metrics", reject_metrics)
+
+    detail = ExperimentResultReadService(results=repo).detail(None, experiment.id)
+
+    assert detail["metrics"]["netReturn"] == {
+        "state": "VALUE", "value": "0.25", "unit": "ratio", "reason": None
+    }
+    assert detail["metrics"]["profitFactor"]["state"] == "INFINITE"
+    assert detail["metrics"]["profitFactor"]["value"] is None
+    assert detail["metrics"]["sharpe"]["reason"] == "ZERO_VARIANCE"
+    assert repo.mutations == 0
+
+
 def test_list_metric_payload_preserves_unavailable_infinite_and_zero_trade_states(
 ) -> None:
     point = SimpleNamespace(observed_at=NOW, equity=Decimal("100"))
@@ -227,7 +308,10 @@ def test_chart_uses_snapshot_membership_ema_annotations_and_omitted_range(
     trade = _trade(1, intent=intent)
     experiment.risks = ()
     snapshot = SimpleNamespace(
-        coverage_start=NOW, coverage_end=NOW + timedelta(days=20)
+        id=uuid4(),
+        coverage_start=NOW,
+        coverage_end=NOW + timedelta(days=20),
+        snapshot_schema=SNAPSHOT_SCHEMA_V1,
     )
     m15 = tuple(
         Bar(
@@ -250,7 +334,12 @@ def test_chart_uses_snapshot_membership_ema_annotations_and_omitted_range(
             calls.append("snapshot")
             return (SimpleNamespace(bar=m15[0]),)
 
-    monkeypatch.setattr(results_module, "aggregate_m1_to_m15", lambda *_args: m15)
+    def aggregate_for_test(
+        _values: tuple[Bar, ...] | list[Bar], *_args: object
+    ) -> tuple[list[Bar], list[object]]:
+        return list(m15), []
+
+    monkeypatch.setattr(results_module, "aggregate_m1_to_m15", aggregate_for_test)
     monkeypatch.setattr(
         results_module,
         "ema_100",
@@ -282,7 +371,7 @@ def test_price_analysis_uses_persisted_period_and_keeps_zero_trade_context() -> 
     experiment = _experiment()
     experiment.parameter_snapshot = {"ema_period": 3}
     experiment.strategy_version_id = uuid4()
-    snapshot = SimpleNamespace(fingerprint="f" * 64)
+    snapshot = _snapshot("f" * 64)
     version = SimpleNamespace(required_historical_context_bars=2)
     bars = tuple(
         Bar(
@@ -303,16 +392,14 @@ def test_price_analysis_uses_persisted_period_and_keeps_zero_trade_context() -> 
         def get(self, model, _id):
             return snapshot if model is DatasetSnapshotModel else version
 
-    class MarketData:
-        def derive_m15(self, fingerprint, component):
-            assert fingerprint == snapshot.fingerprint
-            assert component is PriceComponent.MID
-            return bars
+    class Snapshots:
+        def ordered_members_with_sources(self, *_args):
+            return tuple(SimpleNamespace(bar=bar) for bar in _m1_members(bars))
 
     experiment.trading_start = NOW + timedelta(minutes=30)
     experiment.trading_end = NOW + timedelta(minutes=60)
     service = ExperimentResultReadService(
-        results=FakeRepo(experiment), market_data=MarketData()
+        results=FakeRepo(experiment), snapshots=Snapshots()
     )
     value = service.price_analysis(Session(), experiment.id)
     assert len(value.m15) == 4
@@ -323,13 +410,13 @@ def test_price_analysis_uses_persisted_period_and_keeps_zero_trade_context() -> 
     assert value.reference == ()
 
 
-def test_price_analysis_reports_candle_truncation_without_sampling() -> None:
+def test_price_analysis_reports_candle_truncation_without_sampling(monkeypatch) -> None:
     experiment = _experiment()
     experiment.parameter_snapshot = {"ema_period": 2}
     experiment.strategy_version_id = uuid4()
     experiment.trading_start = NOW
     experiment.trading_end = NOW + timedelta(minutes=15 * 10001)
-    snapshot = SimpleNamespace(fingerprint="f" * 64)
+    snapshot = _snapshot("f" * 64)
     version = SimpleNamespace(required_historical_context_bars=0)
     bars = tuple(
         Bar(
@@ -347,12 +434,19 @@ def test_price_analysis_reports_candle_truncation_without_sampling() -> None:
         def get(self, model, _id):
             return snapshot if model is DatasetSnapshotModel else version
 
-    class MarketData:
-        def derive_m15(self, _fingerprint, _component):
-            return bars
+    class Snapshots:
+        def ordered_members_with_sources(self, *_args):
+            return tuple(SimpleNamespace(bar=bar) for bar in bars)
+
+    def aggregate_for_test(
+        _values: tuple[Bar, ...] | list[Bar], *_args: object
+    ) -> tuple[list[Bar], list[object]]:
+        return list(bars), []
+
+    monkeypatch.setattr(results_module, "aggregate_m1_to_m15", aggregate_for_test)
 
     value = ExperimentResultReadService(
-        results=FakeRepo(experiment), market_data=MarketData()
+        results=FakeRepo(experiment), snapshots=Snapshots()
     ).price_analysis(Session(), experiment.id)
     assert len(value.m15) == 10000
     assert value.diagnostics["truncated"] is True

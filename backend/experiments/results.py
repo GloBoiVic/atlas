@@ -9,6 +9,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.domain.market_data import (
+    SNAPSHOT_SCHEMA_V1,
+    SNAPSHOT_SCHEMA_V2,
     Bar,
     Instrument,
     PriceComponent,
@@ -16,7 +18,6 @@ from backend.domain.market_data import (
     Timeframe,
 )
 from backend.market_data.aggregation import AggregationError, aggregate_m1_to_m15
-from backend.market_data.ingestion import MarketDataService
 from backend.persistence.market_data_repository import DatasetSnapshotRepository
 from backend.persistence.models import (
     DatasetSnapshotAnalyticalBarModel,
@@ -87,11 +88,9 @@ class ExperimentResultReadService:
         *,
         results: ExperimentResultRepository | None = None,
         snapshots: DatasetSnapshotRepository | None = None,
-        market_data: MarketDataService | None = None,
     ) -> None:
         self.results = results or ExperimentResultRepository()
         self.snapshots = snapshots or DatasetSnapshotRepository()
-        self.market_data = market_data
 
     def _completed(self, session: Session, experiment_id: UUID) -> ExperimentModel:
         experiment = self.results.experiment(session, experiment_id)
@@ -239,10 +238,6 @@ class ExperimentResultReadService:
     ) -> PriceAnalysisRead:
         """Compose the bounded, immutable price context for a completed Experiment."""
         experiment = self._completed(session, experiment_id)
-        if self.market_data is None:
-            raise ResultReadError(
-                "INCOMPLETE_RESULT", "Market-data reader is unavailable"
-            )
         if self.results.result(session, experiment.id) is None:
             raise ResultReadError(
                 "INCOMPLETE_RESULT", "Experiment result is unavailable"
@@ -258,10 +253,8 @@ class ExperimentResultReadService:
             raise ResultReadError(
                 "INCOMPLETE_RESULT", "Experiment EMA period is invalid"
             )
-        v2 = (
-            getattr(snapshot, "snapshot_schema", None)
-            == "ATLAS_HISTORICAL_SIMULATION_SNAPSHOT_V2"
-        )
+        schema = getattr(snapshot, "snapshot_schema", None)
+        v2 = schema == SNAPSHOT_SCHEMA_V2
         context_bars = version.required_historical_context_bars
         try:
             if v2:
@@ -294,10 +287,10 @@ class ExperimentResultReadService:
                         .order_by(DatasetSnapshotAnalyticalBarModel.sequence)
                     ).all()
                 )
+            elif schema == SNAPSHOT_SCHEMA_V1:
+                all_bars = self._legacy_v1_m15(session, snapshot)
             else:
-                all_bars = self.market_data.derive_m15(
-                    snapshot.fingerprint, PriceComponent.MID
-                )
+                raise ValueError("unsupported dataset snapshot schema")
             warmup = tuple(
                 bar for bar in all_bars if bar.end_time <= experiment.trading_start
             )
@@ -512,6 +505,27 @@ class ExperimentResultReadService:
             tuple(reference_values),
         )
 
+    def _legacy_v1_m15(
+        self, session: Session, snapshot: DatasetSnapshotModel
+    ) -> tuple[Bar, ...]:
+        """Read immutable V1 membership for legacy chart and price views only."""
+        if snapshot.snapshot_schema != SNAPSHOT_SCHEMA_V1:
+            raise ValueError("legacy reader requires a V1 dataset snapshot")
+        members = self.snapshots.ordered_members_with_sources(
+            session,
+            snapshot.id,
+            None,
+            None,
+            (PriceComponent.MID,),
+        )
+        bars, _diagnostics = aggregate_m1_to_m15(
+            tuple(item.bar for item in members),
+            PriceComponent.MID,
+            snapshot.coverage_start,
+            snapshot.coverage_end,
+        )
+        return tuple(bars)
+
     @staticmethod
     def _proposal_payload(intent: object | None, trade: TradeModel) -> dict[str, object]:
         """Expose the immutable proposal and its terminal read-side status."""
@@ -676,7 +690,7 @@ class ExperimentResultReadService:
             )
         if (
             getattr(snapshot, "snapshot_schema", None)
-            == "ATLAS_HISTORICAL_SIMULATION_SNAPSHOT_V2"
+            == SNAPSHOT_SCHEMA_V2
         ):
             venue = session.get(VenueInstrumentModel, snapshot.venue_instrument_id)
             instrument = (
@@ -709,24 +723,15 @@ class ExperimentResultReadService:
                     .order_by(DatasetSnapshotAnalyticalBarModel.sequence)
                 ).all()
             )
-        else:
-            bars = self.snapshots.ordered_members_with_sources(
-                session,
-                experiment.dataset_snapshot_id,
-                None,
-                None,
-                (PriceComponent.MID,),
-            )
+        elif getattr(snapshot, "snapshot_schema", None) == SNAPSHOT_SCHEMA_V1:
             try:
-                aggregated = aggregate_m1_to_m15(
-                    tuple(item.bar for item in bars),
-                    PriceComponent.MID,
-                    snapshot.coverage_start,
-                    snapshot.coverage_end,
-                )
-                m15 = aggregated[0] if isinstance(aggregated[0], list) else aggregated
+                m15 = self._legacy_v1_m15(session, snapshot)
             except (AggregationError, ValueError):
                 m15 = ()
+        else:
+            raise ResultReadError(
+                "INCOMPLETE_RESULT", "Dataset snapshot schema is unsupported"
+            )
         values = tuple(
             (bar, ema_100(m15[: index + 1]) if index + 1 >= 100 else None)
             for index, bar in enumerate(m15)
@@ -769,7 +774,7 @@ class ExperimentResultReadService:
             }
             selected_indices = selected_indices[:500]
         context = [values[index] for index in selected_indices]
-        candles = tuple(
+        candles: tuple[dict[str, object], ...] = tuple(
             {
                 "time": bar.end_time,
                 "open": str(bar.open),

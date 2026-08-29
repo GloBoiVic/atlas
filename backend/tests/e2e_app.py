@@ -8,7 +8,6 @@ from urllib.parse import urlparse
 
 from backend.api.app import create_app as create_production_app
 from backend.experiments.lifecycle import ExperimentLifecycleDiagnostic
-from backend.experiments.runner import Phase4RunnerComparisonDiagnostic
 
 
 def _test_database(url: str) -> bool:
@@ -23,25 +22,15 @@ def _stdout_sink(record: ExperimentLifecycleDiagnostic) -> None:
     )
 
 
-def _runner_stdout_sink(record: Phase4RunnerComparisonDiagnostic) -> None:
-    print(
-        "ATLAS_E2E_RUNNER_COMPARISON "
-        + json.dumps(record.as_dict(), sort_keys=True, separators=(",", ":")),
-        flush=True,
-    )
-
-
 def create_app():
     database_url = os.environ.get("ATLAS_E2E_DATABASE_URL") or os.environ.get(
         "ATLAS_DATABASE_URL", ""
     )
     lifecycle = os.environ.get("ATLAS_E2E_LIFECYCLE_DIAGNOSTIC") == "1"
-    runner = os.environ.get("ATLAS_E2E_RUNNER_DIAGNOSTIC") == "1"
-    if not lifecycle and not runner:
+    if not lifecycle:
         return create_production_app()
     if not database_url or not _test_database(database_url):
         raise RuntimeError("E2E lifecycle diagnostics require a *_test database")
     return create_production_app(
         lifecycle_diagnostic_sink=_stdout_sink if lifecycle else None,
-        runner_diagnostic_sink=_runner_stdout_sink if runner else None,
     )

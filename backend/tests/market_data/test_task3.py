@@ -22,7 +22,6 @@ from backend.market_data.aggregation import aggregate_m1_to_m15
 from backend.market_data.coverage import (
     MissingMinute,
     coalesce_gaps,
-    diagnostic_payloads,
     validate_coverage,
 )
 from backend.market_data.fingerprint import canonical_decimal, dataset_fingerprint
@@ -339,12 +338,8 @@ def test_snapshot_integrity_and_fingerprint_bind_policy_version() -> None:
     assert snapshot.integrity_summary["policy_version"] == SESSION_POLICY
 
 
-def test_diagnostic_surface_is_bounded_and_retains_policy_reason_components() -> None:
+def test_native_product_coverage_does_not_rebuild_analytical_series() -> None:
     start = at(5, 10)
     bars = tuple(m1(start + timedelta(minutes=i)) for i in range(15))
     report = validate_coverage(start, start + timedelta(minutes=15), bars[:-1])
-    diagnostics, truncated = diagnostic_payloads(report, limit=1)
-    assert truncated is True
-    assert diagnostics[0]["reason"] == "UNEXPECTED_MISSING_DATA"
-    assert diagnostics[0]["policy_version"] == SESSION_POLICY
-    assert diagnostics[0]["missing_components"] == ["ASK", "BID", "MID"]
+    assert report.interval_diagnostics == ()

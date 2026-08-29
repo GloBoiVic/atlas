@@ -46,7 +46,9 @@ from backend.persistence.market_data_repository import (
 )
 from backend.persistence.models import (
     ExperimentAccountModel,
+    ExperimentEquityPointModel,
     ExperimentModel,
+    ExperimentResultModel,
     FillModel,
     MarketBarModel,
     OrderModel,
@@ -108,10 +110,12 @@ def _m1_bar(
     )
 
 
-def _golden_bars(direction: str, *, end_open: bool = False) -> tuple[Bar, ...]:
+def _golden_bars(
+    direction: str, *, end_open: bool = False, m15_count: int = 104
+) -> tuple[Bar, ...]:
     """Create sparse M1 BID/ASK data with one real reference/setup."""
     values: list[tuple[datetime, Decimal, Decimal, Decimal, Decimal]] = []
-    for m15_index in range(104):
+    for m15_index in range(m15_count):
         if m15_index == 100:
             candle = (
                 (
@@ -239,10 +243,12 @@ def _golden_bars(direction: str, *, end_open: bool = False) -> tuple[Bar, ...]:
     return tuple(result)
 
 
-def _native_m15_bars(direction: str, *, end_open: bool = False) -> tuple[Bar, ...]:
+def _native_m15_bars(
+    direction: str, *, end_open: bool = False, m15_count: int = 104
+) -> tuple[Bar, ...]:
     """Build the immutable native analytical product independently of M1 membership."""
     result: list[Bar] = []
-    for m15_index in range(104):
+    for m15_index in range(m15_count):
         if m15_index == 100:
             candle = (
                 (
@@ -379,11 +385,12 @@ def _seed(
     slippage_ticks: int = 0,
     end_open: bool = False,
     complete_execution: bool = False,
+    m15_count: int = 104,
 ) -> tuple[UUID, UUID, UUID]:
     venue = MarketDataRepository().ensure_initial_venue_instrument(
         session, VenueInstrument(Instrument.EUR_USD, Provider.OANDA, "EUR_USD")
     )
-    bars = _golden_bars(direction, end_open=end_open)
+    bars = _golden_bars(direction, end_open=end_open, m15_count=m15_count)
     retrieved = START + timedelta(days=1)
     MarketDataRepository().apply_bar_batch(
         session,
@@ -392,7 +399,9 @@ def _seed(
             BarBatchItem(bar, retrieved, f"golden-{direction.lower()}") for bar in bars
         ),
     )
-    native = _native_m15_bars(direction, end_open=end_open)
+    native = _native_m15_bars(
+        direction, end_open=end_open, m15_count=m15_count
+    )
     stored_bars = {
         (row.start_time, row.price_component): row
         for row in session.scalars(
@@ -404,7 +413,7 @@ def _seed(
     executable_times = (
         {
             START + timedelta(minutes=1500 + offset)
-            for offset in range(60)
+            for offset in range(m15_count * 15 - 1500)
         }
         if complete_execution
         else {
@@ -422,7 +431,7 @@ def _seed(
         "provider": "OANDA",
         "instrument": "EUR/USD",
         "coverage_start": START.isoformat(),
-        "coverage_end": (START + timedelta(minutes=1560)).isoformat(),
+        "coverage_end": (START + timedelta(minutes=m15_count * 15)).isoformat(),
         "native_resolution": "M15",
         "analytical_contract": NATIVE_M15_CONTRACT_V1,
         "gap_policy": GAP_POLICY_V1,
@@ -458,7 +467,7 @@ def _seed(
         Timeframe.M15,
         (PriceComponent.MID,),
         START,
-        START + timedelta(minutes=1560),
+        START + timedelta(minutes=m15_count * 15),
         ALIGNMENT_CONVENTION,
         SESSION_POLICY,
         FINGERPRINT_SCHEMA_V2,
@@ -532,14 +541,16 @@ def _seed(
 
 
 def _facts(session: Session, experiment_id: UUID) -> dict[str, Any]:
-    intent = session.scalar(
-        select(TradeIntentModel).where(TradeIntentModel.experiment_id == experiment_id)
-    )
-    assert intent is not None
+    intents = session.scalars(
+        select(TradeIntentModel)
+        .where(TradeIntentModel.experiment_id == experiment_id)
+        .order_by(TradeIntentModel.decision_frontier)
+    ).all()
+    assert intents
     risks = session.scalars(
         select(RiskDecisionModel)
-        .where(RiskDecisionModel.trade_intent_id == intent.id)
-        .order_by(RiskDecisionModel.phase)
+        .where(RiskDecisionModel.trade_intent_id.in_([item.id for item in intents]))
+        .order_by(RiskDecisionModel.evaluated_at, RiskDecisionModel.phase)
     ).all()
     orders = session.scalars(
         select(OrderModel)
@@ -553,28 +564,44 @@ def _facts(session: Session, experiment_id: UUID) -> dict[str, Any]:
         .order_by(FillModel.executed_at)
     ).all()
     trade = session.scalar(
-        select(TradeModel).where(TradeModel.experiment_id == experiment_id)
+        select(TradeModel)
+        .where(TradeModel.experiment_id == experiment_id)
+        .order_by(TradeModel.sequence_number)
     )
+    equity = session.scalars(
+        select(ExperimentEquityPointModel)
+        .where(ExperimentEquityPointModel.experiment_id == experiment_id)
+        .order_by(ExperimentEquityPointModel.sequence_number)
+    ).all()
+    result = session.get(ExperimentResultModel, experiment_id)
     account = session.get(ExperimentAccountModel, experiment_id)
     position = session.scalar(
         select(PositionModel).where(PositionModel.experiment_id == experiment_id)
     )
     assert trade is not None and account is not None and position is not None
+    assert equity and result is not None
     return {
-        "intent": (
-            intent.action,
-            intent.direction,
-            intent.decision_frontier,
-            intent.proposed_stop,
-            intent.target_multiple,
-            intent.rationale,
-        ),
+        "intents": [
+            (
+                intent.action,
+                intent.direction,
+                intent.decision_frontier,
+                intent.proposed_stop,
+                intent.target_multiple,
+                intent.entry_policy,
+                intent.trigger_price,
+                intent.trigger_price_basis,
+                intent.rationale,
+            )
+            for intent in intents
+        ],
         "risks": [
             (
                 r.phase,
                 r.outcome,
                 r.quantity,
                 r.entry_price,
+                r.stop_price,
                 r.target_price,
                 r.quote_bid,
                 r.quote_ask,
@@ -582,20 +609,83 @@ def _facts(session: Session, experiment_id: UUID) -> dict[str, Any]:
             for r in risks
         ],
         "orders": [
-            (o.order_type, o.purpose, o.direction, o.quantity, o.requested_price)
+            (
+                o.order_type,
+                o.purpose,
+                o.direction,
+                o.quantity,
+                o.requested_price,
+                o.current_status,
+            )
             for o in orders
         ],
-        "fills": [(f.quantity, f.execution_price) for f in fills],
+        "fills": [
+            (
+                f.quantity,
+                f.execution_price,
+                f.price_basis,
+                f.executable_reference_price,
+                f.slippage_per_unit,
+                f.slippage_cost,
+                f.fee,
+                f.source_market_bar_id,
+            )
+            for f in fills
+        ],
         "trade": (
             trade.direction,
             trade.quantity,
             trade.entry_price,
             trade.exit_price,
             trade.gross_pnl,
+            trade.net_pnl,
             trade.exit_reason,
+            trade.initial_risk,
+            trade.commission_cost,
+            trade.intrabar_ambiguous,
         ),
         "account": (account.realized_pnl, account.equity),
         "position": position.state,
+        "equity": [
+            (
+                point.sequence_number,
+                point.observed_at,
+                point.balance,
+                point.realized_pnl,
+                point.unrealized_pnl,
+                point.equity,
+                point.running_peak,
+                point.drawdown_amount,
+                point.drawdown_percent,
+                point.valuation_bid,
+                point.valuation_ask,
+                point.source_bid_market_bar_id,
+                point.source_ask_market_bar_id,
+            )
+            for point in equity
+        ],
+        "result": (
+            result.result_schema_version,
+            result.trade_count,
+            result.ambiguous_trade_count,
+            result.gross_pnl,
+            result.commission_cost,
+            result.financing_cost,
+            result.modeled_net_pnl,
+            result.ending_balance,
+            result.ending_equity,
+            result.net_return,
+            result.max_drawdown_amount,
+            result.max_drawdown_percent,
+            result.sharpe_ratio,
+            result.profit_factor,
+            result.win_rate,
+            result.expectancy_net_pnl,
+            result.metric_states,
+            result.metric_schema_version,
+            result.result_quality,
+            result.output_fingerprint,
+        ),
     }
 
 
@@ -623,9 +713,9 @@ def test_persisted_golden_flow_and_semantic_rerun(
             facts = _facts(session, experiment_id)
             assert facts["risks"][0][0:2] == ("PRE_FLIGHT", "APPROVED")
             assert facts["risks"][1][0:2] == ("PRE_SUBMISSION", "APPROVED")
-            assert facts["intent"][2] == START + timedelta(minutes=1530)
+            assert facts["intents"][0][2] == START + timedelta(minutes=1530)
             assert facts["position"] == "FLAT"
-            assert facts["trade"][5] == "END_OF_EXPERIMENT"
+            assert facts["trade"][6] == "END_OF_EXPERIMENT"
             assert facts["fills"][0][1] == facts["risks"][1][3]
             assert facts["fills"][1][1] == facts["trade"][3]
         with Session(engine) as session, session.begin():
@@ -655,9 +745,9 @@ def test_persisted_golden_flow_and_semantic_rerun(
                 == "COMPLETED"
             )
             rerun_facts = _facts(session, rerun_id)
-            assert {k: v for k, v in rerun_facts.items() if k != "intent"} == {
-                k: v for k, v in facts.items() if k != "intent"
-            }
-            assert rerun_facts["intent"][0:5] == facts["intent"][0:5]
+            assert rerun_facts == facts
+            # A rerun is a new Experiment; it must not rewrite the completed
+            # immutable facts of the original Experiment.
+            assert _facts(session, experiment_id) == facts
     finally:
         engine.dispose()

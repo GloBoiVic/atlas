@@ -84,6 +84,8 @@ def requirement_for_version(version) -> StrategyMarketDataRequirement:
     """
     context_bars = getattr(version, "required_historical_context_bars", None)
     if context_bars is None:
+        # Read-only compatibility for pre-canonical persisted versions. New
+        # production versions expose required_historical_context_bars.
         context_bars = getattr(version, "warm_up_bars", 0)
     timeframe = getattr(version, "primary_timeframe", Timeframe.M15)
     # Normalize string timeframe to enum when coming from persistence

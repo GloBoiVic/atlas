@@ -54,8 +54,12 @@ class Action(StrEnum):
 
 
 class Phase(StrEnum):
+    """Strategy phases, including read-only legacy schema compatibility."""
+
     SEARCHING = "SEARCHING"
     REFERENCE_IDENTIFIED = "REFERENCE_IDENTIFIED"
+    # Legacy schema-1 state compatibility; the registered V2 Strategy never
+    # emits or consumes this phase.
     AWAITING_CONFIRMATION = "AWAITING_CONFIRMATION"
     ARMED = "ARMED"
 
@@ -65,6 +69,8 @@ class TargetMethodology(StrEnum):
 
 
 class EntryPolicy(StrEnum):
+    """Opening policies; IMMEDIATE remains supported by the current V2 path."""
+
     IMMEDIATE = "IMMEDIATE"
     PRICE_TRIGGERED = "PRICE_TRIGGERED"
 
@@ -360,6 +366,13 @@ class Rationale:
 
 @dataclass(frozen=True, slots=True)
 class StrategyDecision:
+    """Immutable Strategy output with retained proposal compatibility fields.
+
+    ``expiry_time`` remains a persisted legacy-compatible field. V2 execution
+    eligibility is owned by StrategyState and the runner's explicit handoff;
+    this field is not an execution clock.
+    """
+
     action: Action
     rationale: Rationale
     direction: Direction | None = None
@@ -369,6 +382,8 @@ class StrategyDecision:
     entry_policy: EntryPolicy = EntryPolicy.IMMEDIATE
     trigger_price: Decimal | None = None
     trigger_price_basis: PriceComponent | None = None
+    # Retained immutable proposal compatibility; V2 does not use expiry_time
+    # for execution eligibility and expiry_bars is persisted proposal metadata.
     expiry_time: datetime | None = None
     expiry_bars: int | None = None
     setup_facts: SetupFacts | None = None
@@ -483,6 +498,16 @@ class StrategyDecision:
 
 @dataclass(frozen=True, slots=True)
 class StrategyState:
+    """Immutable state supporting V2 plus read-only schema-1 compatibility.
+
+    New registered V2 execution requires schema 2 through the Strategy
+    contract. Schema 1, ``window_bars``, and ``AWAITING_CONFIRMATION`` remain
+    only so existing serialized state can be validated/read without changing
+    persisted facts.
+    """
+
+    # The default is retained for generic/legacy domain compatibility; the
+    # production V2 runner supplies the persisted StrategyVersion schema.
     schema_version: int = 1
     phase: Phase = Phase.SEARCHING
     direction: Direction | None = None
@@ -490,6 +515,7 @@ class StrategyState:
     reference_low: Decimal | None = None
     reference_time: datetime | None = None
     sweep_time: datetime | None = None
+    # Legacy schema-1 counter; V2 uses watch_bars instead.
     window_bars: int = 0
     watch_bars: int = 0
     confirmation_time: datetime | None = None
@@ -587,6 +613,8 @@ class StrategyState:
 
     @classmethod
     def from_json(cls, value: Mapping[str, Any]) -> "StrategyState":
+        """Read a complete legacy-compatible state envelope without migration."""
+
         required = {
             "schema_version",
             "phase",
@@ -718,7 +746,7 @@ class StrategyVersion:
 
     @property
     def warm_up_bars(self) -> int:
-        """Deprecated compatibility read; persistence uses the canonical name."""
+        """Deprecated read-only compatibility; persistence uses the canonical name."""
         return self.required_historical_context_bars
 
     def __post_init__(self) -> None:

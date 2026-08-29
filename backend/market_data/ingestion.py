@@ -9,20 +9,17 @@ import platform
 import resource
 import time
 from bisect import bisect_left
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
-from types import SimpleNamespace
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.domain.market_data import (
     ALIGNMENT_CONVENTION,
-    FINGERPRINT_SCHEMA,
     FINGERPRINT_SCHEMA_V2,
     GAP_POLICY_V1,
     NATIVE_M1_EXECUTION_CONTRACT_V1,
@@ -44,23 +41,15 @@ from backend.persistence.market_data_repository import (
     DatasetSnapshotRepository,
     MarketDataRepository,
 )
-from backend.persistence.models import MarketBarModel
 
-from .aggregation import aggregate_m1_to_m15
-from .coverage import CoverageReport, diagnostic_payloads, validate_coverage
+from .coverage import CoverageReport, validate_coverage
 from .fingerprint import (
     bar_content_fingerprint,
     bar_content_fingerprint_from_fields,
-    dataset_fingerprint,
     dataset_fingerprint_v2,  # noqa: F401 - benchmark instrumentation seam
 )
 from .session_policy import EXPECTED_DATA, OANDA_EUR_USD_POLICY
 
-REQUIRED_COMPONENTS = (
-    PriceComponent.ASK,
-    PriceComponent.BID,
-    PriceComponent.MID,
-)
 VENUE = VenueInstrument(Instrument.EUR_USD, Provider.OANDA, "EUR_USD")
 
 
@@ -74,26 +63,22 @@ class CoverageValidator(Protocol):
     ) -> CoverageReport: ...
 
 
-class HistoricalFetchResult(Protocol):
-    bars: tuple[Bar, ...]
-    incomplete: Any
-
-
-class HistoricalBarSource(Protocol):
-    def fetch(self, start: datetime, end: datetime) -> HistoricalFetchResult: ...
-
-
-@dataclass(frozen=True, slots=True)
-class SourceFailure:
-    category: str
-    code: str
-    detail: str
-    range_start: datetime
-    range_end: datetime
+class NativeFetchResult(Protocol):
+    @property
+    def bars(self) -> tuple[Bar, ...]: ...
 
     @property
-    def message(self) -> str:
-        return self.detail
+    def incomplete(self) -> Sequence[object]: ...
+
+
+class NativeHistoricalBarSource(Protocol):
+    def fetch_native_m15(
+        self, start: datetime, end: datetime
+    ) -> NativeFetchResult: ...
+
+    def fetch_execution_m1(
+        self, start: datetime, end: datetime
+    ) -> NativeFetchResult: ...
 
 
 def classify_failure(error: Exception) -> tuple[str, str, str]:
@@ -122,36 +107,6 @@ def classify_failure(error: Exception) -> tuple[str, str, str]:
         "HISTORICAL_LOAD_FAILED",
         "Historical data load stopped unexpectedly.",
     )
-
-
-@dataclass(frozen=True, slots=True)
-class IngestionReport:
-    operation: str
-    requested_start: datetime
-    requested_end: datetime
-    fetched_ranges: tuple[tuple[datetime, datetime], ...]
-    committed_ranges: tuple[tuple[datetime, datetime], ...]
-    inserted: int
-    reactivated: int
-    unchanged: int
-    incomplete_minutes: tuple[datetime, ...]
-    coverage: CoverageReport
-    failure: SourceFailure | None = None
-
-    @property
-    def valid(self) -> bool:
-        return self.failure is None and self.coverage.valid
-
-
-@dataclass(frozen=True, slots=True)
-class CoverageInspection:
-    requested_start: datetime
-    requested_end: datetime
-    coverage: CoverageReport
-
-    @property
-    def valid(self) -> bool:
-        return self.coverage.valid
 
 
 @dataclass(frozen=True, slots=True)
@@ -628,7 +583,7 @@ class MarketDataService:
     def __init__(
         self,
         session_factory: Callable[[], Session],
-        source: HistoricalBarSource,
+        source: NativeHistoricalBarSource,
         *,
         clock: Callable[[], datetime] = _default_clock,
         frontier: Callable[[], datetime] = _default_frontier,
@@ -666,27 +621,10 @@ class MarketDataService:
         finally:
             session.close()
 
-    def _coverage(self, start: datetime, end: datetime) -> CoverageReport:
-        mapping_id = self._mapping_id()
-        session = self._session_factory()
-        try:
-            with session.begin():
-                bars = self._repository.current_bars_stream(
-                    session, mapping_id, start, end, REQUIRED_COMPONENTS
-                )
-                return validate_coverage(start, end, bars, REQUIRED_COMPONENTS)
-        finally:
-            session.close()
-
-    def inspect_coverage(self, start: datetime, end: datetime) -> CoverageInspection:
-        _validate_range(start, end)
-        self._check_frontier(end)
-        return CoverageInspection(start, end, self._coverage(start, end))
-
     def _apply(
         self,
         mapping_id: UUID,
-        result: HistoricalFetchResult,
+        result: NativeFetchResult,
         session: Session | None = None,
     ) -> BarBatchResult:
         if session is not None:
@@ -709,7 +647,7 @@ class MarketDataService:
     def _apply_and_record_outcome(
         self,
         mapping_id: UUID,
-        result: HistoricalFetchResult,
+        result: NativeFetchResult,
         resolution: Timeframe,
         components: tuple[PriceComponent, ...],
         window: tuple[datetime, datetime],
@@ -738,174 +676,6 @@ class MarketDataService:
                     returned_count,
                 )
                 return applied
-        finally:
-            session.close()
-
-    def _ingest(
-        self,
-        operation: str,
-        start: datetime,
-        end: datetime,
-        ranges: Sequence[tuple[datetime, datetime]],
-        progress: Callable[[IngestionReport], None] | None = None,
-    ) -> IngestionReport:
-        mapping_id = self._mapping_id()
-        fetched: list[tuple[datetime, datetime]] = []
-        committed: list[tuple[datetime, datetime]] = []
-        incomplete: list[datetime] = []
-        counts = [0, 0, 0]
-        failure: SourceFailure | None = None
-        for range_start, range_end in ranges:
-            fetched.append((range_start, range_end))
-            try:
-                # The provider call is before opening the apply transaction.
-                result = self._source.fetch(range_start, range_end)
-                incomplete.extend(item.start_time for item in result.incomplete)
-                applied = self._apply(mapping_id, result)
-            except Exception as error:
-                category, code, detail = classify_failure(error)
-                failure = SourceFailure(category, code, detail, range_start, range_end)
-                break
-            counts[0] += applied.inserted
-            counts[1] += applied.reactivated
-            counts[2] += applied.unchanged
-            committed.append((range_start, range_end))
-            if progress:
-                progress(
-                    IngestionReport(
-                        operation,
-                        start,
-                        end,
-                        tuple(fetched),
-                        tuple(committed),
-                        counts[0],
-                        counts[1],
-                        counts[2],
-                        tuple(sorted(incomplete)),
-                        self._coverage(start, end),
-                    )
-                )
-        coverage = self._coverage(start, end)
-        return IngestionReport(
-            operation,
-            start,
-            end,
-            tuple(fetched),
-            tuple(committed),
-            counts[0],
-            counts[1],
-            counts[2],
-            tuple(sorted(incomplete)),
-            coverage,
-            failure,
-        )
-
-    def plan_missing(
-        self, start: datetime, end: datetime
-    ) -> tuple[tuple[datetime, datetime], ...]:
-        _validate_range(start, end)
-        self._check_frontier(end)
-        mapping_id = self._mapping_id()
-        session = self._session_factory()
-        try:
-            with session.begin():
-                missing = tuple(
-                    self._repository.missing_ranges(
-                        session, mapping_id, start, end, REQUIRED_COMPONENTS
-                    )
-                )
-        finally:
-            session.close()
-        return _coalesce_expected_ranges(missing)
-
-    def load_missing(
-        self,
-        start: datetime,
-        end: datetime,
-        *,
-        progress: Callable[[IngestionReport], None] | None = None,
-    ) -> IngestionReport:
-        ranges = self.plan_missing(start, end)
-        return self._ingest("load_missing", start, end, ranges, progress)
-
-    def refresh_range(self, start: datetime, end: datetime) -> IngestionReport:
-        _validate_range(start, end)
-        self._check_frontier(end)
-        return self._ingest("refresh_range", start, end, ((start, end),))
-
-    def create_snapshot(self, start: datetime, end: datetime) -> SnapshotReport:
-        _validate_range(start, end)
-        self._check_frontier(end)
-        mapping_id = self._mapping_id()
-        session = self._session_factory()
-        try:
-            with session.begin():
-                bars = self._repository.current_bars(
-                    session, mapping_id, start, end, REQUIRED_COMPONENTS
-                )
-                coverage = validate_coverage(start, end, bars, REQUIRED_COMPONENTS)
-                if not coverage.valid:
-                    return SnapshotReport(
-                        start, end, coverage, None, "coverage is invalid"
-                    )
-                fingerprint = dataset_fingerprint(
-                    VENUE,
-                    start,
-                    end,
-                    REQUIRED_COMPONENTS,
-                    bars,
-                    session_policy=SESSION_POLICY,
-                    alignment_convention=ALIGNMENT_CONVENTION,
-                )
-                summary = {
-                    "status": "VALID",
-                    "expected_open_minutes": coverage.expected_open_minutes,
-                    "expected_closure_minutes": coverage.expected_closure_minutes,
-                    "member_minutes": coverage.member_minutes,
-                    "bar_count": len(bars),
-                    "unexpected_gap_count": len(coverage.missing),
-                    "unexpected_observation_count": len(
-                        coverage.unexpected_observations
-                    )
-                    + len(coverage.closure_anomalies),
-                    "session_policy": SESSION_POLICY,
-                    # The session-policy identifier is the immutable semantic
-                    # version.  A future rule change mints a new version;
-                    # existing snapshots are never reinterpreted.
-                    "policy_version": SESSION_POLICY,
-                    "diagnostics": diagnostic_payloads(coverage)[0],
-                    "diagnostics_truncated": diagnostic_payloads(coverage)[1],
-                }
-                rows = tuple(
-                    session.scalars(
-                        select(MarketBarModel).where(
-                            MarketBarModel.venue_instrument_id == mapping_id,
-                            MarketBarModel.resolution == "M1",
-                            MarketBarModel.is_current.is_(True),
-                            MarketBarModel.start_time >= start,
-                            MarketBarModel.start_time < end,
-                            MarketBarModel.price_component.in_(
-                                [component.value for component in REQUIRED_COMPONENTS]
-                            ),
-                        )
-                    ).all()
-                )
-                snapshot = DatasetSnapshot(
-                    uuid4(),
-                    VENUE,
-                    Timeframe.M1,
-                    REQUIRED_COMPONENTS,
-                    start,
-                    end,
-                    ALIGNMENT_CONVENTION,
-                    SESSION_POLICY,
-                    FINGERPRINT_SCHEMA,
-                    fingerprint,
-                    summary,
-                    self._clock(),
-                )
-                stored = self._snapshots.create_validated(session, snapshot, rows)
-                return SnapshotReport(start, end, coverage, stored)
         finally:
             session.close()
 
@@ -976,7 +746,7 @@ class MarketDataService:
                         "execution coverage is invalid",
                         telemetry=None,
                     )
-                metadata = {
+                metadata: dict[str, object] = {
                     "provider": "OANDA",
                     "instrument": "EUR/USD",
                     "coverage_start": start.isoformat(),
@@ -1156,7 +926,10 @@ class MarketDataService:
         telemetry = _V2Telemetry()
         mapping_id = self._mapping_id()
 
-        def plans(resolution, components):
+        def plans(
+            resolution: Timeframe,
+            components: tuple[PriceComponent, ...],
+        ) -> Iterator[tuple[datetime, datetime]]:
             step = timedelta(minutes=15 if resolution is Timeframe.M15 else 1)
             scan_start = start
             while scan_start < end:
@@ -1292,8 +1065,18 @@ class MarketDataService:
         if progress:
             progress(progress_payload("PLANNING"))
 
-        def acquire(product: str, fetch, resolution, components, ranges):
-            def record_outcome(window, outcome: str, returned_count: int = 0) -> None:
+        def acquire(
+            product: str,
+            fetch: Callable[[datetime, datetime], NativeFetchResult],
+            resolution: Timeframe,
+            components: tuple[PriceComponent, ...],
+            ranges: Iterator[tuple[datetime, datetime]],
+        ) -> None:
+            def record_outcome(
+                window: tuple[datetime, datetime],
+                outcome: str,
+                returned_count: int = 0,
+            ) -> None:
                 recorder = getattr(self._repository, "record_acquisition_window", None)
                 if recorder is None:
                     return
@@ -1465,154 +1248,10 @@ class MarketDataService:
             ))
         return snapshot_report
 
-    def load_v2_incremental(
-        self,
-        start: datetime,
-        end: datetime,
-        *,
-        previous_snapshot_id: UUID,
-        previous_start: datetime,
-        progress: Callable[[IngestionReport], None] | None = None,
-    ):
-        """Extend a V2 snapshot without reacquiring its covered prefix.
-
-        Native M15 is only available through snapshot membership, while execution
-        observations are durable canonical M1 rows.  They are therefore planned
-        independently and combined into a new snapshot; the old snapshot is
-        never edited.
-        """
-        if not (start < previous_start <= end):
-            raise ValueError("incremental load must add a positive prefix")
-        native = getattr(self._source, "fetch_native_m15", None)
-        execution = getattr(self._source, "fetch_execution_m1", None)
-        if native is None or execution is None:
-            raise ValueError("source does not support Alternative A acquisition")
-        native_result = native(start, previous_start)
-        if native_result.incomplete:
-            raise ValueError("provider returned incomplete native observations")
-
-        mapping_id = self._mapping_id()
-        session = self._session_factory()
-        try:
-            with session.begin():
-                execution_ranges = _coalesce_expected_ranges(
-                    tuple(
-                        self._repository.missing_ranges(
-                            session,
-                            mapping_id,
-                            start,
-                            end,
-                            (PriceComponent.BID, PriceComponent.ASK),
-                        )
-                    )
-                )
-                prior_analytical = self._snapshots.v2_analytical_members(
-                    session, previous_snapshot_id
-                )
-        finally:
-            session.close()
-
-        fetched: list[tuple[datetime, datetime]] = []
-        committed: list[tuple[datetime, datetime]] = []
-        counts = [0, 0, 0]
-        for range_start, range_end in execution_ranges:
-            fetched.append((range_start, range_end))
-            result = execution(range_start, range_end)
-            if result.incomplete:
-                raise ValueError("provider returned incomplete execution observations")
-            applied = self._apply(mapping_id, result)
-            counts[0] += applied.inserted
-            counts[1] += applied.reactivated
-            counts[2] += applied.unchanged
-            committed.append((range_start, range_end))
-            if progress:
-                progress(
-                    SimpleNamespace(
-                        fetched_ranges=tuple(fetched),
-                        committed_ranges=tuple(committed),
-                        inserted=counts[0],
-                        reactivated=counts[1],
-                        unchanged=counts[2],
-                        incomplete_minutes=(),
-                        coverage=self._coverage(start, end),
-                    )
-                )
-        analytical = tuple(
-            sorted(
-                (*native_result.bars, *prior_analytical),
-                key=lambda bar: bar.start_time,
-            )
-        )
-        return self.create_snapshot_v2(start, end, analytical=analytical)
-
-    def derive_m15(
-        self, snapshot_fingerprint: str, component: PriceComponent
-    ) -> tuple[Bar, ...]:
-        """Derive M15 bars exclusively from the immutable snapshot membership.
-
-        The membership read is intentionally the only source of M1 observations
-        here.  In particular, this must not be replaced with a current-bar range
-        query: a later provider correction belongs to a new snapshot.
-        """
-        if type(component) is not PriceComponent:
-            raise ValueError("component must be a PriceComponent")
-        session = self._session_factory()
-        try:
-            with session.begin():
-                snapshot = self._snapshots.by_fingerprint(session, snapshot_fingerprint)
-                if snapshot.snapshot_schema == SNAPSHOT_SCHEMA_V2:
-                    if component is not PriceComponent.MID:
-                        raise ValueError("V2 analytical path supports native MID only")
-                    return self._snapshots.v2_analytical_members(session, snapshot.id)
-                if component not in snapshot.components:
-                    raise ValueError("component is not present in snapshot")
-                self._check_frontier(snapshot.coverage_end)
-                members = self._snapshots.members(session, snapshot.id)
-                bars, _diagnostics = aggregate_m1_to_m15(
-                    members,
-                    component,
-                    snapshot.coverage_start,
-                    snapshot.coverage_end,
-                )
-                return tuple(bars)
-        finally:
-            session.close()
-
-    def current_m15(
-        self, start: datetime, end: datetime, component: PriceComponent
-    ) -> tuple[Bar, ...]:
-        """Plan warm-up from current canonical M1, before a snapshot exists.
-
-        This is deliberately separate from ``derive_m15``: the latter must
-        remain snapshot-membership-only.  The planner uses this read only to
-        decide whether another historical provider window is needed; the
-        final derivation still goes through the immutable snapshot.
-        """
-        _validate_range(start, end)
-        if type(component) is not PriceComponent:
-            raise ValueError("component must be a PriceComponent")
-        mapping_id = self._mapping_id()
-        session = self._session_factory()
-        try:
-            with session.begin():
-                bars = self._repository.current_bars(
-                    session, mapping_id, start, end, (component,)
-                )
-                derived, _diagnostics = aggregate_m1_to_m15(bars, component, start, end)
-                return tuple(derived)
-        finally:
-            session.close()
-
-
 __all__ = [
-    "CoverageInspection",
     "CoverageValidator",
-    "HistoricalBarSource",
-    "HistoricalFetchResult",
-    "IngestionReport",
     "MarketDataService",
     "SnapshotReport",
-    "SourceFailure",
     "V2Progress",
     "classify_failure",
 ]

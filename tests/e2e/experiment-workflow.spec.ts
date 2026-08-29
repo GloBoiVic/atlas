@@ -6,6 +6,7 @@ const fixture = JSON.parse(
 ) as {
   failedExperimentId: string;
   primarySnapshotId: string;
+  invalidSnapshotId: string;
   zeroSnapshotId: string;
 };
 
@@ -14,16 +15,14 @@ async function configure(
   end = '2026-01-06T02:30',
 ) {
   await page.goto('/experiments/new');
-  await expect(page.getByLabel('StrategyVersion')).toHaveValue(/.+/);
-  await expect(page.getByLabel('DatasetSnapshot')).toHaveValue(/.+/);
-  await page
-    .getByLabel('DatasetSnapshot')
-    .selectOption(fixture.primarySnapshotId);
-  await expect(page.getByLabel('DatasetSnapshot')).toHaveValue(
+  await expect(page.getByLabel('Strategy')).toHaveValue(/.+/);
+  await expect(page.getByLabel('Data').first()).toHaveValue(/.+/);
+  await page.getByLabel('Data').first().selectOption(fixture.primarySnapshotId);
+  await expect(page.getByLabel('Data').first()).toHaveValue(
     fixture.primarySnapshotId,
   );
-  await page.getByLabel('Trading start').fill('2026-01-06T01:00');
-  await page.getByLabel('Trading end').fill(end);
+  await setUtcDateTime(page, 'Trading start', '2026-01-06T01:00');
+  await setUtcDateTime(page, 'Trading end', end);
   await expect(
     page.getByRole('button', { name: 'Validate coverage' }),
   ).toBeEnabled();
@@ -31,6 +30,35 @@ async function configure(
   await expect(
     page.getByText('The selected period is eligible to run.'),
   ).toBeVisible();
+}
+
+async function setUtcDateTime(
+  page: import('@playwright/test').Page,
+  label: string,
+  value: string,
+) {
+  const [date, time] = value.split('T');
+  const target = new Date(`${date}T00:00:00Z`);
+  const monthLabel = target.toLocaleDateString('en-US', {
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+  const dateButton = page.getByRole('button', {
+    name: new RegExp(`^${label} date`),
+  });
+  await dateButton.click();
+  const calendar = page.getByRole('application', {
+    name: 'Choose UTC date',
+  });
+  for (let month = 0; month < 24; month += 1) {
+    if (await calendar.getByText(monthLabel, { exact: true }).isVisible())
+      break;
+    await calendar.getByRole('button', { name: 'Previous month' }).click();
+  }
+  await expect(calendar.getByText(monthLabel, { exact: true })).toBeVisible();
+  await calendar.getByRole('button', { name: date }).click();
+  await page.getByLabel(`${label} time in UTC`).selectOption(time);
 }
 
 test('configures, runs, inspects a Trade, and safely retries the terminal command', async ({
@@ -63,16 +91,14 @@ test('configures, runs, inspects a Trade, and safely retries the terminal comman
 
 test('shows invalid coverage and prevents creation', async ({ page }) => {
   await page.goto('/experiments/new');
-  await expect(page.getByLabel('StrategyVersion')).toHaveValue(/.+/);
-  await expect(page.getByLabel('DatasetSnapshot')).toHaveValue(/.+/);
-  await page
-    .getByLabel('DatasetSnapshot')
-    .selectOption(fixture.primarySnapshotId);
-  await expect(page.getByLabel('DatasetSnapshot')).toHaveValue(
-    fixture.primarySnapshotId,
+  await expect(page.getByLabel('Strategy')).toHaveValue(/.+/);
+  await expect(page.getByLabel('Data').first()).toHaveValue(/.+/);
+  await page.getByLabel('Data').first().selectOption(fixture.invalidSnapshotId);
+  await expect(page.getByLabel('Data').first()).toHaveValue(
+    fixture.invalidSnapshotId,
   );
-  await page.getByLabel('Trading start').fill('2026-01-06T01:00');
-  await page.getByLabel('Trading end').fill('2026-01-06T02:00');
+  await setUtcDateTime(page, 'Trading start', '2026-01-06T01:00');
+  await setUtcDateTime(page, 'Trading end', '2026-01-06T02:00');
   await expect(
     page.getByRole('button', { name: 'Validate coverage' }),
   ).toBeEnabled();
@@ -98,14 +124,14 @@ test('renders a failed Experiment without partial results', async ({
 test('completes a valid zero-Trade period explicitly', async ({ page }) => {
   test.setTimeout(120_000);
   await page.goto('/experiments/new');
-  await expect(page.getByLabel('StrategyVersion')).toHaveValue(/.+/);
-  await expect(page.getByLabel('DatasetSnapshot')).toHaveValue(/.+/);
-  await page.getByLabel('DatasetSnapshot').selectOption(fixture.zeroSnapshotId);
-  await expect(page.getByLabel('DatasetSnapshot')).toHaveValue(
+  await expect(page.getByLabel('Strategy')).toHaveValue(/.+/);
+  await expect(page.getByLabel('Data').first()).toHaveValue(/.+/);
+  await page.getByLabel('Data').first().selectOption(fixture.zeroSnapshotId);
+  await expect(page.getByLabel('Data').first()).toHaveValue(
     fixture.zeroSnapshotId,
   );
-  await page.getByLabel('Trading start').fill('2026-01-06T01:00');
-  await page.getByLabel('Trading end').fill('2026-01-06T01:15');
+  await setUtcDateTime(page, 'Trading start', '2026-01-06T01:00');
+  await setUtcDateTime(page, 'Trading end', '2026-01-06T01:15');
   await expect(
     page.getByRole('button', { name: 'Validate coverage' }),
   ).toBeEnabled();
@@ -117,7 +143,7 @@ test('completes a valid zero-Trade period explicitly', async ({ page }) => {
   await expect(
     page.locator('header .status').filter({ hasText: 'Completed' }),
   ).toBeVisible({ timeout: 120_000 });
-  await expect(page.getByText('No Trades', { exact: false })).toBeVisible();
+  await expect(page.getByText('No Trades', { exact: true })).toBeVisible();
   await expect(
     page.getByText('No executed Trades for this Experiment.'),
   ).toBeVisible();

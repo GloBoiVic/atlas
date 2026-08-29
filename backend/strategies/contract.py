@@ -53,7 +53,7 @@ class StrategyDefinition:
 
     @property
     def warm_up_bars(self) -> int:
-        """Deprecated compatibility read for older runtime callers."""
+        """Deprecated read-only compatibility for older runtime callers."""
         return self.required_historical_context_bars
 
 
@@ -179,7 +179,7 @@ def validate_parameters(parameters: StrategyParameters) -> None:
 
 
 def validate_state(state: StrategyState, definition: StrategyDefinition) -> None:
-    """Validate state and its compatibility with the advertised schema."""
+    """Validate state and reject legacy state for a newer Strategy definition."""
 
     if type(state) is not StrategyState:
         raise StrategyContractError("state must be StrategyState")

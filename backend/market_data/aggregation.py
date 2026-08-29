@@ -159,12 +159,8 @@ def aggregate_m1_to_m15(
         cursor = end
     return output, list(_coalesce_diagnostics(diagnostics))
 
-
-derive_m15 = aggregate_m1_to_m15
-
 __all__ = [
     "AggregationError",
     "IntervalDiagnostic",
     "aggregate_m1_to_m15",
-    "derive_m15",
 ]

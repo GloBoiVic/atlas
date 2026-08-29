@@ -4,22 +4,17 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import timedelta
-from hashlib import sha256
 from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, select, text
+from sqlalchemy import create_engine, select, text, update
 from sqlalchemy.orm import Session
 
 from backend.persistence.database import configure_utc_session_timezone
-from backend.persistence.models import (
-    DatasetSnapshotBarModel,
-    DatasetSnapshotModel,
-    MarketBarModel,
-)
-from backend.tests.integration.test_golden_flows import START, _seed
+from backend.persistence.experiment_repository import ExperimentRepository
+from backend.persistence.models import ExperimentModel
+from backend.tests.integration.test_golden_flows import _seed
 
 ROOT = Path(__file__).parents[2]
 
@@ -51,55 +46,65 @@ def main() -> None:
                     """
                 )
             )
-            failed_id, snapshot_id, version_id = _seed(
-                session, "LONG", phase4=True, invalid_config=True
+            valid_id, snapshot_id, version_id = _seed(
+                session, "LONG", complete_execution=True, m15_count=106
             )
-            source_snapshot = session.get(DatasetSnapshotModel, snapshot_id)
-            assert source_snapshot is not None
-            zero_end = START + timedelta(minutes=1515)
-            zero_snapshot = DatasetSnapshotModel(
-                venue_instrument_id=source_snapshot.venue_instrument_id,
-                base_resolution=source_snapshot.base_resolution,
-                components=source_snapshot.components,
-                coverage_start=source_snapshot.coverage_start,
-                coverage_end=zero_end,
-                alignment_convention=source_snapshot.alignment_convention,
-                session_policy=source_snapshot.session_policy,
-                fingerprint_schema=source_snapshot.fingerprint_schema,
-                fingerprint=sha256(b"atlas-phase5-e2e-zero-snapshot").hexdigest(),
-                integrity_summary={
-                    "status": "VALID",
-                    "expected_open_minutes": 1509,
-                    "expected_closure_minutes": 6,
-                    "member_minutes": 1509,
-                    "bar_count": 4527,
-                    "unexpected_gap_count": 0,
-                    "unexpected_observation_count": 0,
-                    "session_policy": source_snapshot.session_policy,
+            valid_experiment = session.get(ExperimentModel, valid_id)
+            assert valid_experiment is not None
+            failed_experiment = ExperimentRepository().create(
+                session,
+                strategy_version_id=valid_experiment.strategy_version_id,
+                dataset_snapshot_id=valid_experiment.dataset_snapshot_id,
+                venue_instrument_id=valid_experiment.venue_instrument_id,
+                trading_start=valid_experiment.trading_start,
+                trading_end=valid_experiment.trading_end,
+                starting_capital=valid_experiment.starting_capital,
+                risk_per_trade=valid_experiment.risk_per_trade,
+                parameter_snapshot={
+                    **valid_experiment.parameter_snapshot,
+                    "stop_buffer": "invalid",
                 },
+                risk_config=valid_experiment.risk_config,
+                simulation_config=valid_experiment.simulation_config,
+                model_version=valid_experiment.model_version,
             )
-            session.add(zero_snapshot)
-            session.flush()
-            zero_snapshot_id = zero_snapshot.id
-            zero_bars = session.scalars(
-                select(MarketBarModel).where(
-                    MarketBarModel.venue_instrument_id
-                    == source_snapshot.venue_instrument_id,
-                    MarketBarModel.start_time < zero_end,
+            ExperimentRepository().create_account_and_position(
+                session, failed_experiment
+            )
+            failed_id = failed_experiment.id
+            _, zero_snapshot_id, _ = _seed(
+                session, "LONG", complete_execution=True
+            )
+            invalid_id, invalid_snapshot_id, _ = _seed(session, "LONG")
+            # The test database may still contain the retired Phase 4 insert
+            # trigger, which changes current-model inserts from PENDING to
+            # RUNNING. Restore the intended command boundary for these E2E
+            # fixtures without changing application or migration behavior.
+            zero_experiment = session.scalar(
+                select(ExperimentModel).where(
+                    ExperimentModel.dataset_snapshot_id == zero_snapshot_id,
+                    ExperimentModel.id != valid_id,
+                    ExperimentModel.id != failed_id,
                 )
             )
-            session.add_all(
-                DatasetSnapshotBarModel(
-                    dataset_snapshot_id=zero_snapshot.id, market_bar_id=bar.id
+            assert zero_experiment is not None
+            session.execute(
+                update(ExperimentModel)
+                .where(
+                    ExperimentModel.id.in_(
+                        (valid_id, failed_id, zero_experiment.id, invalid_id)
+                    )
                 )
-                for bar in zero_bars
+                .values(status="PENDING")
             )
+            session.expire_all()
         Path(fixture_file).write_text(
             json.dumps(
                 {
                     "failedExperimentId": str(failed_id),
                     "datasetSnapshotId": str(snapshot_id),
                     "primarySnapshotId": str(snapshot_id),
+                    "invalidSnapshotId": str(invalid_snapshot_id),
                     "strategyVersionId": str(version_id),
                     "zeroSnapshotId": str(zero_snapshot_id),
                 }

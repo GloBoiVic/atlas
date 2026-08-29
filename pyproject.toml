@@ -19,7 +19,6 @@ dependencies = [
 
 [project.scripts]
 atlas-runtime = "backend.runtime.main:main"
-atlas-data = "backend.market_data.cli:main"
 
 [dependency-groups]
 dev = [

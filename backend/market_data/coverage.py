@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 from backend.domain.market_data import Bar, PriceComponent
 
-from .aggregation import IntervalDiagnostic, aggregate_m1_to_m15
+from .aggregation import IntervalDiagnostic
 from .session_policy import EXPECTED_DATA, OANDA_EUR_USD_POLICY
 
 
@@ -334,15 +334,6 @@ def validate_coverage(
             if absent:
                 missing.append(MissingMinute(cursor, absent))
         cursor += timedelta(minutes=1)
-    interval_diagnostics: list[IntervalDiagnostic] = []
-    for component in required_components:
-        _eligible, diagnostics = aggregate_m1_to_m15(
-            tuple(bar for bar in bars if bar.price_component is component),
-            component,
-            start,
-            end,
-        )
-        interval_diagnostics.extend(diagnostics)
     return CoverageReport(
         expected_open,
         expected_closed,
@@ -355,7 +346,7 @@ def validate_coverage(
         coalesce_gaps(missing),
         tuple(sorted(closure_anomalies)),
         tuple(sorted(unexpected)),
-        tuple(sorted(interval_diagnostics, key=lambda item: item.interval_start)),
+        (),
     )
 
 

@@ -645,7 +645,7 @@ def test_v2_warmup_extends_on_actual_native_count_with_session_closures() -> Non
     assert row.status == "COMPLETED"
 
 
-def test_v2_warmup_extension_uses_missing_only_union_seam() -> None:
+def test_v2_warmup_extension_uses_full_load_seam() -> None:
     events: list[tuple[str, int]] = []
     row = SimpleNamespace(
         id=uuid4(), status="PENDING", load_start=UTC_START,
@@ -673,9 +673,6 @@ def test_v2_warmup_extension_uses_missing_only_union_seam() -> None:
         lambda: FakeSession(),
         SimpleNamespace(
             load_v2=load_v2,
-            load_v2_incremental=lambda **_: pytest.fail(
-                "legacy incremental path invoked"
-            ),
         ),
         SimpleNamespace(), FakeRegistry(), repository=repository,
         strategies=FakeStrategies(),

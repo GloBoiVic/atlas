@@ -16,8 +16,7 @@ historical simulation only: PAPER/LIVE broker execution is not implemented.
 ## 1. Environment setup
 
 Copy `.env.example` to `.env` and edit values for your machine. `.env` is
-gitignored. The OANDA token is optional for coverage, snapshot, and derivation;
-it is required only when loading or refreshing provider data.
+gitignored. The OANDA token is required for the historical-data load workflow.
 
 ```bash
 cp .env.example .env
@@ -82,21 +81,11 @@ The authoritative V2 setup flow is the Experiments UI at
    create the historical `Experiment` (`POST /api/v1/experiments`) with that
    immutable `StrategyVersion` and snapshot.
 
-The following `atlas-data` commands are retained for **legacy, non-authoritative
-CLI use only**; they are not the current V2 setup workflow:
-
-```bash
-uv run atlas-data load-missing --start 2025-01-06T00:00:00Z --end 2025-01-07T00:00:00Z
-uv run atlas-data refresh --start 2025-01-06T00:00:00Z --end 2025-01-07T00:00:00Z
-uv run atlas-data coverage --start 2025-01-06T00:00:00Z --end 2025-01-07T00:00:00Z --warm-up-bars 50
-uv run atlas-data snapshot --start 2025-01-06T00:00:00Z --end 2025-01-07T00:00:00Z
-```
-
-Failures have a nonzero exit status. No raw database UUIDs or credentials are
-normal output. OANDA failures are bounded and sanitized; a timeout or partial
-provider failure never means that coverage is valid. Unknown holidays and
-unexpected observations fail closed. Native M15 is validated from immutable
-snapshot membership; M1 never substitutes for M15. No forward fill,
+Failures are persisted with a nonzero terminal status. No raw database UUIDs or
+credentials are normal output. OANDA failures are bounded and sanitized; a
+timeout or partial provider failure never means that coverage is valid. Unknown
+holidays and unexpected observations fail closed. Native M15 is validated from
+immutable snapshot membership; M1 never substitutes for M15. No forward fill,
 interpolation, or synthetic observations are created. OANDA Practice historical
 candles are the only external capability.
 

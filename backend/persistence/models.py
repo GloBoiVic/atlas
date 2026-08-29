@@ -453,6 +453,8 @@ class TradeIntentModel(Base):
     entry_policy: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'IMMEDIATE'"))
     trigger_price: Mapped[Decimal | None] = mapped_column(Numeric(20, 10), nullable=True)
     trigger_price_basis: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    # Retained immutable proposal compatibility columns; no migration or
+    # removal is authorized while historical intents remain readable.
     expiry_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     expiry_bars: Mapped[int | None] = mapped_column(nullable=True)
     proposal_status: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'PENDING'"))

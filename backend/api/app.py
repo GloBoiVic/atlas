@@ -19,7 +19,7 @@ from backend.experiments.lifecycle import (
     LifecycleDiagnosticSink,
 )
 from backend.experiments.results import ExperimentResultReadService
-from backend.experiments.runner import ExperimentRunner, RunnerComparisonDiagnosticSink
+from backend.experiments.runner import ExperimentRunner
 from backend.integrations.oanda.source import OandaHistoricalBarSource
 from backend.logging import configure_logging
 from backend.market_data.historical_load import HistoricalDataLoadCoordinator
@@ -37,7 +37,6 @@ def create_app(
     runner: Any | None = None,
     session_factory: Callable[[], Any] | None = None,
     lifecycle_diagnostic_sink: LifecycleDiagnosticSink | None = None,
-    runner_diagnostic_sink: RunnerComparisonDiagnosticSink | None = None,
     historical_coordinator: Any | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
@@ -48,7 +47,7 @@ def create_app(
         Path(__file__).resolve().parents[2]
     )
     runner = runner or ExperimentRunner(
-        strategy_registry=registry, comparison_diagnostic_sink=runner_diagnostic_sink
+        strategy_registry=registry
     )
     if historical_coordinator is None:
         source = OandaHistoricalBarSource(
@@ -81,9 +80,7 @@ def create_app(
     app.state.experiment_lifecycle = ExperimentRunService(
         session_factory, runner, lifecycle_diagnostic_sink=lifecycle_diagnostic_sink
     )
-    app.state.experiment_results = ExperimentResultReadService(
-        market_data=historical_coordinator.ingestion
-    )
+    app.state.experiment_results = ExperimentResultReadService()
     app.state.historical_data_coordinator = historical_coordinator
     app.include_router(create_health_router(engine))
     app.include_router(

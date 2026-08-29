@@ -13,15 +13,31 @@ GET /api/v1/experiments/{id}/price-analysis without contacting the network:
 - No OANDA/provider call, no persistence mutation.
 """
 
+import ast
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from types import SimpleNamespace
+from pathlib import Path
+from types import MethodType, SimpleNamespace
+from typing import NoReturn, cast
 from uuid import uuid4
 
 import pytest
+from sqlalchemy.orm import Session as OrmSession
 
-from backend.domain.market_data import Bar, Instrument, PriceComponent, Timeframe
-from backend.experiments.results import ExperimentResultReadService, ResultReadError
+from backend.domain.market_data import (
+    SNAPSHOT_SCHEMA_V1,
+    Bar,
+    Instrument,
+    PriceComponent,
+    Timeframe,
+)
+from backend.experiments.results import (
+    ChartContext,
+    ExperimentResultReadService,
+    ResultReadError,
+)
+from backend.persistence.market_data_repository import DatasetSnapshotRepository
 from backend.persistence.models import (
     DatasetSnapshotModel,
     StrategyVersionModel,
@@ -30,8 +46,31 @@ from backend.persistence.models import (
 NOW = datetime(2026, 8, 17, 14, 0, tzinfo=UTC)
 
 
-def _experiment(status="COMPLETED", **overrides):
-    payload = {
+def test_legacy_m15_aggregation_is_only_the_explicit_private_read_boundary() -> None:
+    source = (Path(__file__).parents[2] / "experiments" / "results.py").read_text()
+    module = ast.parse(source)
+    functions = {
+        node.name: node
+        for node in ast.walk(module)
+        if isinstance(node, ast.FunctionDef)
+    }
+    aggregate_calls = {
+        function_name
+        for function_name, function in functions.items()
+        if any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "aggregate_m1_to_m15"
+            for node in ast.walk(function)
+        )
+    }
+    assert aggregate_calls == {"_legacy_v1_m15"}
+    assert "def _legacy_v1_m15" in source
+    assert "MarketDataService" not in source
+
+
+def _experiment(status: str = "COMPLETED", **overrides: object) -> SimpleNamespace:
+    payload: dict[str, object] = {
         "id": uuid4(),
         "status": status,
         "starting_capital": Decimal("10000"),
@@ -48,15 +87,21 @@ def _experiment(status="COMPLETED", **overrides):
     return SimpleNamespace(**payload)
 
 
-def _snapshot(fingerprint):
-    return SimpleNamespace(fingerprint=fingerprint)
+def _snapshot(fingerprint: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=uuid4(),
+        fingerprint=fingerprint,
+        snapshot_schema=SNAPSHOT_SCHEMA_V1,
+        coverage_start=NOW,
+        coverage_end=NOW + timedelta(days=365),
+    )
 
 
-def _version(warm_up_bars):
+def _version(warm_up_bars: int) -> SimpleNamespace:
     return SimpleNamespace(required_historical_context_bars=warm_up_bars)
 
 
-def _bar(index, base=NOW):
+def _bar(index: int, base: datetime = NOW) -> Bar:
     open_time = base + timedelta(minutes=15 * index)
     close_time = base + timedelta(minutes=15 * (index + 1))
     return Bar(
@@ -117,24 +162,45 @@ class FakeSession:
         return None
 
 
-class MarketDataSpy:
-    """Verify that derive_m15 receives the snapshot fingerprint and M15."""
+class SnapshotMembershipSpy:
+    """Return only immutable snapshot membership to the result reader."""
 
-    def __init__(self, bars):
-        self._bars = tuple(bars)
+    def __init__(self, bars: Iterable[Bar], *, convert: bool = True) -> None:
+        self._bars = tuple(
+            member
+            for bar in bars
+            for member in (_m1_members(bar) if convert else (bar,))
+        )
         self.calls = []
 
-    def derive_m15(self, fingerprint, component):
-        self.calls.append((fingerprint, component))
-        return self._bars
+    def ordered_members_with_sources(
+        self, _session: object, snapshot_id: object, *_args: object
+    ) -> tuple[SimpleNamespace, ...]:
+        self.calls.append((snapshot_id, PriceComponent.MID))
+        return tuple(SimpleNamespace(bar=bar) for bar in self._bars)
 
-    def current_m15(self, *_args, **_kwargs):
-        self.calls.append(("CURRENT_BAR_PROBE", None))
-        return ()
+
+def _m1_members(bar: Bar) -> tuple[Bar, ...]:
+    if bar.timeframe is Timeframe.M1:
+        return (bar,)
+    return tuple(
+        Bar(
+            bar.instrument,
+            Timeframe.M1,
+            PriceComponent.MID,
+            bar.start_time + timedelta(minutes=offset),
+            bar.start_time + timedelta(minutes=offset + 1),
+            bar.open if offset == 0 else bar.close,
+            bar.high,
+            bar.low,
+            bar.close if offset == 14 else bar.open,
+        )
+        for offset in range(15)
+    )
 
 
 @pytest.fixture
-def bars():
+def bars() -> tuple[Bar, ...]:
     return tuple(_bar(index) for index in range(40))
 
 
@@ -171,11 +237,28 @@ def _trade(sequence, intent=None, opened_at=None, closed_at=None,
     )
 
 
-def _as_utc(value):
+def _as_utc(value: object) -> datetime:
     """Coerce service-layer datetime outputs to a UTC datetime for assertions."""
     if isinstance(value, datetime):
         return value.astimezone(UTC) if value.tzinfo else value.replace(tzinfo=UTC)
     return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone(UTC)
+
+
+def _snapshot_repository(value: object) -> DatasetSnapshotRepository:
+    """Type the repository test double without changing its runtime seam."""
+    return cast(DatasetSnapshotRepository, value)
+
+
+def _orm_session(value: object) -> OrmSession:
+    return cast(OrmSession, value)
+
+
+def _chart_reader(service: ExperimentResultReadService) -> Callable[..., ChartContext]:
+    """Access the intentionally private V2 chart seam without widening it."""
+    chart_method = cast(
+        Callable[..., ChartContext], vars(type(service))["_chart"]
+    )
+    return cast(Callable[..., ChartContext], MethodType(chart_method, service))
 
 
 # ---------------------------------------------------------------------------
@@ -186,28 +269,97 @@ def _as_utc(value):
 def test_price_analysis_caller_uses_snapshot_fingerprint_and_mid_only(bars):
     snapshot = _snapshot("a" * 64)
     version = _version(warm_up_bars=20)
-    market_data = MarketDataSpy(bars)
+    snapshots = SnapshotMembershipSpy(bars)
     service = ExperimentResultReadService(
-        results=FakeRepo(_experiment()), market_data=market_data
+        results=FakeRepo(_experiment()), snapshots=_snapshot_repository(snapshots)
     )
     service.price_analysis(FakeSession(snapshot, version), uuid4())
-    assert market_data.calls == [("a" * 64, PriceComponent.MID)], (
-        "price_analysis must request M15 using only the snapshot fingerprint "
-        "and MID component; current-bar probes must be absent"
-    )
+    assert snapshots.calls == [(snapshot.id, PriceComponent.MID)]
 
 
 def test_price_analysis_does_not_invoke_current_bar_provider(bars):
     snapshot = _snapshot("b" * 64)
     version = _version(warm_up_bars=4)
-    market_data = MarketDataSpy(bars)
+    snapshots = SnapshotMembershipSpy(bars)
     service = ExperimentResultReadService(
-        results=FakeRepo(_experiment()), market_data=market_data
+        results=FakeRepo(_experiment()), snapshots=_snapshot_repository(snapshots)
     )
     service.price_analysis(FakeSession(snapshot, version), uuid4())
-    assert all(call[0] != "CURRENT_BAR_PROBE" for call in market_data.calls), (
-        "A later current-bar correction cannot appear on this read seam"
+    assert snapshots.calls == [(snapshot.id, PriceComponent.MID)]
+
+
+def test_v2_result_and_chart_reads_use_persisted_native_m15(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    experiment = _experiment()
+    experiment.trading_start = NOW + timedelta(minutes=15)
+    experiment.trading_end = NOW + timedelta(minutes=30)
+    snapshot = SimpleNamespace(
+        id=uuid4(),
+        fingerprint="v" * 64,
+        snapshot_schema="ATLAS_HISTORICAL_SIMULATION_SNAPSHOT_V2",
+        venue_instrument_id=uuid4(),
+        integrity_summary={},
     )
+    version = _version(warm_up_bars=1)
+    native_row = SimpleNamespace(
+        start_time=NOW,
+        end_time=NOW + timedelta(minutes=15),
+        open_price=Decimal("1.1"),
+        high_price=Decimal("1.2"),
+        low_price=Decimal("1.0"),
+        close_price=Decimal("1.15"),
+        volume=None,
+    )
+    trade = _trade(1)
+
+    class ScalarResult:
+        def all(self):
+            return (native_row,)
+
+    class Session:
+        def get(self, model, _id):
+            if model is DatasetSnapshotModel:
+                return snapshot
+            if model is StrategyVersionModel:
+                return version
+            if model.__name__ == "VenueInstrumentModel":
+                return SimpleNamespace(instrument_id=uuid4(), provider="OANDA")
+            if model.__name__ == "InstrumentModel":
+                return SimpleNamespace(code="EUR/USD")
+            return None
+
+        def scalars(self, _statement: object) -> ScalarResult:
+            return ScalarResult()
+
+    service = ExperimentResultReadService(results=FakeRepo(experiment, trades=(trade,)))
+
+    def reject_legacy(*_args: object, **_kwargs: object) -> NoReturn:
+        pytest.fail("V2 result read entered the legacy boundary")
+
+    monkeypatch.setattr(
+        service,
+        "_legacy_v1_m15",
+        reject_legacy,
+    )
+    value = service.price_analysis(_orm_session(Session()), experiment.id)
+    assert value.provenance["analyticalSeries"] == "PERSISTED_NATIVE_M15_MID"
+    chart = _chart_reader(service)(
+        _orm_session(Session()), experiment, trade, trade.intent
+    )
+    assert chart.candles == ()
+
+
+def test_unknown_snapshot_schema_fails_closed_without_v1_fallback():
+    snapshot = _snapshot("u" * 64)
+    snapshot.snapshot_schema = "UNKNOWN"
+    service = ExperimentResultReadService(
+        results=FakeRepo(_experiment()),
+        snapshots=_snapshot_repository(SnapshotMembershipSpy(())),
+    )
+    with pytest.raises(ResultReadError) as error:
+        service.price_analysis(FakeSession(snapshot, _version(0)), uuid4())
+    assert error.value.code == "INCOMPLETE_RESULT"
 
 
 # ---------------------------------------------------------------------------
@@ -239,9 +391,9 @@ def test_price_analysis_warmup_matches_simulation_clock_window():
         if experiment.trading_start < bar.end_time <= experiment.trading_end
     )
 
-    market_data = MarketDataSpy(bars)
+    snapshots = SnapshotMembershipSpy(bars)
     service = ExperimentResultReadService(
-        results=FakeRepo(experiment), market_data=market_data
+        results=FakeRepo(experiment), snapshots=_snapshot_repository(snapshots)
     )
     value = service.price_analysis(FakeSession(snapshot, version), experiment.id)
 
@@ -272,7 +424,8 @@ def test_price_analysis_warmup_matches_real_simulation_clock_object():
     )[-warmup_count:]
 
     service = ExperimentResultReadService(
-        results=FakeRepo(experiment), market_data=MarketDataSpy(bars)
+        results=FakeRepo(experiment),
+        snapshots=_snapshot_repository(SnapshotMembershipSpy(bars)),
     )
     value = service.price_analysis(FakeSession(snapshot, version), experiment.id)
     assert tuple(c["t"] for c in value.m15[:warmup_count]) == expected_warmup
@@ -289,7 +442,8 @@ def test_price_analysis_bars_are_completed_utc_half_open_and_ordered():
     snapshot = _snapshot("d" * 64)
     version = _version(warm_up_bars=4)
     service = ExperimentResultReadService(
-        results=FakeRepo(experiment), market_data=MarketDataSpy(bars)
+        results=FakeRepo(experiment),
+        snapshots=_snapshot_repository(SnapshotMembershipSpy(bars)),
     )
     value = service.price_analysis(FakeSession(snapshot, version), experiment.id)
     finishes: list[datetime] = []
@@ -305,15 +459,26 @@ def test_price_analysis_bars_are_completed_utc_half_open_and_ordered():
         finishes.append(finish)
 
 
-def test_price_analysis_caps_at_10_000_candles_and_sets_truncated_diagnostic():
+def test_price_analysis_caps_at_10_000_candles_and_sets_truncated_diagnostic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     bars = tuple(_bar(index) for index in range(10_001))
     experiment = _experiment()
     experiment.trading_start = NOW
     experiment.trading_end = NOW + timedelta(minutes=15 * 10_002)
     snapshot = _snapshot("e" * 64)
     version = _version(warm_up_bars=0)
+    def aggregate_for_test(
+        _values: tuple[Bar, ...] | list[Bar], *_args: object
+    ) -> tuple[list[Bar], list[object]]:
+        return list(bars), []
+
+    monkeypatch.setattr(
+        "backend.experiments.results.aggregate_m1_to_m15", aggregate_for_test
+    )
     service = ExperimentResultReadService(
-        results=FakeRepo(experiment), market_data=MarketDataSpy(bars)
+        results=FakeRepo(experiment),
+        snapshots=_snapshot_repository(SnapshotMembershipSpy(bars, convert=False)),
     )
     value = service.price_analysis(FakeSession(snapshot, version), experiment.id)
     assert len(value.m15) == 10_000
@@ -333,7 +498,7 @@ def test_price_analysis_caps_at_250_trades_and_flags_truncation():
     version = _version(warm_up_bars=4)
     service = ExperimentResultReadService(
         results=FakeRepo(experiment, trades=trades),
-        market_data=MarketDataSpy(bars),
+        snapshots=_snapshot_repository(SnapshotMembershipSpy(bars)),
     )
     value = service.price_analysis(FakeSession(snapshot, version), experiment.id)
     assert len(value.trades) == 250
@@ -360,7 +525,8 @@ def test_price_analysis_ema_uses_persisted_period_and_matches_indicators_v2():
     snapshot = _snapshot("a" * 64)
     version = _version(warm_up_bars=4)
     service = ExperimentResultReadService(
-        results=FakeRepo(experiment), market_data=MarketDataSpy(bars)
+        results=FakeRepo(experiment),
+        snapshots=_snapshot_repository(SnapshotMembershipSpy(bars)),
     )
     value = service.price_analysis(FakeSession(snapshot, version), experiment.id)
     assert value.diagnostics["ema_period"] == 20, (
@@ -386,7 +552,8 @@ def test_price_analysis_ema_omits_unwarmed_prefix_points():
     snapshot = _snapshot("a" * 64)
     version = _version(warm_up_bars=0)
     service = ExperimentResultReadService(
-        results=FakeRepo(experiment), market_data=MarketDataSpy(bars)
+        results=FakeRepo(experiment),
+        snapshots=_snapshot_repository(SnapshotMembershipSpy(bars)),
     )
     value = service.price_analysis(FakeSession(snapshot, version), experiment.id)
     # 10 candles minus first 6 unwarmed prefixes = 4 EMA points
@@ -442,7 +609,7 @@ def test_price_analysis_entry_exit_approved_stop_target_match_persisted_rows():
     version = _version(warm_up_bars=4)
     service = ExperimentResultReadService(
         results=FakeRepo(experiment, trades=(trade,)),
-        market_data=MarketDataSpy(bars),
+        snapshots=_snapshot_repository(SnapshotMembershipSpy(bars)),
     )
     value = service.price_analysis(FakeSession(snapshot, version), experiment.id)
     assert len(value.trades) == 1
@@ -509,7 +676,7 @@ def test_price_analysis_approved_protection_filter_excludes_other_phases():
     version = _version(warm_up_bars=4)
     service = ExperimentResultReadService(
         results=FakeRepo(experiment, trades=(trade,)),
-        market_data=MarketDataSpy(bars),
+        snapshots=_snapshot_repository(SnapshotMembershipSpy(bars)),
     )
     value = service.price_analysis(FakeSession(snapshot, version), experiment.id)
     serialized = value.trades[0]
@@ -550,7 +717,7 @@ def test_price_analysis_reference_facts_only_come_from_rationale():
     version = _version(warm_up_bars=4)
     service = ExperimentResultReadService(
         results=FakeRepo(experiment, trades=(trade,)),
-        market_data=MarketDataSpy(bars),
+        snapshots=_snapshot_repository(SnapshotMembershipSpy(bars)),
     )
     value = service.price_analysis(FakeSession(snapshot, version), experiment.id)
     assert len(value.reference) == 1
@@ -578,7 +745,7 @@ def test_price_analysis_optional_rationale_omitted_but_chart_remains_usable():
     experiment.trading_end = NOW + timedelta(minutes=15 * 39)
     service = ExperimentResultReadService(
         results=FakeRepo(experiment, trades=(trade,)),
-        market_data=MarketDataSpy(bars),
+        snapshots=_snapshot_repository(SnapshotMembershipSpy(bars)),
     )
     value = service.price_analysis(
         FakeSession(_snapshot("h" * 64), _version(warm_up_bars=4)),
@@ -601,7 +768,7 @@ def test_price_analysis_zero_trades_returns_m15_ema_and_empty_markers():
     experiment.trading_end = NOW + timedelta(minutes=15 * 39)
     service = ExperimentResultReadService(
         results=FakeRepo(experiment, trades=()),
-        market_data=MarketDataSpy(bars),
+        snapshots=_snapshot_repository(SnapshotMembershipSpy(bars)),
     )
     value = service.price_analysis(
         FakeSession(_snapshot("i" * 64), _version(warm_up_bars=5)), experiment.id
@@ -627,7 +794,8 @@ def test_price_analysis_zero_trades_returns_m15_ema_and_empty_markers():
 def test_price_analysis_pre_completion_returns_result_not_ready(status):
     experiment = _experiment(status=status)
     service = ExperimentResultReadService(
-        results=FakeRepo(experiment), market_data=MarketDataSpy(())
+        results=FakeRepo(experiment),
+        snapshots=_snapshot_repository(SnapshotMembershipSpy(())),
     )
     with pytest.raises(ResultReadError) as error:
         service.price_analysis(FakeSession(), experiment.id)
@@ -637,7 +805,8 @@ def test_price_analysis_pre_completion_returns_result_not_ready(status):
 def test_price_analysis_failed_returns_experiment_failed():
     experiment = _experiment(status="FAILED")
     service = ExperimentResultReadService(
-        results=FakeRepo(experiment), market_data=MarketDataSpy(())
+        results=FakeRepo(experiment),
+        snapshots=_snapshot_repository(SnapshotMembershipSpy(())),
     )
     with pytest.raises(ResultReadError) as error:
         service.price_analysis(FakeSession(), experiment.id)
@@ -647,7 +816,8 @@ def test_price_analysis_failed_returns_experiment_failed():
 def test_price_analysis_missing_snapshot_returns_incomplete_result():
     bars = tuple(_bar(index) for index in range(10))
     service = ExperimentResultReadService(
-        results=FakeRepo(_experiment()), market_data=MarketDataSpy(bars)
+        results=FakeRepo(_experiment()),
+        snapshots=_snapshot_repository(SnapshotMembershipSpy(bars)),
     )
     with pytest.raises(ResultReadError) as error:
         service.price_analysis(
@@ -659,7 +829,8 @@ def test_price_analysis_missing_snapshot_returns_incomplete_result():
 def test_price_analysis_missing_strategy_version_returns_incomplete_result():
     bars = tuple(_bar(index) for index in range(10))
     service = ExperimentResultReadService(
-        results=FakeRepo(_experiment()), market_data=MarketDataSpy(bars)
+        results=FakeRepo(_experiment()),
+        snapshots=_snapshot_repository(SnapshotMembershipSpy(bars)),
     )
     with pytest.raises(ResultReadError) as error:
         service.price_analysis(
@@ -668,7 +839,7 @@ def test_price_analysis_missing_strategy_version_returns_incomplete_result():
     assert error.value.code == "INCOMPLETE_RESULT"
 
 
-def test_price_analysis_missing_market_data_reader_returns_incomplete_result():
+def test_price_analysis_missing_snapshot_membership_reader_returns_incomplete_result():
     service = ExperimentResultReadService(results=FakeRepo(_experiment()))
     with pytest.raises(ResultReadError) as error:
         service.price_analysis(FakeSession(), uuid4())
@@ -680,7 +851,8 @@ def test_price_analysis_invalid_ema_period_returns_incomplete_result():
     experiment = _experiment()
     experiment.parameter_snapshot = {"ema_period": 0}
     service = ExperimentResultReadService(
-        results=FakeRepo(experiment), market_data=MarketDataSpy(bars)
+        results=FakeRepo(experiment),
+        snapshots=_snapshot_repository(SnapshotMembershipSpy(bars)),
     )
     with pytest.raises(ResultReadError) as error:
         service.price_analysis(
@@ -694,7 +866,8 @@ def test_price_analysis_missing_ema_period_returns_incomplete_result():
     experiment = _experiment()
     experiment.parameter_snapshot = {}
     service = ExperimentResultReadService(
-        results=FakeRepo(experiment), market_data=MarketDataSpy(bars)
+        results=FakeRepo(experiment),
+        snapshots=_snapshot_repository(SnapshotMembershipSpy(bars)),
     )
     with pytest.raises(ResultReadError) as error:
         service.price_analysis(
@@ -710,7 +883,8 @@ def test_price_analysis_insufficient_warmup_returns_incomplete_result():
     experiment.trading_start = NOW + timedelta(minutes=15 * 5)
     experiment.trading_end = NOW + timedelta(minutes=15 * 9)
     service = ExperimentResultReadService(
-        results=FakeRepo(experiment), market_data=MarketDataSpy(bars)
+        results=FakeRepo(experiment),
+        snapshots=_snapshot_repository(SnapshotMembershipSpy(bars)),
     )
     with pytest.raises(ResultReadError) as error:
         service.price_analysis(
@@ -722,11 +896,11 @@ def test_price_analysis_insufficient_warmup_returns_incomplete_result():
 
 def test_price_analysis_provider_failure_returns_incomplete_result():
     class Exploding:
-        def derive_m15(self, *_args, **_kwargs):
+        def ordered_members_with_sources(self, *_args, **_kwargs):
             raise ValueError("simulated M1 read error")
 
     service = ExperimentResultReadService(
-        results=FakeRepo(_experiment()), market_data=Exploding()
+        results=FakeRepo(_experiment()), snapshots=_snapshot_repository(Exploding())
     )
     with pytest.raises(ResultReadError) as error:
         service.price_analysis(
@@ -746,7 +920,7 @@ def test_price_analysis_does_not_mutate_persisted_query_state():
     session = FakeSession(_snapshot("r" * 64), _version(warm_up_bars=4))
     repo = FakeRepo(_experiment(), trades=(trade,))
     service = ExperimentResultReadService(
-        results=repo, market_data=MarketDataSpy(bars)
+        results=repo, snapshots=_snapshot_repository(SnapshotMembershipSpy(bars))
     )
     before_snapshot_fingerprint = session.snapshot.fingerprint
     before_version_context = session.version.required_historical_context_bars

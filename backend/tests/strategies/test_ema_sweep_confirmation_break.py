@@ -105,18 +105,26 @@ def test_registered_strategy_evaluate_arms_at_zero_and_expires_after_w5() -> Non
     assert armed.decision.expiry_time is None
 
     watch = tuple(
-        _bar(index, "1.1000", "1.1010", "1.0990", "1.1000") for index in range(101, 106)
+        _bar(index, "1.1000", "1.1010", "1.0990", "1.1000")
+        for index in range(101, 106)
     )
-    w5 = evaluate_strategy(
-        implementation,
-        StrategyContext(
-            watch[-1].end_time,
-            Instrument.EUR_USD,
-            history + (reference, confirmation) + watch,
-        ),
-        StrategyParameters(),
-        armed.next_state,
-    )
+    working = armed.next_state
+    watched = None
+    for expected_watch_count, bar in enumerate(watch, start=1):
+        watched = evaluate_strategy(
+            implementation,
+            StrategyContext(
+                bar.end_time,
+                Instrument.EUR_USD,
+                history + (reference, confirmation) + watch[:expected_watch_count],
+            ),
+            StrategyParameters(),
+            working,
+        )
+        working = watched.next_state
+        assert watched.next_state.watch_bars == expected_watch_count
+    assert watched is not None
+    w5 = watched
     assert w5.next_state.phase is Phase.ARMED
     assert w5.next_state.watch_bars == 5
     w6 = _bar(106, "1.1000", "1.1010", "1.0990", "1.1000")

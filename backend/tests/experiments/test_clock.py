@@ -82,7 +82,41 @@ def test_sparse_v2_execution_accepts_bid_ask_without_wall_clock_continuity() -> 
     )
     frames = tuple(clock.frames())
     assert frames[0].phase is ClockPhase.DECISION
-    assert tuple(clock.observations())[0].sparse is True
+    assert frames[0].decision_bar.timeframe is Timeframe.M15
+    assert frames[0].decision_bar.price_component is PriceComponent.MID
+    observations = tuple(clock.observations())
+    assert observations[0].sparse is True
+    assert tuple(item.bar.price_component for item in observations[0].bars) == (
+        PriceComponent.ASK,
+        PriceComponent.BID,
+    )
+
+
+def test_exact_frontier_is_exposed_as_post_decision_data_but_not_pre_decision() -> None:
+    start = datetime(2026, 1, 5, 10, tzinfo=UTC)
+    frontier = start + timedelta(minutes=15)
+    clock = SimulationClock(
+        tuple(
+            item
+            for minute in (frontier, frontier + timedelta(minutes=1))
+            for item in (
+                _m1(minute, PriceComponent.ASK, "1.1001"),
+                _m1(minute, PriceComponent.BID, "1.0999"),
+            )
+        ),
+        (_m15(start),),
+        trading_start=start,
+        trading_end=start + timedelta(minutes=30),
+        sparse_execution=True,
+    )
+
+    frame = next(iter(clock.frames()))
+    assert {item.bar.start_time for item in frame.executable_opens} == {frontier}
+    assert [item.start_time for item in clock.observations()] == [
+        frontier,
+        frontier + timedelta(minutes=1),
+    ]
+    assert clock.entry_observation(frontier) is not None
 
 
 def test_warmup_is_ordered_before_trading_and_disables_exposure() -> None:
