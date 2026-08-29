@@ -1,62 +1,20 @@
 'use client';
 import Link from 'next/link';
-import { useParams, useRouter, useSearchParams } from 'next/navigation';
-import type { FormEvent } from 'react';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import type React from 'react';
-import {
-  AlertCircle,
-  ArrowLeft,
-  CheckCircle2,
-  Clock3,
-  LoaderCircle,
-  RefreshCw,
-} from 'lucide-react';
-import { toast } from 'sonner';
+import { useCallback, useEffect, useState } from 'react';
+import { LoaderCircle } from 'lucide-react';
 import { AppShell } from '../app-shell';
-import { Button } from '../ui/button';
-import { Select } from '../ui/select';
-import { UtcDateTimePicker } from '../utc-date-time-picker';
-import {
-  ApiError,
-  ApiTransportTimeoutError,
-  ApiUnavailableError,
-  atlasApi,
-} from '../../lib/api-client';
-import {
-  formatChartTime,
-  formatChartTick,
-  formatInstant,
-  parseUtcInput,
-  utcInputFromInstant,
-} from '../../lib/time';
+import { atlasApi } from '../../lib/api-client';
 import { useDisplayTimeZone } from '../../app/providers';
-import { chartRoles, strictlyAscending } from './chart-support';
-import {
-  formatMoney,
-  formatPercent,
-  formatPrice,
-  formatRatio,
-} from '../../lib/experiment-formatters';
-import type { Json } from './shared';
 import {
   object,
   text,
   strategyIdentity,
-  statusOf,
+  statusLabel,
   dateLabel,
   errorMessage,
-  productNextAction,
-  scalarFields,
-  parameterDefaults,
-  snapshotLabel,
-  diagnosticLabel,
-  formattedMetric,
-  metricState,
-  priceLabel,
-  moneyLabel,
-  rLabel,
-  percentLabel,
+  experimentHeadlineMetrics,
+  experimentIdentity,
+  experimentPeriod,
 } from './shared';
 import { ErrorPanel } from './load-status';
 import { StatusBadge } from './load-status';
@@ -67,18 +25,34 @@ export function ExperimentsList() {
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [error, setError] = useState('');
   const [selected, setSelected] = useState<string[]>([]);
-  const load = useCallback(() => {
-    setState('loading');
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const load = useCallback((cursor?: string) => {
+    if (cursor) setLoadingMore(true);
+    else setState('loading');
     atlasApi
-      .listExperiments({ limit: 50 })
+      .listExperiments({ limit: 50, ...(cursor ? { cursor } : {}) })
       .then((value) => {
-        const nextItems = object(value).items;
-        setItems(Array.isArray(nextItems) ? nextItems : []);
+        const payload = object(value);
+        const nextItems = payload.items;
+        setItems((current) =>
+          cursor
+            ? [...current, ...(Array.isArray(nextItems) ? nextItems : [])]
+            : Array.isArray(nextItems)
+              ? nextItems
+              : [],
+        );
+        setNextCursor(
+          typeof payload.nextCursor === 'string' ? payload.nextCursor : null,
+        );
         setState('ready');
       })
       .catch((reason) => {
         setError(errorMessage(reason));
-        setState('error');
+        if (!cursor) setState('error');
+      })
+      .finally(() => {
+        setLoadingMore(false);
       });
   }, []);
   useEffect(() => {
@@ -180,7 +154,9 @@ export function ExperimentsList() {
               <tbody className="divide-y divide-atlas-border">
                 {items.map((raw, index) => {
                   const item = object(raw);
-                  const status = statusOf(item.status);
+                  const status = statusLabel(item.status);
+                  const identity = experimentIdentity(item);
+                  const headline = experimentHeadlineMetrics(item);
                   return (
                     <tr
                       key={text(item.id, String(index))}
@@ -189,7 +165,7 @@ export function ExperimentsList() {
                       <td className="px-4 py-4">
                         {status === 'COMPLETED' ? (
                           <input
-                            aria-label={`Select Experiment ${index + 1}`}
+                            aria-label={`Select ${identity}`}
                             type="checkbox"
                             checked={selected.includes(text(item.id))}
                             onChange={() =>
@@ -217,46 +193,29 @@ export function ExperimentsList() {
                           className="font-medium text-atlas-foreground underline-offset-4 hover:underline"
                           href={`/experiments/${text(item.id)}`}
                         >
-                          Experiment {index + 1}
+                          {identity}
                         </Link>
                       </td>
                       <td className="px-4 py-4 text-atlas-foreground-muted">
                         {strategyIdentity(item)}
                       </td>
                       <td className="px-4 py-4 text-atlas-foreground-muted">
-                        {dateLabel(item.tradingStart, timeZone)}
-                        <span className="block text-xs text-atlas-foreground-disabled">
-                          to {dateLabel(item.tradingEnd, timeZone)}
-                        </span>
+                        {experimentPeriod(item, timeZone)}
                       </td>
                       <td className="px-4 py-4">
                         <StatusBadge status={status} />
                       </td>
                       <td className="px-4 py-4 tabular-nums">
-                        {status === 'COMPLETED'
-                          ? formattedMetric(
-                              object(item.metrics).netReturn,
-                              'percent',
-                            )
-                          : '—'}
+                        {status === 'COMPLETED' ? headline.netReturn : '—'}
                       </td>
                       <td className="px-4 py-4 tabular-nums">
-                        {status === 'COMPLETED'
-                          ? formattedMetric(
-                              object(item.metrics).maxDrawdownPercent,
-                              'percent',
-                            )
-                          : '—'}
+                        {status === 'COMPLETED' ? headline.maxDrawdown : '—'}
                       </td>
                       <td className="px-4 py-4 tabular-nums">
-                        {status === 'COMPLETED'
-                          ? formattedMetric(object(item.metrics).sharpe, 'r')
-                          : '—'}
+                        {status === 'COMPLETED' ? headline.sharpe : '—'}
                       </td>
                       <td className="px-4 py-4 tabular-nums">
-                        {status === 'COMPLETED'
-                          ? formattedMetric(object(item.metrics).tradeCount)
-                          : '—'}
+                        {status === 'COMPLETED' ? headline.trades : '—'}
                       </td>
                       <td className="px-4 py-4 text-atlas-foreground-muted">
                         {dateLabel(item.createdAt, timeZone)}
@@ -266,6 +225,18 @@ export function ExperimentsList() {
                 })}
               </tbody>
             </table>
+          </div>
+        )}
+        {state === 'ready' && nextCursor && (
+          <div className="flex justify-center">
+            <button
+              type="button"
+              onClick={() => load(nextCursor)}
+              disabled={loadingMore}
+              className="inline-flex min-h-10 items-center rounded-md border border-atlas-control-border bg-atlas-surface px-4 text-sm font-medium text-atlas-foreground hover:bg-atlas-surface-hover disabled:cursor-wait disabled:opacity-60"
+            >
+              {loadingMore ? 'Loading Experiments…' : 'Load more Experiments'}
+            </button>
           </div>
         )}
       </section>

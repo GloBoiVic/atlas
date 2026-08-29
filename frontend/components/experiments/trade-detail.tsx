@@ -153,63 +153,43 @@ export function TradeDetailPage() {
             </span>
           </div>
         </header>
-        <dl className="grid gap-x-6 gap-y-5 border-y border-atlas-border py-5 sm:grid-cols-2 lg:grid-cols-4">
-          <MetricCard
-            label="Net P&L"
-            value={{ state: 'VALUE', value: text(summary.net_pnl) }}
-            format="money"
-          />
-          <MetricCard
-            label="R multiple"
-            value={{ state: 'VALUE', value: text(summary.r_multiple) }}
-            format="r"
-          />
-          <div>
-            <dt className="text-xs text-atlas-foreground-muted">
-              Entry / exit
-            </dt>
-            <dd className="mt-1 tabular-nums">
-              {priceLabel(summary.entry_price)} →{' '}
-              {priceLabel(summary.exit_price)}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-xs text-atlas-foreground-muted">Exit reason</dt>
-            <dd className="mt-1">{text(summary.exit_reason)}</dd>
-          </div>
-          <div>
-            <dt className="text-xs text-atlas-foreground-muted">
-              Initial stop / target
-            </dt>
-            <dd className="mt-1 tabular-nums">
-              {priceLabel(data.initial_stop)} / {priceLabel(data.target)}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-xs text-atlas-foreground-muted">Ambiguity</dt>
-            <dd className="mt-1">
-              {ambiguous
-                ? 'Ambiguous intrabar resolution — Stop-first policy applied.'
-                : 'None recorded'}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-xs text-atlas-foreground-muted">Financing</dt>
-            <dd className="mt-1 font-medium">
-              {text(data.financing_disclosure)}
-            </dd>
-          </div>
-        </dl>
+        <Lineage
+          data={data}
+          context={
+            <section className="mt-6 border-t border-atlas-border pt-5">
+              <h3 className="text-sm font-medium">Trade context</h3>
+              <p className="mt-1 text-sm text-atlas-foreground-muted">
+                Persisted analytical candles, EMA series, and setup markers from
+                the immutable DatasetSnapshot. Atlas supplied the evidence; the
+                browser does not infer Strategy identity.
+              </p>
+              <p className="mt-1 text-xs text-atlas-foreground-muted">
+                Times shown in {timeZone}.
+              </p>
+              {hasOmitted && (
+                <p className="mt-3 rounded-md border border-atlas-warning bg-atlas-warning-muted p-3 text-sm text-atlas-warning">
+                  Chart omits a range from {dateLabel(omitted.start, timeZone)}{' '}
+                  to {dateLabel(omitted.end, timeZone)} to keep the focused
+                  context bounded.
+                </p>
+              )}
+              <div className="mt-4 rounded-lg border border-atlas-border bg-atlas-surface p-3">
+                <TradeChart chart={chart} levels={levels} />
+              </div>
+            </section>
+          }
+        />
         <section className="border-y border-atlas-border py-5">
-          <h2 className="text-lg font-semibold">Why this trade happened</h2>
+          <h2 className="text-lg font-semibold">Protection</h2>
           <p className="mt-1 max-w-2xl text-sm text-atlas-foreground-muted">
-            The Strategy identified a confirmed sweep and the position was
-            opened when the trigger became executable.
+            Stop and target levels recorded by the Risk decision for this Trade.
           </p>
           <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
             <div>
-              <dt className="text-xs text-atlas-foreground-muted">Setup</dt>
-              <dd className="font-medium">Sweep confirmation</dd>
+              <dt className="text-xs text-atlas-foreground-muted">
+                Entry policy
+              </dt>
+              <dd>{text(entryPolicy.entryPolicy, 'Not recorded')}</dd>
             </div>
             <div>
               <dt className="text-xs text-atlas-foreground-muted">Trigger</dt>
@@ -218,7 +198,9 @@ export function TradeDetailPage() {
               </dd>
             </div>
             <div>
-              <dt className="text-xs text-atlas-foreground-muted">Stop</dt>
+              <dt className="text-xs text-atlas-foreground-muted">
+                Initial stop
+              </dt>
               <dd className="tabular-nums">{priceLabel(data.initial_stop)}</dd>
             </div>
             <div>
@@ -227,26 +209,62 @@ export function TradeDetailPage() {
             </div>
           </dl>
         </section>
-        <section>
-          <h2 className="text-lg font-semibold">Trade context</h2>
-          <p className="mt-1 text-sm text-atlas-foreground-muted">
-            Canonical M15 MID candles and EMA 100 from the immutable
-            DatasetSnapshot. Atlas supplied the setup markers; the browser does
-            not infer Strategy identity.
+        <section aria-labelledby="outcome-heading">
+          <h2 id="outcome-heading" className="text-lg font-semibold">
+            Outcome
+          </h2>
+          <p className="mt-1 max-w-2xl text-sm text-atlas-foreground-muted">
+            Persisted result facts for this completed Trade.
           </p>
-          <p className="mt-1 text-xs text-atlas-foreground-muted">
-            Times shown in {timeZone}.
-          </p>
-          {hasOmitted && (
-            <p className="mt-3 rounded-md border border-atlas-warning bg-atlas-warning-muted p-3 text-sm text-atlas-warning">
-              Chart omits a range from {dateLabel(omitted.start, timeZone)} to{' '}
-              {dateLabel(omitted.end, timeZone)} to keep the focused context
-              bounded.
-            </p>
-          )}
-          <div className="mt-4 rounded-lg border border-atlas-border bg-atlas-surface p-3">
-            <TradeChart chart={chart} levels={levels} />
-          </div>
+          <dl className="mt-4 grid gap-x-6 gap-y-5 border-y border-atlas-border py-5 sm:grid-cols-2 lg:grid-cols-4">
+            <MetricCard
+              label="Net P&L"
+              value={{ state: 'VALUE', value: text(summary.net_pnl) }}
+              format="money"
+            />
+            <MetricCard
+              label="R multiple"
+              value={{ state: 'VALUE', value: text(summary.r_multiple) }}
+              format="r"
+            />
+            <div>
+              <dt className="text-xs text-atlas-foreground-muted">
+                Entry / exit
+              </dt>
+              <dd className="mt-1 tabular-nums">
+                {priceLabel(summary.entry_price)} →{' '}
+                {priceLabel(summary.exit_price)}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs text-atlas-foreground-muted">
+                Exit reason
+              </dt>
+              <dd className="mt-1">{text(summary.exit_reason)}</dd>
+            </div>
+            <div>
+              <dt className="text-xs text-atlas-foreground-muted">
+                Initial stop / target
+              </dt>
+              <dd className="mt-1 tabular-nums">
+                {priceLabel(data.initial_stop)} / {priceLabel(data.target)}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs text-atlas-foreground-muted">Ambiguity</dt>
+              <dd className="mt-1">
+                {ambiguous
+                  ? 'Ambiguous intrabar resolution — Stop-first policy applied.'
+                  : 'None recorded'}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs text-atlas-foreground-muted">Financing</dt>
+              <dd className="mt-1 font-medium">
+                {text(data.financing_disclosure)}
+              </dd>
+            </div>
+          </dl>
         </section>
         <details className="rounded-lg border border-atlas-border bg-atlas-surface-hover p-4">
           <summary className="cursor-pointer font-medium">
@@ -286,7 +304,6 @@ export function TradeDetailPage() {
                 </dl>
               </section>
             ) : null}
-            <Lineage data={data} />
           </div>
         </details>
       </section>

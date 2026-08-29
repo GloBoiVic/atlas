@@ -55,7 +55,10 @@ export function StrategiesPage() {
   }, []);
   return (
     <AppShell>
-      <section className="space-y-8" aria-labelledby="strategies-heading">
+      <section
+        className="flex flex-col gap-8"
+        aria-labelledby="strategies-heading"
+      >
         <header>
           <p className="mb-2 text-sm font-medium text-atlas-primary">
             Methodology catalog
@@ -164,7 +167,7 @@ export function StrategyDetailPage() {
   }, [strategyKey]);
   return (
     <AppShell>
-      <section className="max-w-5xl space-y-8">
+      <section className="flex max-w-5xl flex-col gap-8">
         <Link
           href="/strategies"
           className="inline-flex items-center gap-2 text-sm text-atlas-foreground-muted hover:text-atlas-foreground"
@@ -194,12 +197,23 @@ export function StrategyDetailPage() {
               <h1 className="text-3xl font-semibold tracking-tight">
                 {data.name}
               </h1>
-              <p className="mt-2 text-sm leading-6 text-atlas-foreground-muted">
-                {data.description}
-              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2">
+                <p className="text-sm leading-6 text-atlas-foreground-muted">
+                  {data.description}
+                </p>
+                <span className="status status-primary rounded-full border border-atlas-primary bg-atlas-primary-muted px-2.5 py-1">
+                  Historical research
+                </span>
+              </div>
             </header>
-            <div className="space-y-5">
-              <h2 className="text-lg font-semibold">Version history</h2>
+            <div className="flex flex-col gap-5">
+              <div>
+                <h2 className="text-lg font-semibold">StrategyVersions</h2>
+                <p className="mt-1 text-sm text-atlas-foreground-muted">
+                  Immutable methodology snapshots. Choose a locally available
+                  version to begin a new Experiment.
+                </p>
+              </div>
               {data.versions.map((v) => (
                 <article
                   key={v.id}
@@ -209,15 +223,15 @@ export function StrategyDetailPage() {
                     <div>
                       <h3 className="text-lg font-semibold">{v.displayName}</h3>
                       <p className="mt-1 text-sm text-atlas-foreground-muted">
-                        {v.implementationKey} · created {date(v.createdAt)}
+                        Immutable StrategyVersion · created {date(v.createdAt)}
                       </p>
                     </div>
                     <span
                       className={`status rounded-full border px-2.5 py-1 ${v.executionAvailable ? 'border-atlas-positive bg-atlas-positive-muted text-atlas-positive' : 'border-atlas-warning bg-atlas-warning-muted text-atlas-warning'}`}
                     >
                       {v.executionAvailable
-                        ? 'Available locally'
-                        : 'Unavailable locally'}
+                        ? 'Ready for new Experiment'
+                        : 'Retained for provenance'}
                     </span>
                   </div>
                   <dl className="mt-5 grid gap-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
@@ -274,6 +288,21 @@ export function StrategyDetailPage() {
                         </li>
                       ))}
                     </ul>
+                  </div>
+                  <div className="mt-5 flex flex-wrap items-center gap-3">
+                    {v.executionAvailable ? (
+                      <Link
+                        href={`/experiments/new?strategyVersionId=${encodeURIComponent(v.id)}`}
+                        className="action-primary"
+                      >
+                        Use {v.displayName} for an Experiment
+                      </Link>
+                    ) : null}
+                    <span className="text-xs text-atlas-foreground-muted">
+                      {v.capabilities.length > 0
+                        ? `Capabilities: ${v.capabilities.join(' · ')}`
+                        : 'Capabilities unavailable'}
+                    </span>
                   </div>
                   <details className="mt-5 border-t border-atlas-border pt-4">
                     <summary className="cursor-pointer text-sm font-medium">

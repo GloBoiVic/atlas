@@ -87,6 +87,10 @@ export function PriceChart({ id }: { id: string }) {
   const omittedDescription = truncated
     ? `${text(diagnostics.omittedM15Count, '0')} M15 candles and ${text(diagnostics.omittedTradeCount, '0')} Trades omitted${omitted.start && omitted.end ? ` · ${formatChartTime(new Date(String(omitted.start)).getTime() / 1000, timeZone)} → ${formatChartTime(new Date(String(omitted.end)).getTime() / 1000, timeZone)}` : ''}.`
     : '';
+  const gaps = Array.isArray(analysis?.gaps) ? analysis.gaps : [];
+  const proposalDiagnostics = Array.isArray(analysis?.proposalDiagnostics)
+    ? analysis.proposalDiagnostics
+    : [];
 
   return (
     <section aria-labelledby="price-analysis-heading" className="space-y-4">
@@ -176,6 +180,48 @@ export function PriceChart({ id }: { id: string }) {
               <strong>Chart truncated.</strong> {omittedDescription} This view
               does not cover the full result period.
             </p>
+          )}
+          {(gaps.length > 0 || proposalDiagnostics.length > 0) && (
+            <section
+              aria-labelledby="price-diagnostics-heading"
+              className="rounded-md border border-atlas-warning bg-atlas-warning-muted p-3 text-sm"
+            >
+              <h3
+                id="price-diagnostics-heading"
+                className="font-medium text-atlas-warning"
+              >
+                Diagnostics
+              </h3>
+              {gaps.length > 0 && (
+                <p className="mt-2 text-atlas-warning">
+                  {gaps.length} persisted historical data gap
+                  {gaps.length === 1 ? '' : 's'} affected this context. Missing
+                  observations are not presented as continuous prices.
+                </p>
+              )}
+              {proposalDiagnostics.length > 0 && (
+                <ul className="mt-2 flex flex-col gap-2 text-atlas-warning">
+                  {proposalDiagnostics.map((raw, index) => {
+                    const diagnostic = object(raw);
+                    return (
+                      <li key={index}>
+                        {text(
+                          diagnostic.proposalStatus ??
+                            diagnostic.proposal_status,
+                          'Recorded proposal diagnostic',
+                        )}
+                        {(diagnostic.entryPolicy ?? diagnostic.entry_policy)
+                          ? ` · ${text(diagnostic.entryPolicy ?? diagnostic.entry_policy)}`
+                          : ''}
+                        {(diagnostic.triggerPrice ?? diagnostic.trigger_price)
+                          ? ` · trigger ${priceLabel(diagnostic.triggerPrice ?? diagnostic.trigger_price)}`
+                          : ''}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </section>
           )}
         </>
       )}

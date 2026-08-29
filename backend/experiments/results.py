@@ -22,13 +22,18 @@ from backend.persistence.market_data_repository import DatasetSnapshotRepository
 from backend.persistence.models import (
     DatasetSnapshotAnalyticalBarModel,
     DatasetSnapshotModel,
+    ExperimentGapDecisionModel,
     ExperimentModel,
+    ExperimentResultModel,
     InstrumentModel,
     StrategyVersionModel,
     TradeModel,
     VenueInstrumentModel,
 )
-from backend.persistence.result_repository import ExperimentResultRepository
+from backend.persistence.result_repository import (
+    ExperimentListProjection,
+    ExperimentResultRepository,
+)
 from backend.strategies.indicators import ema_100
 from backend.strategies.indicators_v2 import ema
 
@@ -120,6 +125,37 @@ class ExperimentResultReadService:
             before_created_at=before_created_at,
             before_id=before_id,
         )
+
+    def list_projection(
+        self,
+        session: Session,
+        limit: int = 50,
+        *,
+        before_created_at: datetime | None = None,
+        before_id: UUID | None = None,
+    ) -> tuple[ExperimentListProjection, ...]:
+        if not 1 <= limit <= 100:
+            raise ResultReadError("INVALID_LIMIT", "limit must be between 1 and 100")
+        return self.results.list_projection(
+            session,
+            limit,
+            before_created_at=before_created_at,
+            before_id=before_id,
+        )
+
+    def list_result_rows(
+        self, session: Session, experiment_ids: tuple[UUID, ...]
+    ) -> dict[UUID, ExperimentResultModel]:
+        return self.results.list_result_rows(session, experiment_ids)
+
+    def list_gap_decision_rows(
+        self, session: Session, experiment_ids: tuple[UUID, ...]
+    ) -> dict[UUID, tuple[ExperimentGapDecisionModel, ...]]:
+        return self.results.list_gap_decision_rows(session, experiment_ids)
+
+    def persisted_metrics(self, result: object) -> dict[str, object]:
+        """Expose immutable metric projection to API composition code."""
+        return self._persisted_metrics(result)
 
     def detail(self, session: Session, experiment_id: UUID) -> dict[str, object]:
         experiment = self.results.experiment(session, experiment_id)

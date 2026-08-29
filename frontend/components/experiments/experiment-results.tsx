@@ -189,11 +189,21 @@ export function ExperimentResults({ id, data }: { id: string; data: Json }) {
   ).length;
   return (
     <div className="space-y-8">
-      <section aria-labelledby="metrics-heading">
-        <h2 id="metrics-heading" className="text-lg font-semibold">
-          Result
-        </h2>
-        <dl className="mt-4 grid gap-x-6 gap-y-6 sm:grid-cols-2 lg:grid-cols-4">
+      <section aria-labelledby="outcome-heading">
+        <div className="flex flex-wrap items-baseline justify-between gap-3">
+          <div>
+            <h2 id="outcome-heading" className="text-lg font-semibold">
+              Result
+            </h2>
+            <p className="mt-1 text-sm text-atlas-foreground-muted">
+              Completed historical outcome from this immutable Experiment.
+            </p>
+          </div>
+          <span className="text-sm font-medium text-atlas-positive">
+            Completed
+          </span>
+        </div>
+        <dl className="mt-5 grid gap-x-6 gap-y-6 sm:grid-cols-2 lg:grid-cols-4">
           <MetricCard
             label="Net Return"
             value={metrics.netReturn}
@@ -259,14 +269,6 @@ export function ExperimentResults({ id, data }: { id: string; data: Json }) {
           <Chart key="drawdown" points={points} kind="drawdown" />
         </div>
       </section>
-      <details className="rounded-lg border border-atlas-border bg-atlas-surface-hover p-4">
-        <summary className="cursor-pointer font-medium">
-          Technical details
-        </summary>
-        <div className="mt-4">
-          <PriceChart id={id} />
-        </div>
-      </details>
       <section aria-labelledby="trades-heading">
         <div className="flex flex-wrap items-baseline justify-between gap-3">
           <div>
@@ -288,9 +290,24 @@ export function ExperimentResults({ id, data }: { id: string; data: Json }) {
         )}
         <TradesTable id={id} trades={trades} error={error} />
       </section>
+      <section
+        aria-labelledby="evidence-heading"
+        className="flex flex-col gap-4"
+      >
+        <div>
+          <h2 id="evidence-heading" className="text-lg font-semibold">
+            Strategy evidence and diagnostics
+          </h2>
+          <p className="mt-1 text-sm text-atlas-foreground-muted">
+            Persisted Strategy evidence and bounded market context supplied by
+            the Experiment result. Nothing is inferred in the browser.
+          </p>
+        </div>
+        <PriceChart id={id} />
+      </section>
       <details className="rounded-lg border border-atlas-border bg-atlas-surface-hover p-4">
         <summary className="cursor-pointer font-medium">
-          Assumptions and provenance
+          Technical details
         </summary>
         <div className="mt-4">
           <StateDisclosure data={data} />

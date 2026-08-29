@@ -137,6 +137,20 @@ beforeEach(() => {
     },
     trades: [],
     reference: [],
+    landmarks: [
+      {
+        kind: 'Sweep high',
+        time: '2024-01-01T00:15:00Z',
+        price: '1.102',
+      },
+    ],
+    proposalDiagnostics: [
+      {
+        proposalStatus: 'TARGET_PROPOSED',
+        entryPolicy: 'NEXT_BUCKET_ONLY',
+        triggerPrice: '1.1015',
+      },
+    ],
     diagnostics: {
       truncated: false,
       emaPeriod: 20,
@@ -174,6 +188,19 @@ describe('completed Experiment result states', () => {
     expect(
       screen.getByText(/Result schema PHASE5_EXPERIMENT_RESULT_V1/),
     ).toBeInTheDocument();
+    expect(
+      await screen.findByText('Trade landmarks', { selector: 'h3' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Sweep high').closest('details')).toBeNull();
+    expect(
+      screen.getByRole('heading', { name: 'Diagnostics' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/TARGET_PROPOSED/).closest('details')).toBeNull();
+    expect(
+      screen
+        .getByText('Technical details', { selector: 'summary' })
+        .closest('details'),
+    ).not.toHaveAttribute('open');
     expect(
       screen.getByText('No executed Trades for this Experiment.'),
     ).toBeInTheDocument();
@@ -315,6 +342,11 @@ describe('focused Trade detail', () => {
           ['reason', 'engulfing confirmation'],
         ],
       },
+      setupFacts: {
+        reference: { close: '1.10000' },
+        sweep: { high: '1.10200' },
+        confirmation: { close: '1.10100' },
+      },
       risks: [
         { phase: 'PRE_SUBMISSION', outcome: 'APPROVED', stop_price: '1.09900' },
       ],
@@ -346,10 +378,39 @@ describe('focused Trade detail', () => {
       screen.getByText(/Ambiguous intrabar resolution/),
     ).toBeInTheDocument();
     expect(screen.getByText(/Chart omits a range/)).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { name: 'Strategy evidence' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { name: 'Risk decision' }),
+    ).toBeInTheDocument();
     expect(screen.getByText('TradeIntent rationale')).toBeInTheDocument();
     expect(screen.getByText('Execution lineage')).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { name: 'Order and Fill' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { name: 'Protection' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { name: 'Outcome' }),
+    ).toBeInTheDocument();
+    const headingOrder = Array.from(
+      document.querySelectorAll('h1, h2, h3, h4, h5'),
+    ).map((heading) => heading.textContent?.trim());
+    const position = (heading: string) => headingOrder.indexOf(heading);
+    expect(position('TradeIntent rationale')).toBeLessThan(
+      position('Setup facts'),
+    );
+    expect(position('Setup facts')).toBeLessThan(position('Risk decision'));
+    expect(position('Risk decision')).toBeLessThan(position('Order and Fill'));
+    expect(position('Order and Fill')).toBeLessThan(position('Protection'));
+    expect(position('Protection')).toBeLessThan(position('Outcome'));
     expect(screen.getByText('FINANCING EXCLUDED')).toBeInTheDocument();
-    expect(mocks.createChart).toHaveBeenCalled();
+    expect(
+      screen.getByText('Technical details').closest('details'),
+    ).not.toHaveAttribute('open');
+    await waitFor(() => expect(mocks.createChart).toHaveBeenCalled());
     expect(
       mocks.createChart.mock.results[0].value.addSeries,
     ).toHaveBeenCalledTimes(2);

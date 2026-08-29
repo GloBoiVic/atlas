@@ -43,6 +43,8 @@ export const strategyIdentity = (data: unknown) => {
     'Strategy',
   );
 };
+export const experimentIdentity = (data: unknown) =>
+  firstText([object(data).label], 'Experiment');
 const firstText = (values: unknown[], fallback: string) => {
   for (const value of values) {
     if (typeof value === 'string' && value.trim()) return value;
@@ -116,10 +118,23 @@ export const statusOf = (value: unknown): Status =>
   value === 'RUNNING' || value === 'COMPLETED' || value === 'FAILED'
     ? value
     : 'PENDING';
+export const statusLabel = (value: unknown) => statusOf(value);
 export const dateLabel = (
   value: unknown,
   zone?: Parameters<typeof formatInstant>[1],
 ) => formatInstant(value, zone);
+export const experimentPeriod = (
+  data: unknown,
+  zone?: Parameters<typeof formatInstant>[1],
+) => {
+  const root = object(data);
+  const identity = object(root.identity);
+  const period = object(identity.tradingPeriod);
+  const start = root.tradingStart ?? period.start;
+  const end = root.tradingEnd ?? period.end;
+  if (start === undefined || end === undefined) return 'Period unavailable';
+  return `${dateLabel(start, zone)} → ${dateLabel(end, zone)}`;
+};
 export const utcDate = (value: string) => {
   const parsed = parseUtcInput(value);
   return parsed ? new Date(parsed) : null;
@@ -134,10 +149,34 @@ export const snapshotLabel = (item: Json) => {
   const count = Number(
     item.barCount ?? integrity.barCount ?? integrity.bar_count,
   );
-  if (!Number.isFinite(count)) return 'EUR/USD historical data';
   const compact = (value: unknown) =>
     formatInstant(value, 'UTC').replace(/ UTC$/, '');
-  return `EUR/USD · ${compact(item.coverageStart)} → ${compact(item.coverageEnd)} · ${count.toLocaleString()} bars`;
+  const product =
+    text(item.snapshotSchema, '') === 'ATLAS_HISTORICAL_SIMULATION_SNAPSHOT_V2'
+      ? 'native M15 MID + sparse M1 BID/ASK'
+      : 'historical data';
+  const bars = Number.isFinite(count)
+    ? ` · ${count.toLocaleString()} bars`
+    : '';
+  return `EUR/USD · ${compact(item.coverageStart)} → ${compact(item.coverageEnd)} · ${product}${bars}`;
+};
+const snapshotFactsKey = (item: Json) => {
+  // Use the rendered authoritative facts as the identity key. If two
+  // snapshots would look the same to a trader, neither may be selected by
+  // guessing which hidden identifier was intended.
+  return snapshotLabel(item);
+};
+export const snapshotOptionState = (item: Json, siblings: Json[]) => {
+  const ambiguous =
+    siblings.filter(
+      (candidate) => snapshotFactsKey(candidate) === snapshotFactsKey(item),
+    ).length > 1;
+  return {
+    label: ambiguous
+      ? `${snapshotLabel(item)} · selection unavailable (ambiguous snapshot facts)`
+      : snapshotLabel(item),
+    disabled: ambiguous,
+  };
 };
 export const diagnosticLabel = (value: unknown) => {
   const item = object(value);
@@ -157,6 +196,15 @@ export const formattedMetric = (
   if (format === 'percent') return percentLabel(data.value);
   if (format === 'r') return rLabel(data.value);
   return text(data.value);
+};
+export const experimentHeadlineMetrics = (data: unknown) => {
+  const metrics = object(object(data).metrics);
+  return {
+    netReturn: formattedMetric(metrics.netReturn, 'percent'),
+    maxDrawdown: formattedMetric(metrics.maxDrawdownPercent, 'percent'),
+    sharpe: formattedMetric(metrics.sharpe, 'r'),
+    trades: formattedMetric(metrics.tradeCount),
+  };
 };
 export const metricState = (value: unknown) => object(value);
 export const priceLabel = (value: unknown) => {
