@@ -1,5 +1,15 @@
 # Completed
 
+<!-- completion-id: foundation-freeze-05-trader-product-ui-completion -->
+## Foundation Freeze 05 — Trader Product UI Completion — completion record
+
+- **Date/status:** 2026-08-29 — terminal closure approved; targeted validation and review **PASS**; merged and pushed.
+- **Commit:** `e55c805` Complete Freeze 05 trader product UI; merge commit `481928f`.
+- **Scope:** Historical-research trader workstation UI completion, StrategyVersion handoff and setup readiness, bounded list projections, result/Trade/comparison hierarchy, acceptance hardening, and generated OpenAPI client freshness. PAPER/LIVE, financial semantics, and broader API meaning remained unchanged.
+- **Validation:** Prior full evidence preserved; targeted OpenAPI freshness/typecheck passed; targeted Experiment-list regression, response-equivalence, and bounded 3-SELECT evidence passed. Full validation matrix was not rerun during remediation.
+- **Review:** `dispatch/workstreams/foundation-freeze-05-trader-product-ui-completion/REVIEW.md` — broad and targeted review **PASS**; no unresolved Critical or Important findings.
+- **Git/state:** Feature branch pushed, merged into `main`, and `main` pushed. `.codegraph/` and `frontend/.env.local` were preserved and excluded. Active dispatch state cleared. Freeze 06 was not started.
+
 <!-- completion-id: foundation-freeze-04-experiment-engine-simplification -->
 ## Foundation Freeze 04 — Experiment Engine Simplification — completion record
 
