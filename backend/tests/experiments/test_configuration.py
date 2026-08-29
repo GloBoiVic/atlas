@@ -210,7 +210,10 @@ def test_production_registration_archives_once_and_evaluation_has_no_path_input(
         implementation_key="ema_sweep_confirmation_break.v2",
     )
     assert entry.source_archive.fingerprint
-    assert tuple(registry.catalog()) == (entry,)
+    assert registry.get(
+        "candle_confirmation_break",
+        implementation_key="candle_confirmation_break.v1",
+    )
     assert (
         entry.implementation.definition.implementation_key
         == "ema_sweep_confirmation_break.v2"

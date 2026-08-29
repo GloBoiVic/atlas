@@ -280,6 +280,74 @@ describe('completed Experiment result states', () => {
     ).toBeInTheDocument();
     expect(mocks.getPriceAnalysis).toHaveBeenCalledWith('experiment-1');
   });
+
+  it('renders non-EMA parameters and opaque candidate evidence', async () => {
+    mocks.getExperiment.mockResolvedValue({
+      ...completed('0'),
+      strategy: {
+        displayName: 'Candle Confirmation Break v1',
+        parameterSchema: [
+          {
+            key: 'confirmation_bars',
+            label: 'Confirmation bars',
+            type: 'integer',
+            default: 2,
+            min: 1,
+            max: 3,
+          },
+        ],
+      },
+      parameters: { confirmation_bars: 2 },
+      marketRequirements: {
+        instrument: 'EUR/USD',
+        resolution: '15m',
+        priceComponent: 'MID',
+        pipSize: '0.0001',
+      },
+    });
+    mocks.getPriceAnalysis.mockResolvedValue({
+      m15: [],
+      ema: [],
+      tradingWindow: {},
+      trades: [],
+      reference: [],
+      evidence: [
+        {
+          tradeSequence: 1,
+          setup: {
+            schema_key: 'CANDLE_CONFIRMATION_BREAK_EVIDENCE_V1',
+            version: 1,
+            fields: { proposed_stop: '1.1040', pip_size: '0.0001' },
+          },
+        },
+      ],
+      diagnostics: {
+        truncated: false,
+        emaPeriod: null,
+        requiredHistoricalContextBars: 1,
+        snapshotFingerprint: 'snapshot',
+        m15EligibleCount: 0,
+        m15ReturnedCount: 0,
+        tradeEligibleCount: 0,
+        tradeReturnedCount: 0,
+        omittedRange: null,
+        omittedM15Count: 0,
+        omittedTradeCount: 0,
+      },
+    });
+    render(<ExperimentStatusPage />);
+
+    expect(await screen.findByText('Strategy parameters')).toBeInTheDocument();
+    expect(screen.getByText('Confirmation bars')).toBeInTheDocument();
+    expect(screen.getByText(/0\.0001/)).toBeInTheDocument();
+    expect(
+      await screen.findByText('Persisted Strategy evidence'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('CANDLE_CONFIRMATION_BREAK_EVIDENCE_V1'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('EMA')).not.toBeInTheDocument();
+  });
 });
 
 describe('terminal and persistent result states', () => {

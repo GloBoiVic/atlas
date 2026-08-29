@@ -91,6 +91,8 @@ export function PriceChart({ id }: { id: string }) {
   const proposalDiagnostics = Array.isArray(analysis?.proposalDiagnostics)
     ? analysis.proposalDiagnostics
     : [];
+  const evidence = Array.isArray(analysis?.evidence) ? analysis.evidence : [];
+  const hasEma = Array.isArray(analysis?.ema) && analysis.ema.length > 0;
 
   return (
     <section aria-labelledby="price-analysis-heading" className="space-y-4">
@@ -103,8 +105,9 @@ export function PriceChart({ id }: { id: string }) {
             object(analysis?.provenance).analyticalSeries,
             'M15 analytical',
           )}{' '}
-          — persisted analytical M15 candles and the Experiment’s authoritative
-          EMA. Times shown in {timeZone}.
+          — persisted analytical M15 candles
+          {hasEma ? ' and the Experiment’s authoritative EMA' : ''}. Times shown
+          in {timeZone}.
         </p>
       </div>
       {error ? (
@@ -127,10 +130,12 @@ export function PriceChart({ id }: { id: string }) {
             className="flex flex-wrap gap-x-4 gap-y-2 text-xs text-atlas-foreground-muted"
             aria-label="Price analysis legend"
           >
-            <span>
-              <i className="mr-1 inline-block size-2 rounded-full bg-atlas-foreground-muted" />
-              EMA
-            </span>
+            {hasEma && (
+              <span>
+                <i className="mr-1 inline-block size-2 rounded-full bg-atlas-foreground-muted" />
+                EMA
+              </span>
+            )}
             <span>
               <i className="mr-1 inline-block size-2 rounded-full bg-atlas-primary" />
               Window
@@ -143,10 +148,13 @@ export function PriceChart({ id }: { id: string }) {
               <i className="mr-1 inline-block size-2 rounded-full bg-atlas-negative" />
               Exit / stop
             </span>
-            <span>
-              <i className="mr-1 inline-block size-2 rounded-full bg-atlas-sweep" />
-              Strategy facts
-            </span>
+            {Array.isArray(analysis.reference) &&
+              analysis.reference.length > 0 && (
+                <span>
+                  <i className="mr-1 inline-block size-2 rounded-full bg-atlas-sweep" />
+                  Strategy facts
+                </span>
+              )}
             <span>
               <i className="mr-1 inline-block size-2 rounded-full bg-atlas-warning" />
               Trigger
@@ -175,6 +183,45 @@ export function PriceChart({ id }: { id: string }) {
                 </ul>
               </div>
             )}
+          {evidence.length > 0 && (
+            <section className="rounded-md border border-atlas-border bg-atlas-surface-hover p-3">
+              <h3 className="text-sm font-medium">
+                Persisted Strategy evidence
+              </h3>
+              <div className="mt-2 grid gap-3 md:grid-cols-2">
+                {evidence.map((raw, index) => {
+                  const item = object(raw);
+                  const setup = object(item.setup);
+                  const fields = object(setup.fields);
+                  return (
+                    <div
+                      key={index}
+                      className="rounded-md border border-atlas-border bg-atlas-surface p-3 text-xs"
+                    >
+                      <p className="font-medium">
+                        {text(setup.schema_key, 'Evidence')}
+                      </p>
+                      <p className="text-atlas-foreground-muted">
+                        Version {text(setup.version)}
+                      </p>
+                      <dl className="mt-2 grid gap-2 sm:grid-cols-2">
+                        {Object.entries(fields).map(([key, value]) => (
+                          <div key={key}>
+                            <dt className="text-atlas-foreground-muted">
+                              {key}
+                            </dt>
+                            <dd className="break-words">
+                              {text(value, 'Recorded details')}
+                            </dd>
+                          </div>
+                        ))}
+                      </dl>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
           {truncated && (
             <p className="rounded-md border border-atlas-warning bg-atlas-warning-muted p-3 text-sm text-atlas-warning">
               <strong>Chart truncated.</strong> {omittedDescription} This view
@@ -305,12 +352,15 @@ export function PriceAnalysisCanvas({
           wickUpColor: chartRoles.positive,
           wickDownColor: chartRoles.negative,
         });
-        const ema = instance.addSeries(LineSeries, {
-          color: chartRoles.foregroundMuted,
-          lineWidth: 2,
-          priceLineVisible: false,
-          lastValueVisible: false,
-        });
+        const emaRows = Array.isArray(analysis.ema) ? analysis.ema : [];
+        const ema = emaRows.length
+          ? instance.addSeries(LineSeries, {
+              color: chartRoles.foregroundMuted,
+              lineWidth: 2,
+              priceLineVisible: false,
+              lastValueVisible: false,
+            })
+          : null;
         const toTime = (value: unknown) => {
           const epoch = new Date(String(value)).getTime() / 1000;
           return Number.isFinite(epoch)
@@ -347,7 +397,7 @@ export function PriceAnalysisCanvas({
                 Number.isFinite,
               ),
           );
-        const emaData = (Array.isArray(analysis.ema) ? analysis.ema : [])
+        const emaData = emaRows
           .map((raw) => {
             const item = object(raw);
             const time = toTime(item.t);
@@ -365,7 +415,7 @@ export function PriceAnalysisCanvas({
             } => item !== null,
           );
         candles.setData(strictlyAscending(candleData));
-        ema.setData(strictlyAscending(emaData));
+        ema?.setData(strictlyAscending(emaData));
         const markerItems: Array<{
           time: import('lightweight-charts').Time;
           position: 'aboveBar' | 'belowBar';
@@ -589,12 +639,17 @@ export function TradePriceChart({
           wickUpColor: 'var(--atlas-color-positive)',
           wickDownColor: 'var(--atlas-color-negative)',
         });
-        const ema = instance.addSeries(LineSeries, {
-          color: 'var(--atlas-color-foreground-muted)',
-          lineWidth: 1,
-          priceLineVisible: false,
-        });
         const rows = Array.isArray(chart.candles) ? chart.candles : [];
+        const emaRows = rows.filter(
+          (raw) => object(raw).ema !== null && object(raw).ema !== undefined,
+        );
+        const ema = emaRows.length
+          ? instance.addSeries(LineSeries, {
+              color: 'var(--atlas-color-foreground-muted)',
+              lineWidth: 1,
+              priceLineVisible: false,
+            })
+          : null;
         const candleData = rows
           .map((raw) => {
             const item = object(raw);
@@ -619,7 +674,7 @@ export function TradePriceChart({
           })
           .filter((item) => Number.isFinite(item.time) && item.value > 0);
         candles.setData(strictlyAscending(candleData));
-        ema.setData(strictlyAscending(emaData));
+        ema?.setData(strictlyAscending(emaData));
         const levelMap = {
           entry: levels.entry,
           exit: levels.exit,
@@ -661,7 +716,7 @@ export function TradePriceChart({
     <div
       ref={ref}
       className="h-[420px] w-full"
-      aria-label="Trade candlestick chart with EMA"
+      aria-label="Trade candlestick chart"
     />
   );
 }

@@ -5,17 +5,23 @@ runtime concerns.  ``evaluate_strategy`` is the single checked entry point for
 callers which do not want to rely on an implementation's own validation.
 """
 
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Protocol, TypeGuard, cast, runtime_checkable
 
 from backend.domain.market_data import InputError, Instrument, PriceComponent, Timeframe
 from backend.domain.strategy import (
+    Action,
     EvaluationError,
+    ParameterError,
     ParameterSchema,
+    PositionState,
+    StateError,
     StrategyContext,
     StrategyEvaluation,
-    StrategyParameters,
-    StrategyState,
+    StrategyParameterSet,
+    StrategyStateEnvelope,
+    ValidatedParameterPayload,
 )
 
 
@@ -29,6 +35,10 @@ class DuplicateBarEvaluationError(StrategyContractError):
 
 class StrategyEvaluationError(EvaluationError):
     """An implementation failed unexpectedly or returned an invalid result."""
+
+
+CallableParser = Callable[[ValidatedParameterPayload], StrategyParameterSet]
+StateFactory = Callable[[], StrategyStateEnvelope]
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,8 +84,8 @@ class Strategy(Protocol):
     def evaluate(
         self,
         context: StrategyContext,
-        parameters: StrategyParameters,
-        state: StrategyState,
+        parameters: StrategyParameterSet,
+        state: StrategyStateEnvelope,
     ) -> StrategyEvaluation: ...
 
 
@@ -171,21 +181,58 @@ def validate_strategy_contract(registration: StrategyRegistration) -> None:
     validate_registration(registration)
 
 
-def validate_parameters(parameters: StrategyParameters) -> None:
+def _is_parameter_set(value: object) -> TypeGuard[StrategyParameterSet]:
+    return callable(getattr(value, "to_json", None))
+
+
+def validate_parameters(parameters: object) -> None:
     """Validate strict, typed runtime parameter values."""
 
-    if type(parameters) is not StrategyParameters:
-        raise StrategyContractError("parameters must be StrategyParameters")
+    if not _is_parameter_set(parameters):
+        raise StrategyContractError("parameters must be a Strategy parameter set")
 
 
-def validate_state(state: StrategyState, definition: StrategyDefinition) -> None:
-    """Validate state and reject legacy state for a newer Strategy definition."""
+def validate_parameter_payload(
+    payload: ValidatedParameterPayload,
+    definition: StrategyDefinition,
+) -> None:
+    """Validate the shared primitive envelope against a Strategy schema."""
 
-    if type(state) is not StrategyState:
-        raise StrategyContractError("state must be StrategyState")
+    if type(payload) is not ValidatedParameterPayload:
+        raise StrategyContractError("parameters must be ValidatedParameterPayload")
+    try:
+        ValidatedParameterPayload.from_mapping(
+            definition.parameter_schema, payload.to_json()
+        )
+    except ParameterError as error:
+        raise StrategyContractError(str(error)) from error
+
+
+def _validate_typed_parameters(
+    parameters: StrategyParameterSet, definition: StrategyDefinition
+) -> None:
+    """Apply the registered primitive schema to an already-typed value set."""
+
+    validate_parameters(parameters)
+    try:
+        values = cast(Mapping[str, object], parameters.to_json())
+        ValidatedParameterPayload.from_mapping(definition.parameter_schema, values)
+    except Exception as error:
+        raise StrategyContractError(
+            "typed parameters do not match the registered Strategy schema"
+        ) from error
+
+
+def validate_state(
+    state: StrategyStateEnvelope, definition: StrategyDefinition
+) -> None:
+    """Validate the Atlas-owned state envelope at the public boundary."""
+
     if type(definition) is not StrategyDefinition:
         raise StrategyContractError("definition must be StrategyDefinition")
-    if state.schema_version != definition.state_schema_version:
+    if type(state) is not StrategyStateEnvelope:
+        raise StrategyContractError("state must be StrategyStateEnvelope")
+    if state.state_schema_version != definition.state_schema_version:
         raise StrategyContractError(
             "state schema version does not match Strategy definition"
         )
@@ -193,16 +240,22 @@ def validate_state(state: StrategyState, definition: StrategyDefinition) -> None
 
 def validate_context(
     context: StrategyContext,
-    state: StrategyState,
+    state: StrategyStateEnvelope,
     definition: StrategyDefinition,
 ) -> None:
     """Validate the completed-bar frontier before an implementation runs."""
 
     if type(context) is not StrategyContext:
         raise StrategyContractError("context must be StrategyContext")
-    validate_state(state, definition)
+    try:
+        validate_state(state, definition)
+        state.validate_evaluation_time(context.evaluation_time)
+    except StrategyContractError:
+        raise
+    except StateError as error:
+        raise StrategyContractError(str(error)) from error
     if context.instrument is not definition.required_instrument:
-        raise StrategyContractError("only EUR/USD is supported")
+        raise StrategyContractError("context instrument does not match Strategy")
     if any(
         bar.timeframe is not definition.required_resolution
         or bar.instrument is not definition.required_instrument
@@ -223,18 +276,37 @@ def validate_context(
 def evaluate_strategy(
     implementation: Strategy,
     context: StrategyContext,
-    parameters: StrategyParameters,
-    state: StrategyState,
+    parameters: ValidatedParameterPayload | StrategyParameterSet,
+    state: StrategyStateEnvelope,
 ) -> StrategyEvaluation:
     """Run a Strategy after validation and normalize unexpected failures."""
 
     validate_registration(
         StrategyRegistration(implementation.definition, implementation)
     )
-    validate_parameters(parameters)
+    parsed_parameters: StrategyParameterSet
+    if type(parameters) is ValidatedParameterPayload:
+        validate_parameter_payload(parameters, implementation.definition)
+        parser = getattr(implementation, "parse_parameters", None)
+        if not callable(parser):
+            raise StrategyContractError("implementation must provide parse_parameters")
+        try:
+            parsed = cast(CallableParser, parser)(parameters)
+        except Exception as error:
+            raise StrategyContractError(
+                "Strategy rejected parameter payload"
+            ) from error
+        if not _is_parameter_set(parsed):
+            raise StrategyContractError("Strategy parser returned invalid parameters")
+        parsed_parameters = parsed
+    elif _is_parameter_set(parameters):
+        _validate_typed_parameters(parameters, implementation.definition)
+        parsed_parameters = parameters
+    else:
+        raise StrategyContractError("parameters must be a Strategy parameter set")
     validate_context(context, state, implementation.definition)
     try:
-        result = implementation.evaluate(context, parameters, state)
+        result = implementation.evaluate(context, parsed_parameters, state)
     except (StrategyContractError, EvaluationError, InputError):
         raise
     except Exception as error:
@@ -243,12 +315,36 @@ def evaluate_strategy(
         ) from error
     if type(result) is not StrategyEvaluation:
         raise StrategyEvaluationError("Strategy must return StrategyEvaluation")
-    validate_state(result.next_state, implementation.definition)
+    if type(result.next_state) is not StrategyStateEnvelope:
+        raise StrategyEvaluationError("Strategy must return a state envelope")
+    if result.decision.action in (Action.OPEN_LONG, Action.OPEN_SHORT) and (
+        not context.exposure_allowed or context.position is not PositionState.FLAT
+    ):
+        raise StrategyContractError(
+            "opening decisions require allowed exposure and a FLAT position"
+        )
+    next_state = result.next_state
+    validate_state(next_state, implementation.definition)
     if (
         context.bars
-        and result.next_state.last_evaluated_bar_end != context.bars[-1].end_time
+        and next_state.last_evaluated_bar_end != context.bars[-1].end_time
     ):
         raise StrategyEvaluationError(
             "Strategy must advance its frontier to the current completed bar"
         )
-    return result
+    return StrategyEvaluation(result.decision, next_state)
+
+
+def initial_strategy_state(
+    implementation: Strategy,
+) -> StrategyStateEnvelope:
+    """Return the implementation's typed initial state without persistence."""
+
+    factory = getattr(implementation, "initial_state", None)
+    if not callable(factory):
+        raise StrategyContractError("implementation must provide initial_state")
+    state = cast(StateFactory, factory)()
+    if type(state) is not StrategyStateEnvelope:
+        raise StrategyContractError("Strategy initial_state must return envelope")
+    validate_state(state, implementation.definition)
+    return state

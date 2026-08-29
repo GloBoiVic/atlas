@@ -112,6 +112,7 @@ export function TradeDetailPage() {
   const owner = experiment ?? data;
   const chart = object(data.chart);
   const entryPolicy = object(data.entryPolicy);
+  const hasEmaProjection = Boolean(data.setupFacts);
   const omitted = object(chart.omitted_range);
   const hasOmitted = Object.keys(omitted).length > 0;
   const ambiguous = summary.ambiguous === true;
@@ -159,7 +160,8 @@ export function TradeDetailPage() {
             <section className="mt-6 border-t border-atlas-border pt-5">
               <h3 className="text-sm font-medium">Trade context</h3>
               <p className="mt-1 text-sm text-atlas-foreground-muted">
-                Persisted analytical candles, EMA series, and setup markers from
+                Persisted analytical candles
+                {hasEmaProjection ? ', EMA series, and setup markers' : ''} from
                 the immutable DatasetSnapshot. Atlas supplied the evidence; the
                 browser does not infer Strategy identity.
               </p>

@@ -30,7 +30,9 @@ export const strictlyAscending = <T extends ChartPoint>(points: T[]): T[] => {
 export const object = (value: unknown): Json =>
   value && typeof value === 'object' ? (value as Json) : {};
 export const text = (value: unknown, fallback = '—') =>
-  typeof value === 'string' || typeof value === 'number'
+  typeof value === 'string' ||
+  typeof value === 'number' ||
+  typeof value === 'boolean'
     ? String(value)
     : fallback;
 export const strategyIdentity = (data: unknown) => {

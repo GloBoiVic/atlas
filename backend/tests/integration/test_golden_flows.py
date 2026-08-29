@@ -63,6 +63,7 @@ from backend.strategies.ema_sweep_confirmation_break import (
     EmaSweepConfirmationBreakStrategy,
 )
 from backend.strategies.fingerprint import archive_source
+from backend.strategies.production import EmaSweepConfirmationBreakCompatibilityAdaptor
 from backend.strategies.registry import StrategyRegistry
 
 pytestmark = pytest.mark.integration
@@ -371,7 +372,7 @@ def _registry() -> StrategyRegistry:
     registry.register(
         StrategyRegistration(
             EmaSweepConfirmationBreakStrategy.definition,
-            EmaSweepConfirmationBreakStrategy(),
+            EmaSweepConfirmationBreakCompatibilityAdaptor(),
         ),
         ROOT,
     )

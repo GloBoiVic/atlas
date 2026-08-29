@@ -17,7 +17,7 @@ from backend.domain.market_data import (
     Provider,
     Timeframe,
 )
-from backend.domain.strategy import StrategyParameters
+from backend.domain.strategy import ValidatedParameterPayload
 from backend.domain.strategy_requirements import requirement_for_version
 from backend.market_data.coverage import (
     CoverageGap,
@@ -354,41 +354,15 @@ def _execution_bar(row: MarketBarModel) -> Bar:
 def _validate_parameters(
     row: StrategyVersionModel, values: Mapping[str, object], implementation: object
 ) -> dict[str, object]:
-    schema = {item["key"]: item for item in row.parameter_schema}
-    if set(values) != set(schema):
-        raise ConfigurationError(
-            "PARAMETERS_INVALID",
-            "parameter keys must exactly match the persisted schema",
-        )
-    for key, descriptor in schema.items():
-        value = values[key]
-        if descriptor["type"] == "integer" and type(value) is not int:
-            raise ConfigurationError("PARAMETERS_INVALID", f"{key} must be an integer")
-        if descriptor["type"] == "decimal":
-            try:
-                value = Decimal(str(value))
-            except Exception as error:
-                raise ConfigurationError(
-                    "PARAMETERS_INVALID", f"{key} must be a decimal"
-                ) from error
-            if not value.is_finite():
-                raise ConfigurationError("PARAMETERS_INVALID", f"{key} must be finite")
-        minimum, maximum = descriptor.get("min"), descriptor.get("max")
-        if minimum is not None and Decimal(str(value)) < Decimal(str(minimum)):
-            raise ConfigurationError(
-                "PARAMETERS_INVALID", f"{key} is below its minimum"
-            )
-        if maximum is not None and Decimal(str(value)) > Decimal(str(maximum)):
-            raise ConfigurationError("PARAMETERS_INVALID", f"{key} exceeds its maximum")
     try:
-        params = StrategyParameters(
-            ema_period=values["ema_period"],
-            atr_period=values["atr_period"],
-            stop_buffer=Decimal(str(values["stop_buffer"])),
-            target_r=Decimal(str(values["target_r"])),
-            expiry_window=values["expiry_window"],
+        definition = implementation.definition
+        payload = ValidatedParameterPayload.from_mapping(
+            definition.parameter_schema, dict(values)
         )
-        implementation._validate_parameters(params)  # noqa: B009  # registered Strategy validation hook
+        parser = getattr(implementation, "parse_parameters", None)
+        if not callable(parser):
+            raise TypeError("registered Strategy has no parameter parser")
+        params = parser(payload)
     except Exception as error:
         raise ConfigurationError(
             "PARAMETERS_INVALID", "parameters are rejected by the registered Strategy"

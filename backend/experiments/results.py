@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """Authoritative read composition for completed Experiment inspection."""
 
 from dataclasses import dataclass
@@ -17,6 +18,7 @@ from backend.domain.market_data import (
     Provider,
     Timeframe,
 )
+from backend.integrations.oanda.capabilities import OANDA_CAPABILITY
 from backend.market_data.aggregation import AggregationError, aggregate_m1_to_m15
 from backend.persistence.market_data_repository import DatasetSnapshotRepository
 from backend.persistence.models import (
@@ -75,6 +77,7 @@ class PriceAnalysisRead:
     landmarks: tuple[dict[str, object], ...] = ()
     proposal_diagnostics: tuple[dict[str, object], ...] = ()
     setup_facts: tuple[dict[str, object], ...] = ()
+    market_requirements: dict[str, object] | None = None
 
 
 def _metric(value: MetricValue) -> dict[str, object]:
@@ -285,7 +288,17 @@ class ExperimentResultReadService:
                 "INCOMPLETE_RESULT", "Experiment lineage is incomplete"
             )
         raw_period = experiment.parameter_snapshot.get("ema_period")
-        if type(raw_period) is not int or raw_period <= 0:
+        ema_period = raw_period if type(raw_period) is int and raw_period > 0 else None
+        version_schema = getattr(version, "parameter_schema", None)
+        ema_compatibility = version_schema is None or any(
+            (
+                item.get("key") == "ema_period"
+                if isinstance(item, dict)
+                else getattr(item, "key", None) == "ema_period"
+            )
+            for item in version_schema
+        )
+        if ema_compatibility and ema_period is None:
             raise ResultReadError(
                 "INCOMPLETE_RESULT", "Experiment EMA period is invalid"
             )
@@ -351,10 +364,14 @@ class ExperimentResultReadService:
 
         truncated = len(bars) > 10000
         returned_bars = bars[:10000]
-        ema_points = tuple(
-            {"t": bar.end_time, "v": str(ema(returned_bars[: index + 1], raw_period))}
-            for index, bar in enumerate(returned_bars)
-            if index + 1 >= raw_period
+        ema_points = (
+            tuple(
+                {"t": bar.end_time, "v": str(ema(returned_bars[: index + 1], ema_period))}
+                for index, bar in enumerate(returned_bars)
+                if index + 1 >= ema_period
+            )
+            if ema_period is not None
+            else ()
         )
         m15 = tuple(
             {
@@ -442,11 +459,16 @@ class ExperimentResultReadService:
                         if "time" not in marker and "timestamp" in marker:
                             marker["time"] = marker.pop("timestamp")
                         landmark_values.append(marker)
-            fact = self._rationale_facts(
-                rationale, row
-            )
+            fact = self._rationale_facts(rationale, row)
             if fact is None:
-                omitted_facts += 1
+                # A non-EMA Strategy has no compatibility projection. Only a
+                # malformed legacy setup fact is omitted from the EMA view;
+                # generic evidence remains authoritative and opaque.
+                if isinstance(rationale, dict) and (
+                    isinstance(rationale.get("setup_facts"), dict)
+                    or self._looks_like_legacy_facts(rationale)
+                ):
+                    omitted_facts += 1
             else:
                 reference_values.append(fact)
                 if not isinstance(rationale, dict) or not rationale.get("evidence"):
@@ -468,7 +490,7 @@ class ExperimentResultReadService:
         result_row = self.results.result(session, experiment.id)
         diagnostics = {
             "truncated": truncated or trade_cap or omitted_facts > 0,
-            "ema_period": raw_period,
+            "ema_period": ema_period,
             "required_historical_context_bars": (
                 context_bars
             ),
@@ -526,6 +548,15 @@ class ExperimentResultReadService:
             "quality": getattr(result_row, "result_quality", None),
             "gapCount": len(gaps),
         }
+        market = OANDA_CAPABILITY.market_specification(Instrument.EUR_USD)
+        market_requirements = {
+            "instrument": Instrument.EUR_USD.value,
+            "resolution": getattr(version, "primary_timeframe", "15m"),
+            "priceComponent": "MID",
+            "pipSize": str(market.pip_size),
+            "requiredHistoricalContextBars": context_bars,
+            "completedOnly": True,
+        }
         return PriceAnalysisRead(
             m15,
             ema_points,
@@ -539,6 +570,7 @@ class ExperimentResultReadService:
             tuple(landmark_values),
             tuple(proposal_values),
             tuple(reference_values),
+            market_requirements,
         )
 
     def _legacy_v1_m15(
@@ -578,6 +610,25 @@ class ExperimentResultReadService:
             "proposalStatus": getattr(intent, "proposal_status", "UNKNOWN"),
             "diagnostics": getattr(intent, "diagnostics", {}),
         }
+
+    @staticmethod
+    def _looks_like_legacy_facts(rationale: object) -> bool:
+        if not isinstance(rationale, dict):
+            return False
+        fields = rationale.get("fields")
+        if isinstance(fields, dict):
+            keys = set(fields)
+        elif isinstance(fields, (list, tuple)):
+            keys = {
+                item[0]
+                for item in fields
+                if isinstance(item, (list, tuple))
+                and len(item) == 2
+                and isinstance(item[0], str)
+            }
+        else:
+            keys = set()
+        return {"reference_time", "sweep_time", "confirmation_time"}.issubset(keys)
 
     @staticmethod
     def _rationale_facts(
@@ -684,6 +735,7 @@ class ExperimentResultReadService:
             "summary": self._trade_summary(row),
             "entryPolicy": self._proposal_payload(intent, row),
             "setupFacts": self._rationale_facts(getattr(intent, "rationale", None), row),
+            "evidence": self._generic_evidence(getattr(intent, "rationale", None)),
             "financing_disclosure": (
                 experiment.simulation_config.get("financing_model", {}).get(
                     "disclosure"
@@ -711,6 +763,16 @@ class ExperimentResultReadService:
             ),
             "chart": self._chart(session, experiment, row, intent),
         }
+
+    @staticmethod
+    def _generic_evidence(rationale: object) -> dict[str, object] | None:
+        """Return the persisted generic evidence without interpreting fields."""
+        if not isinstance(rationale, dict):
+            return None
+        evidence = rationale.get("evidence")
+        if not isinstance(evidence, dict) or "schema_key" not in evidence:
+            return None
+        return evidence
 
     def _chart(
         self,
@@ -768,8 +830,15 @@ class ExperimentResultReadService:
             raise ResultReadError(
                 "INCOMPLETE_RESULT", "Dataset snapshot schema is unsupported"
             )
+        raw_period = experiment.parameter_snapshot.get("ema_period")
+        ema_period = raw_period if type(raw_period) is int and raw_period > 0 else None
         values = tuple(
-            (bar, ema_100(m15[: index + 1]) if index + 1 >= 100 else None)
+            (
+                bar,
+                ema_100(m15[: index + 1])
+                if ema_period is not None and index + 1 >= 100
+                else None,
+            )
             for index, bar in enumerate(m15)
         )
         fields = getattr(intent, "rationale", {})

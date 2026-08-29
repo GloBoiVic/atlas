@@ -1,11 +1,12 @@
 """Immutable, serializable primitives at the public Strategy boundary."""
 
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from enum import StrEnum
-from typing import Any, cast
+from typing import Any, Protocol, cast
 from uuid import UUID
 
 from .market_data import (
@@ -73,6 +74,27 @@ class EntryPolicy(StrEnum):
 
     IMMEDIATE = "IMMEDIATE"
     PRICE_TRIGGERED = "PRICE_TRIGGERED"
+
+
+@dataclass(frozen=True, slots=True)
+class MarketSpecification:
+    """Validated calculation facts supplied to a Strategy."""
+
+    instrument: Instrument
+    pip_size: Decimal
+
+    def __post_init__(self) -> None:
+        if type(self.instrument) is not Instrument:
+            raise InputError("market instrument must be an Instrument")
+        try:
+            value = _dec(self.pip_size, "pip_size")
+        except (TypeError, ValueError) as error:
+            raise InputError(str(error)) from error
+        if value <= 0:
+            raise InputError("pip_size must be positive")
+
+    def to_json(self) -> dict[str, str]:
+        return {"instrument": self.instrument.value, "pip_size": str(self.pip_size)}
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,6 +174,75 @@ class SetupFacts:
         return result
 
 
+EvidencePrimitive = str | int | bool | Decimal | datetime
+
+
+@dataclass(frozen=True, slots=True)
+class StrategyEvidence:
+    """Opaque, bounded evidence owned by the producing Strategy."""
+
+    schema_key: str
+    version: int
+    fields: tuple[tuple[str, EvidencePrimitive], ...] = ()
+
+    def __post_init__(self) -> None:
+        if type(self.schema_key) is not str or not self.schema_key:
+            raise InputError("evidence schema_key must be a non-empty string")
+        if (
+            len(self.schema_key) > 64
+            or type(self.version) is not int
+            or self.version <= 0
+        ):
+            raise InputError("evidence schema or version is invalid")
+        if type(self.fields) is not tuple or len(self.fields) > 32:
+            raise InputError("evidence must contain at most 32 fields")
+        keys: set[str] = set()
+        for field in self.fields:
+            if type(field) is not tuple or len(field) != 2:
+                raise InputError("evidence fields must be key/value pairs")
+            key, value = field
+            if type(key) is not str or not key or len(key) > 64 or key in keys:
+                raise InputError("evidence field keys must be unique and bounded")
+            keys.add(key)
+            if type(value) not in (str, int, bool, Decimal, datetime):
+                raise InputError("evidence fields must be flat typed values")
+            if type(value) is Decimal and not value.is_finite():
+                raise InputError("evidence decimals must be finite")
+            if type(value) is datetime:
+                _utc(value, key)
+            if type(value) is str and len(value) > 256:
+                raise InputError("evidence strings must be at most 256 characters")
+        if len(self.canonical_bytes) > 8192:
+            raise InputError("evidence exceeds 8192 bytes")
+
+    @classmethod
+    def from_mapping(
+        cls, schema_key: str, version: int, fields: Mapping[str, EvidencePrimitive]
+    ) -> "StrategyEvidence":
+        if type(fields) is not dict:
+            raise InputError("evidence fields must be an object")
+        typed_fields = cast(dict[str, EvidencePrimitive], fields)
+        return cls(schema_key, version, tuple(typed_fields.items()))
+
+    def _wire_value(self, value: EvidencePrimitive) -> str | int | bool:
+        if type(value) is datetime:
+            return value.isoformat().replace("+00:00", "Z")
+        if type(value) is Decimal:
+            return str(value)
+        return cast(str | int | bool, value)
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "schema_key": self.schema_key,
+            "version": self.version,
+            "fields": {key: self._wire_value(value) for key, value in self.fields},
+        }
+
+    @property
+    def canonical_bytes(self) -> bytes:
+        return _canonical_json(self.to_json()).encode("utf-8")
+
+
 def _utc(value: datetime, name: str) -> datetime:
     if (
         type(value) is not datetime
@@ -203,6 +294,12 @@ class StrategyParameters:
         }
 
 
+class StrategyParameterSet(Protocol):
+    """Typed, immutable values owned by an individual Strategy."""
+
+    def to_json(self) -> dict[str, Any]: ...
+
+
 @dataclass(frozen=True, slots=True)
 class ParameterSchema:
     key: str
@@ -225,6 +322,10 @@ class ParameterSchema:
             not value for value in (self.key, self.label, self.type, self.description)
         ):
             raise ParameterError("parameter descriptor text fields must not be empty")
+        if len(self.key) > 64:
+            raise ParameterError("parameter key must be at most 64 characters")
+        if self.type not in {"integer", "decimal", "boolean", "string", "enum"}:
+            raise ParameterError("unsupported parameter primitive type")
         if type(self.nullable) is not bool or type(self.allowed_values) is not tuple:
             raise ParameterError("parameter descriptor fields have invalid types")
         if any(type(value) is not str for value in self.allowed_values):
@@ -233,8 +334,70 @@ class ParameterSchema:
             raise ParameterError("allowed_values must not contain duplicates")
         for name in ("default", "minimum", "maximum"):
             value = getattr(self, name)
-            if value is not None and type(value) not in (int, str):
+            if value is not None and type(value) not in (int, str, bool):
                 raise ParameterError(f"{name} must be an explicit JSON primitive")
+        if self.default is None and not self.nullable:
+            raise ParameterError("non-nullable parameters require a default")
+        if self.type == "integer":
+            for name in ("default", "minimum", "maximum"):
+                value = getattr(self, name)
+                if value is not None and type(value) is not int:
+                    raise ParameterError(f"{name} must be an integer")
+        elif self.type == "decimal":
+            for name in ("default", "minimum", "maximum"):
+                value = getattr(self, name)
+                if value is not None:
+                    if type(value) is not str:
+                        raise ParameterError(f"{name} must be a decimal string")
+                    try:
+                        decimal = Decimal(value)
+                    except Exception as error:
+                        raise ParameterError(
+                            f"{name} must be a decimal string"
+                        ) from error
+                    if not decimal.is_finite():
+                        raise ParameterError(f"{name} must be finite")
+        elif self.type == "boolean":
+            if self.allowed_values:
+                raise ParameterError("boolean parameters cannot declare allowed values")
+            if any(
+                getattr(self, name) is not None
+                and type(getattr(self, name)) is not bool
+                for name in ("default", "minimum", "maximum")
+            ):
+                raise ParameterError("boolean bounds must be absent")
+        else:
+            if self.minimum is not None or self.maximum is not None:
+                raise ParameterError("string parameters cannot declare numeric bounds")
+            for name in ("default",):
+                value = getattr(self, name)
+                if value is not None and type(value) is not str:
+                    raise ParameterError(f"{name} must be a string")
+        if self.type == "enum" and not self.allowed_values:
+            raise ParameterError("enum parameters require allowed values")
+        if self.type != "enum" and self.allowed_values:
+            raise ParameterError("allowed values require an enum parameter")
+        if self.minimum is not None and self.maximum is not None:
+            try:
+                if Decimal(str(self.minimum)) > Decimal(str(self.maximum)):
+                    raise ParameterError("minimum must not exceed maximum")
+            except (ValueError, ArithmeticError) as error:
+                raise ParameterError("parameter bounds must be comparable") from error
+        if self.default is not None and self.type in {"integer", "decimal"}:
+            try:
+                default = Decimal(str(self.default))
+            except (ValueError, ArithmeticError) as error:
+                raise ParameterError("default and bounds must be comparable") from error
+            if self.minimum is not None and default < Decimal(str(self.minimum)):
+                raise ParameterError("default must not be below minimum")
+            if self.maximum is not None and default > Decimal(str(self.maximum)):
+                raise ParameterError("default must not exceed maximum")
+        if (
+            self.default is not None
+            and self.allowed_values
+            and self.default not in self.allowed_values
+        ):
+            raise ParameterError("default must be one of allowed values")
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -249,6 +412,194 @@ class ParameterSchema:
             "allowed_values": list(self.allowed_values),
         }
 
+    @classmethod
+    def from_json(cls, value: Mapping[str, Any]) -> "ParameterSchema":
+        """Restore a persisted descriptor without Strategy-specific knowledge."""
+
+        if type(value) is not dict:
+            raise ParameterError("parameter descriptor must be an object")
+        payload = cast(dict[str, object], value)
+        required = {
+            "key", "label", "type", "default", "nullable", "min", "max",
+            "description", "allowed_values",
+        }
+        if set(payload) != required:
+            raise ParameterError("parameter descriptor has unexpected fields")
+        raw_allowed = payload["allowed_values"]
+        if type(raw_allowed) is not list:
+            raise ParameterError("allowed_values must be a list")
+        raw_allowed_items = cast(list[object], raw_allowed)
+        allowed_values: list[str] = []
+        for item in raw_allowed_items:
+            if type(item) is not str:
+                raise ParameterError("allowed_values must contain strings")
+            allowed_values.append(item)
+
+        def primitive(name: str) -> int | str | bool | None:
+            raw = payload[name]
+            if raw is not None and type(raw) not in (int, str, bool):
+                raise ParameterError(f"{name} must be an explicit JSON primitive")
+            return cast(int | str | bool | None, raw)
+
+        key = payload["key"]
+        label = payload["label"]
+        kind = payload["type"]
+        description = payload["description"]
+        nullable = payload["nullable"]
+        if any(type(item) is not str for item in (key, label, kind, description)):
+            raise ParameterError("parameter descriptor text fields must be strings")
+        if type(nullable) is not bool:
+            raise ParameterError("parameter descriptor nullable must be boolean")
+        return cls(
+            key=cast(str, key),
+            label=cast(str, label),
+            type=cast(str, kind),
+            default=primitive("default"),
+            nullable=nullable,
+            minimum=primitive("min"),
+            maximum=primitive("max"),
+            description=cast(str, description),
+            allowed_values=tuple(allowed_values),
+        )
+
+
+def _canonical_decimal(value: str, name: str) -> str:
+    if type(value) is not str:
+        raise ParameterError(f"{name} must be a canonical decimal string")
+    try:
+        decimal = Decimal(value)
+    except Exception as error:
+        raise ParameterError(f"{name} must be a decimal string") from error
+    if not decimal.is_finite():
+        raise ParameterError(f"{name} must be finite")
+    if decimal == 0:
+        return "0"
+    result = format(decimal.normalize(), "f")
+    return result if "." not in result else result.rstrip("0").rstrip(".")
+
+
+@dataclass(frozen=True, slots=True)
+class ValidatedParameterPayload:
+    """Bounded, exact-schema primitive parameters passed to a Strategy parser."""
+
+    _schema: tuple[ParameterSchema, ...]
+    _values: tuple[tuple[str, int | str | bool | None], ...]
+
+    def __post_init__(self) -> None:
+        if type(self._schema) is not tuple or len(self._schema) > 32:
+            raise ParameterError("parameter schema must contain at most 32 fields")
+        if any(type(item) is not ParameterSchema for item in self._schema):
+            raise ParameterError("parameter schema must contain descriptors")
+        keys = tuple(item.key for item in self._schema)
+        if len(set(keys)) != len(keys):
+            raise ParameterError("parameter schema keys must be unique")
+        if (
+            type(self._values) is not tuple
+            or any(
+                type(item) is not tuple or len(item) != 2 for item in self._values
+            )
+            or tuple(key for key, _ in self._values) != keys
+        ):
+            raise ParameterError("parameter payload must match the exact schema")
+        for descriptor, (key, value) in zip(self._schema, self._values, strict=True):
+            if key != descriptor.key:
+                raise ParameterError("parameter payload must match the exact schema")
+            _validate_parameter_value(descriptor, value)
+        encoded = self.to_json()
+        if len(_canonical_json(encoded).encode("utf-8")) > 4096:
+            raise ParameterError("parameter payload exceeds 4096 bytes")
+
+    @classmethod
+    def from_mapping(
+        cls,
+        schema: tuple[ParameterSchema, ...],
+        values: Mapping[str, object],
+    ) -> "ValidatedParameterPayload":
+        if type(schema) is not tuple or len(schema) > 32:
+            raise ParameterError("parameter schema must contain at most 32 fields")
+        if type(values) not in (dict,):
+            raise ParameterError("parameter payload must be an object")
+        descriptors = {item.key: item for item in schema}
+        if len(descriptors) != len(schema):
+            raise ParameterError("parameter schema keys must be unique")
+        if set(values) != set(descriptors):
+            raise ParameterError("parameter payload keys must exactly match schema")
+        normalized: list[tuple[str, int | str | bool | None]] = []
+        for descriptor in schema:
+            value = values[descriptor.key]
+            normalized.append(
+                (descriptor.key, _validate_parameter_value(descriptor, value))
+            )
+        return cls(schema, tuple(normalized))
+
+    @classmethod
+    def with_defaults(
+        cls,
+        schema: tuple[ParameterSchema, ...],
+        values: Mapping[str, object],
+    ) -> "ValidatedParameterPayload":
+        """Materialize declared defaults before exact-schema validation."""
+
+        if type(values) is not dict:
+            raise ParameterError("parameter payload must be an object")
+        typed_values = cast(dict[str, object], values)
+        merged: dict[str, object] = {
+            descriptor.key: descriptor.default for descriptor in schema
+        }
+        merged.update(typed_values)
+        return cls.from_mapping(schema, merged)
+
+    def get(self, key: str) -> int | str | bool | None:
+        for candidate, value in self._values:
+            if candidate == key:
+                return value
+        raise ParameterError(f"unknown parameter key: {key}")
+
+    def to_json(self) -> dict[str, int | str | bool | None]:
+        return dict(self._values)
+
+    @property
+    def canonical_bytes(self) -> bytes:
+        return _canonical_json(self.to_json()).encode("utf-8")
+
+
+def _validate_parameter_value(
+    descriptor: ParameterSchema, value: object
+) -> int | str | bool | None:
+    if value is None:
+        if not descriptor.nullable:
+            raise ParameterError(f"{descriptor.key} is not nullable")
+        return None
+    if descriptor.type == "integer":
+        if type(value) is not int:
+            raise ParameterError(f"{descriptor.key} must be an integer")
+        normalized: int | str | bool = value
+    elif descriptor.type == "decimal":
+        normalized = _canonical_decimal(value, descriptor.key)  # type: ignore[arg-type]
+    elif descriptor.type == "boolean":
+        if type(value) is not bool:
+            raise ParameterError(f"{descriptor.key} must be a boolean")
+        normalized = value
+    else:
+        if type(value) is not str:
+            raise ParameterError(f"{descriptor.key} must be a string")
+        normalized = value
+    if descriptor.allowed_values and normalized not in descriptor.allowed_values:
+        raise ParameterError(f"{descriptor.key} is not an allowed value")
+    if descriptor.minimum is not None and Decimal(str(normalized)) < Decimal(
+        str(descriptor.minimum)
+    ):
+        raise ParameterError(f"{descriptor.key} is below its minimum")
+    if descriptor.maximum is not None and Decimal(str(normalized)) > Decimal(
+        str(descriptor.maximum)
+    ):
+        raise ParameterError(f"{descriptor.key} exceeds its maximum")
+    return normalized
+
+
+def _canonical_json(value: object) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
 
 @dataclass(frozen=True, slots=True)
 class StrategyContext:
@@ -257,6 +608,7 @@ class StrategyContext:
     bars: tuple[Bar, ...]
     position: PositionState = PositionState.FLAT
     exposure_allowed: bool = True
+    market: MarketSpecification | None = None
 
     def __post_init__(self) -> None:
         if type(self.instrument) is not Instrument:
@@ -270,6 +622,24 @@ class StrategyContext:
         _utc(self.evaluation_time, "evaluation_time")
         if type(self.exposure_allowed) is not bool:
             raise InputError("exposure_allowed must be bool")
+        market = self.market
+        if market is None:
+            # Compatibility callers may omit the new fact.  The value still
+            # comes from the explicit, validated current capability resolver.
+            from backend.integrations.oanda.capabilities import OANDA_CAPABILITY
+
+            market = OANDA_CAPABILITY.market_specification(self.instrument)
+            object.__setattr__(self, "market", market)
+        if (
+            type(market) is not MarketSpecification
+            or market.instrument is not self.instrument
+        ):
+            raise InputError("StrategyContext market does not match its instrument")
+        from backend.integrations.oanda.capabilities import (
+            validate_market_specification,
+        )
+
+        validate_market_specification(market)
         if any(bar.instrument is not self.instrument for bar in self.bars):
             raise InputError("StrategyContext bars must match its instrument")
         for previous, current in zip(self.bars, self.bars[1:], strict=False):
@@ -279,12 +649,16 @@ class StrategyContext:
             raise InputError("bars must end at or before evaluation_time")
 
     def to_json(self) -> dict[str, Any]:
+        market = self.market
+        if market is None:
+            raise InputError("StrategyContext market is missing")
         return {
             "evaluation_time": self.evaluation_time.isoformat().replace("+00:00", "Z"),
             "instrument": self.instrument.value,
             "bars": [bar.to_json() for bar in self.bars],
             "position": self.position.value,
             "exposure_allowed": self.exposure_allowed,
+            "market": market.to_json(),
         }
 
 
@@ -387,6 +761,7 @@ class StrategyDecision:
     expiry_time: datetime | None = None
     expiry_bars: int | None = None
     setup_facts: SetupFacts | None = None
+    evidence: StrategyEvidence | None = None
 
     def __post_init__(self) -> None:
         if type(self.action) is not Action:
@@ -416,6 +791,8 @@ class StrategyDecision:
             raise InputError("expiry_bars must be a positive integer")
         if self.setup_facts is not None and type(self.setup_facts) is not SetupFacts:
             raise InputError("setup_facts must be SetupFacts")
+        if self.evidence is not None and type(self.evidence) is not StrategyEvidence:
+            raise InputError("evidence must be StrategyEvidence")
         if self.decision_time is not None:
             _utc(self.decision_time, "decision_time")
         opening = self.action in (Action.OPEN_LONG, Action.OPEN_SHORT)
@@ -492,6 +869,7 @@ class StrategyDecision:
             else None,
             "expiry_bars": self.expiry_bars,
             "setup_facts": self.setup_facts.to_json() if self.setup_facts else None,
+            "evidence": self.evidence.to_json() if self.evidence else None,
             "rationale": self.rationale.to_json(),
         }
 
@@ -712,15 +1090,384 @@ class StrategyState:
         }
 
 
+StatePrimitive = str | int | bool | None | datetime
+
+
+@dataclass(frozen=True, slots=True)
+class StrategyStatePayloadDocument:
+    """The bounded wire document emitted by a Strategy state codec."""
+
+    codec_key: str
+    payload_version: int
+    fields: tuple[tuple[str, StatePrimitive], ...] = ()
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.codec_key) is not str
+            or not self.codec_key
+            or len(self.codec_key) > 64
+        ):
+            raise StateError("state codec key must be a bounded non-empty string")
+        if type(self.payload_version) is not int or self.payload_version <= 0:
+            raise StateError("state payload version must be positive")
+        if type(self.fields) is not tuple or len(self.fields) > 16:
+            raise StateError("state payload must contain at most 16 fields")
+        keys: set[str] = set()
+        for field in self.fields:
+            if type(field) is not tuple or len(field) != 2:
+                raise StateError("state payload fields must be key/value pairs")
+            key, value = field
+            if type(key) is not str or not key or len(key) > 64 or key in keys:
+                raise StateError("state payload field keys must be unique and bounded")
+            keys.add(key)
+            if type(value) not in (str, int, bool, type(None), datetime):
+                raise StateError("state payload fields must be flat primitives")
+            if type(value) is str and len(value) > 256:
+                raise StateError("state payload strings must be at most 256 characters")
+            if type(value) is datetime:
+                _utc(value, key)
+        if len(self.canonical_bytes) > 4096:
+            raise StateError("state payload exceeds 4096 bytes")
+
+    @classmethod
+    def from_mapping(
+        cls, codec_key: str, payload_version: int, fields: Mapping[str, StatePrimitive]
+    ) -> "StrategyStatePayloadDocument":
+        if type(fields) is not dict:
+            raise StateError("state payload fields must be an object")
+        # Sorting is part of the codec boundary, not Strategy methodology.
+        typed_fields = cast(dict[str, StatePrimitive], fields)
+        return cls(codec_key, payload_version, tuple(sorted(typed_fields.items())))
+
+    @staticmethod
+    def _wire_value(value: StatePrimitive) -> str | int | bool | None:
+        if type(value) is datetime:
+            return value.isoformat().replace("+00:00", "Z")
+        return cast(str | int | bool | None, value)
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "codec_key": self.codec_key,
+            "payload_version": self.payload_version,
+            "fields": {key: self._wire_value(value) for key, value in self.fields},
+        }
+
+    @property
+    def canonical_bytes(self) -> bytes:
+        return _canonical_json(self.to_json()).encode("utf-8")
+
+    def get(self, key: str) -> StatePrimitive:
+        for candidate, value in self.fields:
+            if candidate == key:
+                return value
+        raise StateError(f"unknown state payload key: {key}")
+
+    @classmethod
+    def from_json(cls, value: Mapping[str, object]) -> "StrategyStatePayloadDocument":
+        if type(value) is not dict:
+            raise StateError("state payload JSON has unexpected fields")
+        payload = cast(dict[str, object], value)
+        if set(payload) != {
+            "codec_key", "payload_version", "fields"
+        }:
+            raise StateError("state payload JSON has unexpected fields")
+        fields = payload["fields"]
+        if type(fields) is not dict:
+            raise StateError("state payload fields must be an object")
+        codec_key = payload["codec_key"]
+        payload_version = payload["payload_version"]
+        if type(codec_key) is not str or type(payload_version) is not int:
+            raise StateError("state payload header is invalid")
+        raw_fields = cast(dict[object, object], fields)
+        typed_fields: dict[str, StatePrimitive] = {}
+        for key, raw in raw_fields.items():
+            if type(key) is not str or type(raw) not in (
+                str,
+                int,
+                bool,
+                type(None),
+                datetime,
+            ):
+                raise StateError("state payload fields contain invalid primitives")
+            typed_fields[key] = cast(StatePrimitive, raw)
+        try:
+            return cls.from_mapping(
+                codec_key, payload_version, typed_fields
+            )
+        except (KeyError, TypeError, ValueError) as error:
+            raise StateError("invalid state payload") from error
+
+
+@dataclass(frozen=True, slots=True)
+class PendingEntryHandoff:
+    """Normalized analytical-bar clock for a price-triggered opening."""
+
+    policy: EntryPolicy
+    direction: Direction
+    trigger_price: Decimal
+    trigger_price_basis: PriceComponent
+    decision_frontier: datetime
+    decision_time: datetime
+    eligibility_limit: int
+    consumed_count: int = 0
+
+    def __post_init__(self) -> None:
+        if self.policy is not EntryPolicy.PRICE_TRIGGERED:
+            raise StateError("pending handoffs must be price-triggered")
+        if (
+            type(self.direction) is not Direction
+            or type(self.trigger_price_basis) is not PriceComponent
+        ):
+            raise StateError("pending handoff direction and basis are invalid")
+        expected = (
+            PriceComponent.ASK
+            if self.direction is Direction.LONG
+            else PriceComponent.BID
+        )
+        if self.trigger_price_basis is not expected:
+            raise StateError("pending trigger basis must match direction")
+        try:
+            if _dec(self.trigger_price, "trigger_price") <= 0:
+                raise StateError("trigger_price must be positive")
+            _utc(self.decision_frontier, "decision_frontier")
+            _utc(self.decision_time, "decision_time")
+        except (TypeError, ValueError) as error:
+            raise StateError(str(error)) from error
+        if self.decision_time != self.decision_frontier:
+            raise StateError("pending decision time must equal its frontier")
+        if (
+            type(self.eligibility_limit) is not int
+            or not 1 <= self.eligibility_limit <= 1000
+        ):
+            raise StateError("eligibility limit must be between 1 and 1000")
+        if (
+            type(self.consumed_count) is not int
+            or not 0 <= self.consumed_count <= self.eligibility_limit
+        ):
+            raise StateError("pending consumed count is outside its eligibility window")
+
+    @property
+    def limit(self) -> int:
+        return self.eligibility_limit
+
+    def consumed_at(self, frontier: datetime) -> "PendingEntryHandoff":
+        _utc(frontier, "frontier")
+        if frontier <= self.decision_frontier:
+            raise StateError("pending frontier must be after the decision frontier")
+        if self.consumed_count >= self.eligibility_limit:
+            raise StateError("pending eligibility window is exhausted")
+        return dataclass_replace(self, consumed_count=self.consumed_count + 1)
+
+    def to_json(self) -> dict[str, Any]:
+        def stamp(value: datetime) -> str:
+            return value.isoformat().replace("+00:00", "Z")
+        return {
+            "policy": self.policy.value,
+            "direction": self.direction.value,
+            "trigger_price": str(self.trigger_price),
+            "trigger_price_basis": self.trigger_price_basis.value,
+            "decision_frontier": stamp(self.decision_frontier),
+            "decision_time": stamp(self.decision_time),
+            "eligibility_limit": self.eligibility_limit,
+            "consumed_count": self.consumed_count,
+        }
+
+    @classmethod
+    def from_json(cls, value: Mapping[str, object]) -> "PendingEntryHandoff":
+        required = {
+            "policy", "direction", "trigger_price", "trigger_price_basis",
+            "decision_frontier", "decision_time", "eligibility_limit", "consumed_count",
+        }
+        if type(value) is not dict:
+            raise StateError("pending handoff JSON has unexpected fields")
+        payload = cast(dict[str, object], value)
+        if set(payload) != required:
+            raise StateError("pending handoff JSON has unexpected fields")
+        try:
+            if any(
+                type(payload[name]) is not str
+                for name in (
+                    "policy",
+                    "direction",
+                    "trigger_price",
+                    "trigger_price_basis",
+                    "decision_frontier",
+                    "decision_time",
+                )
+            ):
+                raise StateError("pending handoff text fields are invalid")
+            frontier = datetime.fromisoformat(
+                cast(str, payload["decision_frontier"]).replace("Z", "+00:00")
+            )
+            decision_time = datetime.fromisoformat(
+                cast(str, payload["decision_time"]).replace("Z", "+00:00")
+            )
+            eligibility_limit = payload["eligibility_limit"]
+            consumed_count = payload["consumed_count"]
+            if type(eligibility_limit) is not int or type(consumed_count) is not int:
+                raise StateError("pending handoff counts are invalid")
+            return cls(
+                policy=EntryPolicy(cast(str, payload["policy"])),
+                direction=Direction(cast(str, payload["direction"])),
+                trigger_price=Decimal(cast(str, payload["trigger_price"])),
+                trigger_price_basis=PriceComponent(
+                    cast(str, payload["trigger_price_basis"])
+                ),
+                decision_frontier=frontier,
+                decision_time=decision_time,
+                eligibility_limit=eligibility_limit,
+                consumed_count=consumed_count,
+            )
+        except (KeyError, TypeError, ValueError, ArithmeticError) as error:
+            if isinstance(error, StateError):
+                raise
+            raise StateError("invalid pending handoff") from error
+
+
+@dataclass(frozen=True, slots=True)
+class StrategyStateEnvelope:
+    """Atlas-owned safety/frontier envelope around typed Strategy state."""
+
+    state_schema_version: int
+    last_evaluated_bar_end: datetime | None
+    payload: StrategyStatePayloadDocument
+    pending_entry: PendingEntryHandoff | None = None
+    exposure_allowed: bool = True
+
+    def __post_init__(self) -> None:
+        if type(self.state_schema_version) is not int or self.state_schema_version <= 0:
+            raise StateError("state schema version must be positive")
+        if self.last_evaluated_bar_end is not None:
+            try:
+                _utc(self.last_evaluated_bar_end, "last_evaluated_bar_end")
+            except (TypeError, ValueError) as error:
+                raise StateError(str(error)) from error
+        if type(self.payload) is not StrategyStatePayloadDocument:
+            raise StateError("state envelope payload is invalid")
+        if (
+            self.pending_entry is not None
+            and type(self.pending_entry) is not PendingEntryHandoff
+        ):
+            raise StateError("pending entry handoff is invalid")
+        if type(self.exposure_allowed) is not bool:
+            raise StateError("exposure_allowed must be bool")
+
+    def validate_frontier(self, frontier: datetime, evaluation_time: datetime) -> None:
+        _utc(frontier, "frontier")
+        _utc(evaluation_time, "evaluation_time")
+        if frontier > evaluation_time:
+            raise StateError("state frontier cannot be in the future")
+        if (
+            self.last_evaluated_bar_end is not None
+            and frontier <= self.last_evaluated_bar_end
+        ):
+            raise StateError("state frontier must advance strictly")
+
+    def validate_evaluation_time(self, evaluation_time: datetime) -> None:
+        """Reject a restored frontier that is ahead of the supplied clock."""
+
+        try:
+            _utc(evaluation_time, "evaluation_time")
+        except (TypeError, ValueError) as error:
+            raise StateError(str(error)) from error
+        if (
+            self.last_evaluated_bar_end is not None
+            and self.last_evaluated_bar_end > evaluation_time
+        ):
+            raise StateError("state frontier cannot be in the future")
+
+    def advance_to(
+        self, frontier: datetime, evaluation_time: datetime
+    ) -> "StrategyStateEnvelope":
+        self.validate_frontier(frontier, evaluation_time)
+        return dataclass_replace(self, last_evaluated_bar_end=frontier)
+
+    def can_open(self, position: PositionState = PositionState.FLAT) -> bool:
+        return self.exposure_allowed and position is PositionState.FLAT
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "state_schema_version": self.state_schema_version,
+            "last_evaluated_bar_end": (
+                self.last_evaluated_bar_end.isoformat().replace("+00:00", "Z")
+                if self.last_evaluated_bar_end
+                else None
+            ),
+            "payload": self.payload.to_json(),
+            "pending_entry": (
+                self.pending_entry.to_json() if self.pending_entry else None
+            ),
+            "exposure_allowed": self.exposure_allowed,
+        }
+
+    @property
+    def canonical_bytes(self) -> bytes:
+        return _canonical_json(self.to_json()).encode("utf-8")
+
+    @classmethod
+    def from_json(cls, value: Mapping[str, object]) -> "StrategyStateEnvelope":
+        required = {
+            "state_schema_version", "last_evaluated_bar_end", "payload",
+            "pending_entry", "exposure_allowed",
+        }
+        if type(value) is not dict:
+            raise StateError("state envelope JSON has unexpected fields")
+        payload = cast(dict[str, object], value)
+        if set(payload) != required:
+            raise StateError("state envelope JSON has unexpected fields")
+        raw_frontier = payload["last_evaluated_bar_end"]
+        try:
+            if raw_frontier is not None and type(raw_frontier) is not str:
+                raise StateError("state frontier must be an ISO timestamp")
+            frontier = (
+                datetime.fromisoformat(raw_frontier.replace("Z", "+00:00"))
+                if raw_frontier is not None else None
+            )
+            pending = (
+                PendingEntryHandoff.from_json(
+                    cast(dict[str, object], payload["pending_entry"])
+                )
+                if payload["pending_entry"] is not None else None
+            )
+            state_schema_version = payload["state_schema_version"]
+            exposure_allowed = payload["exposure_allowed"]
+            if (
+                type(state_schema_version) is not int
+                or type(exposure_allowed) is not bool
+            ):
+                raise StateError("state envelope header is invalid")
+            return cls(
+                state_schema_version=state_schema_version,
+                last_evaluated_bar_end=frontier,
+                payload=StrategyStatePayloadDocument.from_json(
+                    cast(dict[str, object], payload["payload"])
+                ),
+                pending_entry=pending,
+                exposure_allowed=exposure_allowed,
+            )
+        except (KeyError, TypeError, ValueError, ArithmeticError) as error:
+            if isinstance(error, StateError):
+                raise
+            raise StateError("invalid state envelope") from error
+
+
+def dataclass_replace(value: Any, **changes: Any) -> Any:
+    """Tiny local wrapper keeping domain primitives independent of callers."""
+
+    from dataclasses import replace
+
+    return replace(value, **changes)
+
+
 @dataclass(frozen=True, slots=True)
 class StrategyEvaluation:
     decision: StrategyDecision
-    next_state: StrategyState
+    next_state: StrategyState | StrategyStateEnvelope
 
     def __post_init__(self) -> None:
         if (
             type(self.decision) is not StrategyDecision
-            or type(self.next_state) is not StrategyState
+            or type(self.next_state) not in (StrategyState, StrategyStateEnvelope)
         ):
             raise InputError("evaluation must contain a decision and state")
 

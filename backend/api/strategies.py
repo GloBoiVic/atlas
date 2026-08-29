@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from backend.integrations.oanda.capabilities import OANDA_CAPABILITY
 from backend.persistence.database import session_scope
 from backend.persistence.strategy_repository import StrategyRepository
 from backend.strategies.registry import (
@@ -76,6 +77,11 @@ def _version(registry: StrategyRegistry, row: Any, usage: Any) -> dict[str, Any]
             "priceComponent": definition.required_price_component.value if definition else None,
             "requiredHistoricalContextBars": row.required_historical_context_bars,
             "completedOnly": definition.completed_only if definition else None,
+            "pipSize": (
+                str(OANDA_CAPABILITY.market_specification(definition.required_instrument).pip_size)
+                if definition
+                else None
+            ),
         },
         "methodology": {
             "summary": definition.description if definition else row.strategy.description,

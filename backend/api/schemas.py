@@ -53,6 +53,7 @@ class ExperimentStrategyVersionMarketRequirementsResponse(StrictModel):
     price_component: str
     required_historical_context_bars: int
     completed_only: bool
+    pip_size: str | None = None
 
 
 class ExperimentStrategyVersionOptionResponse(StrictModel):
@@ -179,7 +180,7 @@ class ProposalStatusResponse(StrictModel):
 
 class PriceAnalysisDiagnosticsResponse(StrictModel):
     truncated: bool
-    ema_period: int
+    ema_period: int | None = None
     required_historical_context_bars: int
     snapshot_fingerprint: str
     m15_eligible_count: int
@@ -204,6 +205,7 @@ class PriceAnalysisResponse(StrictModel):
     landmarks: list[PriceAnalysisLandmarkResponse] = Field(default_factory=list)
     proposal_diagnostics: list[ProposalStatusResponse] = Field(default_factory=list)
     setup_facts: list[dict[str, Any]] = Field(default_factory=list)
+    market_requirements: dict[str, Any] = Field(default_factory=dict)
 
 
 class HistoricalDataLoadRequest(StrictModel):

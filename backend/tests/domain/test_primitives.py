@@ -20,20 +20,27 @@ from backend.domain.market_data import (
 from backend.domain.strategy import (
     Action,
     Direction,
+    EntryPolicy,
     ParameterError,
     ParameterSchema,
+    PendingEntryHandoff,
     Phase,
     Rationale,
     StateError,
     StopProposal,
     StrategyContext,
     StrategyDecision,
+    StrategyEvidence,
     StrategyParameters,
     StrategyState,
+    StrategyStateEnvelope,
+    StrategyStatePayloadDocument,
     StrategyVersion,
     TargetProposal,
+    ValidatedParameterPayload,
     VersionError,
 )
+from backend.integrations.oanda.capabilities import validate_market_specification
 
 
 def bar(at: datetime, *, close: str = "1.1000") -> Bar:
@@ -411,3 +418,113 @@ def test_strategy_version_requires_lowercase_sha256_and_serializes() -> None:
     assert descriptor["allowed_values"] == []
     with pytest.raises(VersionError):
         StrategyVersion(uuid4(), "x", 1, "A" * 64, "x", ())
+
+
+def test_validated_parameter_payload_is_exact_and_canonical() -> None:
+    schema = (
+        ParameterSchema(
+            "count", "Count", "integer", 2, False, 1, 3, "count"
+        ),
+        ParameterSchema(
+            "multiple", "Multiple", "decimal", "1.5", False, "0.5", "5", "R"
+        ),
+    )
+    payload = ValidatedParameterPayload.from_mapping(
+        schema, {"count": 3, "multiple": "1.5000"}
+    )
+    assert payload.to_json() == {"count": 3, "multiple": "1.5"}
+    assert payload.get("multiple") == "1.5"
+    assert payload.canonical_bytes == b'{"count":3,"multiple":"1.5"}'
+    with pytest.raises(ParameterError):
+        ValidatedParameterPayload.from_mapping(schema, {"count": 3})
+    with pytest.raises(ParameterError):
+        ValidatedParameterPayload.from_mapping(
+            schema, {"count": 3, "multiple": "1.5", "extra": 1}
+        )
+    with pytest.raises(ParameterError):
+        ValidatedParameterPayload.from_mapping(
+            schema, {"count": True, "multiple": "1.5"}
+        )
+    with pytest.raises(ParameterError):
+        ValidatedParameterPayload.from_mapping(
+            schema, {"count": 4, "multiple": "1.5"}
+        )
+
+
+def test_parameter_schema_rejects_default_outside_declared_bounds() -> None:
+    with pytest.raises(ParameterError):
+        ParameterSchema("count", "Count", "integer", 4, False, 1, 3, "count")
+    with pytest.raises(ParameterError):
+        ParameterSchema(
+            "multiple", "Multiple", "decimal", "0.4", False, "0.5", "5", "R"
+        )
+
+
+def test_generic_state_envelope_round_trip_and_frontier_guards() -> None:
+    frontier = datetime(2026, 1, 1, 10, 15, tzinfo=UTC)
+    payload = StrategyStatePayloadDocument.from_mapping(
+        "example.state.v1", 1, {"count": 1, "direction": "LONG"}
+    )
+    envelope = StrategyStateEnvelope(1, frontier, payload)
+    assert StrategyStateEnvelope.from_json(envelope.to_json()) == envelope
+    with pytest.raises(StateError):
+        envelope.validate_frontier(frontier, frontier + timedelta(minutes=15))
+    with pytest.raises(StateError):
+        envelope.validate_frontier(
+            frontier + timedelta(minutes=30), frontier + timedelta(minutes=15)
+        )
+
+
+def test_pending_entry_handoff_has_one_bounded_execution_clock() -> None:
+    frontier = datetime(2026, 1, 1, 10, 15, tzinfo=UTC)
+    handoff = PendingEntryHandoff(
+        policy=EntryPolicy.PRICE_TRIGGERED,
+        direction=Direction.LONG,
+        trigger_price=Decimal("1.1050"),
+        trigger_price_basis=PriceComponent.ASK,
+        decision_frontier=frontier,
+        decision_time=frontier,
+        eligibility_limit=5,
+    )
+    advanced = handoff.consumed_at(frontier + timedelta(minutes=15))
+    assert advanced.consumed_count == 1
+    assert PendingEntryHandoff.from_json(handoff.to_json()) == handoff
+    with pytest.raises(StateError):
+        PendingEntryHandoff(
+            policy=handoff.policy,
+            direction=handoff.direction,
+            trigger_price=handoff.trigger_price,
+            trigger_price_basis=handoff.trigger_price_basis,
+            decision_frontier=frontier,
+            decision_time=frontier,
+            eligibility_limit=0,
+        )
+
+
+def test_generic_evidence_is_bounded_and_immutable() -> None:
+    timestamp = datetime(2026, 1, 1, 10, 15, tzinfo=UTC)
+    evidence = StrategyEvidence.from_mapping(
+        "example.evidence.v1",
+        1,
+        {"direction": "LONG", "count": 2, "at": timestamp},
+    )
+    assert evidence.to_json()["fields"]["at"] == "2026-01-01T10:15:00Z"
+    with pytest.raises(InputError):
+        StrategyEvidence.from_mapping(
+            "example.evidence.v1", 1, {"nested": {"value": 1}}
+        )  # type: ignore[arg-type]
+
+
+def test_market_specification_comes_from_the_validated_oanda_capability() -> None:
+    context = StrategyContext(
+        datetime(2026, 1, 1, 10, 15, tzinfo=UTC), Instrument.EUR_USD, ()
+    )
+    assert context.market is not None
+    assert context.market.to_json() == {
+        "instrument": "EUR/USD",
+        "pip_size": "0.0001",
+    }
+    with pytest.raises(InputError):
+        validate_market_specification(
+            type(context.market)(Instrument.EUR_USD, Decimal("0.001"))
+        )

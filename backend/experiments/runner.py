@@ -30,13 +30,12 @@ from backend.domain.market_data import (
 from backend.domain.strategy import (
     Action,
     EntryPolicy,
-    Phase,
+    PendingEntryHandoff,
     PositionState,
     StateError,
     StrategyContext,
     StrategyDecision,
-    StrategyParameters,
-    StrategyState,
+    ValidatedParameterPayload,
     VersionError,
 )
 from backend.execution.contract import (
@@ -85,6 +84,7 @@ from backend.strategies.contract import (
     StrategyContractError,
     StrategyEvaluationError,
     evaluate_strategy,
+    initial_strategy_state,
 )
 from backend.strategies.registry import (
     StrategyRegistry,
@@ -104,7 +104,6 @@ if TYPE_CHECKING:
         SQLAlchemyError,
         Action,
         StrategyContext,
-        StrategyState,
         ExecutionRejected,
         ExperimentAccountModel,
         PositionModel,
@@ -219,15 +218,40 @@ def _decimal(value: object, name: str) -> Decimal:
     return result
 
 
-def _parameters(values: Mapping[str, object]) -> StrategyParameters:
-    defaults = StrategyParameters().to_json()
-    merged = {**defaults, **values}
-    return StrategyParameters(
-        ema_period=merged["ema_period"],
-        atr_period=merged["atr_period"],
-        stop_buffer=_decimal(merged["stop_buffer"], "stop_buffer"),
-        target_r=_decimal(merged["target_r"], "target_r"),
-        expiry_window=merged["expiry_window"],
+def _parameters(values: Mapping[str, object], implementation):
+    """Restore the immutable snapshot through the registered Strategy parser."""
+    definition = getattr(implementation, "definition", None)
+    if definition is None:
+        raise ValueError("registered Strategy has no definition")
+    payload = ValidatedParameterPayload.from_mapping(
+        definition.parameter_schema, dict(values)
+    )
+    parser = getattr(implementation, "parse_parameters", None)
+    if not callable(parser):
+        raise ValueError("registered Strategy has no parameter parser")
+    return parser(payload)
+
+
+def _pending_entry_handoff(decision: StrategyDecision) -> PendingEntryHandoff:
+    """Normalize a Strategy's price-trigger proposal for mechanical execution."""
+
+    if (
+        decision.entry_policy is not EntryPolicy.PRICE_TRIGGERED
+        or decision.direction is None
+        or decision.trigger_price is None
+        or decision.trigger_price_basis is None
+        or decision.decision_time is None
+        or decision.expiry_bars is None
+    ):
+        raise ValueError("price-triggered decision is missing handoff fields")
+    return PendingEntryHandoff(
+        policy=decision.entry_policy,
+        direction=decision.direction,
+        trigger_price=decision.trigger_price,
+        trigger_price_basis=decision.trigger_price_basis,
+        decision_frontier=decision.decision_time,
+        decision_time=decision.decision_time,
+        eligibility_limit=decision.expiry_bars,
     )
 
 
@@ -402,8 +426,8 @@ class ExperimentRunner:
             mark(ExperimentDiagnosticStage.EQUITY_SAMPLING)
             self._sample_equity(session, experiment, account, position, None, 0)
             params, state, history = (
-                _parameters(experiment.parameter_snapshot),
-                StrategyState(schema_version=version.state_schema_version),
+                _parameters(experiment.parameter_snapshot, implementation),
+                initial_strategy_state(implementation),
                 [],
             )
             frames = tuple(clock.frames())
@@ -439,21 +463,18 @@ class ExperimentRunner:
             )
             observation_index = 0
             pending: _PendingPriceTrigger | None = None
+            pending_handoff: PendingEntryHandoff | None = None
 
             def consume(observation):
-                nonlocal pending
-                if pending is not None:
+                nonlocal pending, pending_handoff, state
+                if pending is not None and pending_handoff is not None:
                     pending_intent = pending.intent
                     pending_frame = pending.decision_frame
                     pending_decision = pending.decision
-                    # Strategy state is the sole authority: before the next
-                    # analytical frontier, its persisted watch count identifies
-                    # the currently eligible window.  No wall-clock or runner
-                    # slot calculation is performed here.
                     if (
                         observation.start_time > pending_decision.decision_time
-                        and state.phase is Phase.ARMED
-                        and state.watch_bars < 5
+                        and pending_handoff.consumed_count
+                        < pending_handoff.eligibility_limit
                     ):
                         executable = _observation_from_m1(observation)
                         direction = pending_decision.direction
@@ -513,6 +534,8 @@ class ExperimentRunner:
                                 execution_observation=executable,
                             )
                             pending = None
+                            pending_handoff = None
+                            state = replace(state, pending_entry=None)
                             if filled:
                                 return
                 mark(ExperimentDiagnosticStage.PROTECTION_APPLICATION)
@@ -526,6 +549,8 @@ class ExperimentRunner:
                     )
 
             for frame in decisions:
+                pending_before = pending
+                handoff_before = pending_handoff
                 while (
                     observation_index < len(observations)
                     and observations[observation_index].start_time < frame.frontier
@@ -549,6 +574,13 @@ class ExperimentRunner:
                     state,
                 )
                 state = evaluation.next_state
+                if (
+                    pending_handoff is not None
+                    and pending_handoff.consumed_count
+                    < pending_handoff.eligibility_limit
+                ):
+                    pending_handoff = pending_handoff.consumed_at(frame.frontier)
+                    state = replace(state, pending_entry=pending_handoff)
                 if evaluation.decision.action in (
                     Action.OPEN_LONG,
                     Action.OPEN_SHORT,
@@ -619,10 +651,20 @@ class ExperimentRunner:
                             decision_frame=frame,
                             decision=decision,
                         )
-                # W6 is the first analytical frontier after the five fully
-                # eligible execution windows.  Strategy state is authoritative
-                # and clears the runner's pending handoff at that point.
-                if pending is not None and state.phase is Phase.SEARCHING:
+                        pending_handoff = _pending_entry_handoff(decision)
+                        state = replace(state, pending_entry=pending_handoff)
+                # The next analytical frontier after the declared window is the
+                # only place where an unfilled handoff expires.
+                if (
+                    pending_handoff is not None
+                    and pending_handoff.consumed_count
+                    >= pending_handoff.eligibility_limit
+                    and frame.frontier > pending_handoff.decision_frontier
+                    and pending_before is not None
+                    and handoff_before is not None
+                    and handoff_before.consumed_count
+                    >= handoff_before.eligibility_limit
+                ):
                     self._proposal_diagnostic(
                         session,
                         experiment,
@@ -632,6 +674,8 @@ class ExperimentRunner:
                         {"reason": "STRATEGY_WINDOW_EXPIRED"},
                     )
                     pending = None
+                    pending_handoff = None
+                    state = replace(state, pending_entry=None)
             while observation_index < len(observations):
                 consume(observations[observation_index])
                 observation_index += 1
@@ -645,6 +689,7 @@ class ExperimentRunner:
                     {"reason": "NO_TRIGGER"},
                 )
                 pending = None
+                pending_handoff = None
             if position.state != "FLAT":
                 mark(ExperimentDiagnosticStage.TERMINAL_FACT_READ)
                 terminal = terminal_protection_observation(
@@ -872,7 +917,13 @@ class ExperimentRunner:
         setup_facts = (
             decision.setup_facts.to_json() if decision.setup_facts is not None else None
         )
-        evidence = {"setup_facts": setup_facts} if setup_facts is not None else {}
+        evidence = (
+            {"setup_facts": setup_facts}
+            if setup_facts is not None
+            else decision.evidence.to_json()
+            if decision.evidence is not None
+            else {}
+        )
         landmarks = []
         if decision.setup_facts is not None:
             for name in ("reference", "sweep", "confirmation"):

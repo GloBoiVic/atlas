@@ -179,4 +179,50 @@ describe('Experiment setup workstation stages', () => {
       ).toBeDisabled(),
     );
   });
+
+  it('renders the selected StrategyVersion schema and market pip requirement', async () => {
+    mocks.configurationOptions.mockResolvedValue({
+      ...options,
+      strategyVersions: [
+        {
+          ...options.strategyVersions[0],
+          parameterSchema: [
+            {
+              key: 'confirmation_bars',
+              label: 'Confirmation bars',
+              type: 'integer',
+              default: 2,
+              nullable: false,
+              min: 1,
+              max: 3,
+              description: 'Consecutive breaks',
+              allowedValues: [],
+            },
+            {
+              key: 'stop_buffer_pips',
+              label: 'Stop buffer (pips)',
+              type: 'decimal',
+              default: '20',
+              nullable: false,
+              min: '1',
+              max: '100',
+              description: 'Absolute stop buffer',
+              allowedValues: [],
+            },
+          ],
+          marketRequirements: {
+            ...options.strategyVersions[0].marketRequirements,
+            pipSize: '0.0001',
+          },
+        },
+      ],
+    });
+    render(<ExperimentForm />);
+
+    expect(await screen.findByText('Confirmation bars')).toBeInTheDocument();
+    expect(screen.getByText('Stop buffer (pips)')).toBeInTheDocument();
+    expect(screen.getByText('0.0001')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('2')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('20')).toBeInTheDocument();
+  });
 });

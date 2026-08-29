@@ -16,6 +16,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
+from backend.domain.market_data import Instrument
 from backend.experiments.comparison import (
     ComparisonReadError,
     ExperimentComparisonReadService,
@@ -29,6 +30,7 @@ from backend.experiments.lifecycle import (
     ExperimentRunService,
 )
 from backend.experiments.results import ExperimentResultReadService, ResultReadError
+from backend.integrations.oanda.capabilities import OANDA_CAPABILITY
 from backend.market_data.coverage import diagnostic_payloads
 from backend.persistence.database import session_scope
 from backend.persistence.models import (
@@ -136,6 +138,44 @@ def _failure(row: ExperimentModel) -> dict[str, Any] | None:
     }
 
 
+def _market_requirements(strategy_version: Any) -> dict[str, Any]:
+    """Project persisted Strategy requirements plus the validated pip fact."""
+    instrument = getattr(strategy_version, "required_instrument", Instrument.EUR_USD)
+    if isinstance(instrument, str):
+        instrument = Instrument(instrument)
+    specification = OANDA_CAPABILITY.market_specification(instrument)
+    return {
+        "instrument": instrument.value,
+        "resolution": getattr(
+            strategy_version, "primary_timeframe", "15m"
+        ).value
+        if hasattr(getattr(strategy_version, "primary_timeframe", None), "value")
+        else getattr(strategy_version, "primary_timeframe", "15m"),
+        "priceComponent": getattr(
+            strategy_version, "required_price_component", "MID"
+        ).value
+        if hasattr(getattr(strategy_version, "required_price_component", None), "value")
+        else getattr(strategy_version, "required_price_component", "MID"),
+        "requiredHistoricalContextBars": getattr(
+            strategy_version, "required_historical_context_bars", 0
+        ),
+        "completedOnly": getattr(strategy_version, "completed_only", True),
+        "pipSize": str(specification.pip_size),
+    }
+
+
+def _persisted_market_requirements(row: Any) -> dict[str, Any]:
+    """Build a read-only requirement projection without reopening implementation code."""
+    return {
+        "instrument": Instrument.EUR_USD.value,
+        "resolution": row.primary_timeframe,
+        "priceComponent": "MID",
+        "requiredHistoricalContextBars": row.required_historical_context_bars,
+        "completedOnly": True,
+        "pipSize": "0.0001",
+    }
+
+
 def _identity(
     db: Session,
     row: ExperimentModel,
@@ -194,6 +234,7 @@ def _detail(
     row: ExperimentModel, metrics: Any = None, result: Any = None,
     gap_decisions: Any = (), strategy_version: Any = None,
     identity: Any = None,
+    market_requirements: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     result_payload = _json(result)
     result_quality = getattr(result, "result_quality", None)
@@ -205,6 +246,11 @@ def _detail(
     if result_schema_version is None and isinstance(result_payload, dict):
         result_schema_version = result_payload.get("result_schema_version")
     gap_decisions = _json(gap_decisions)
+    requirements = market_requirements or (
+        _persisted_market_requirements(strategy_version)
+        if strategy_version is not None
+        else {}
+    )
     payload: dict[str, Any] = {
         "id": str(row.id),
         "label": f"Experiment · {_utc(row.trading_start)[:10]} → {_utc(row.trading_end)[:10]}",
@@ -222,6 +268,8 @@ def _detail(
                 "displayName": f"{strategy_version.strategy.name} v{strategy_version.version_number}",
                 "implementationKey": strategy_version.implementation_key,
                 "sourceFingerprint": strategy_version.source_fingerprint,
+                "parameterSchema": strategy_version.parameter_schema,
+                "marketRequirements": requirements,
             }
         ),
         "identity": identity or {},
@@ -229,6 +277,7 @@ def _detail(
         "startingCapital": str(row.starting_capital),
         "riskPerTrade": str(row.risk_per_trade),
         "parameters": row.parameter_snapshot,
+        "marketRequirements": requirements,
         "riskConfig": row.risk_config,
         "simulationConfig": row.simulation_config,
         "modelVersion": row.model_version,
@@ -356,6 +405,11 @@ def create_experiment_router(
                         "priceComponent": registration.definition.required_price_component.value,
                         "requiredHistoricalContextBars": row.required_historical_context_bars,
                         "completedOnly": registration.definition.completed_only,
+                        "pipSize": str(
+                            OANDA_CAPABILITY.market_specification(
+                                registration.definition.required_instrument
+                            ).pip_size
+                        ),
                     },
                 }
             )
@@ -477,7 +531,18 @@ def create_experiment_router(
             http_status = 409 if code == "COVERAGE_INVALID" else 422
             raise _error(code, str(exc), http_status=http_status) from exc
         strategy_version = strategy_repo.get_version(db, row.strategy_version_id)
-        return _detail(row, strategy_version=strategy_version, identity=_identity(db, row, strategy_version))
+        return _detail(
+            row,
+            strategy_version=strategy_version,
+            identity=_identity(db, row, strategy_version),
+            market_requirements=_market_requirements(
+                configuration.registry.get(
+                    strategy_version.strategy.strategy_key,
+                    implementation_key=strategy_version.implementation_key,
+                    source_fingerprint=strategy_version.source_fingerprint,
+                ).definition
+            ),
+        )
 
     @router.get("", response_model=ExperimentListResponse)
     def listing(
@@ -531,6 +596,7 @@ def create_experiment_router(
                         venue=projection.venue,
                         instrument=projection.instrument,
                     ),
+                    _persisted_market_requirements(projection.strategy_version),
                 )
             )
         return {"items": items, "nextCursor": next_cursor}
@@ -575,6 +641,9 @@ def create_experiment_router(
             row, _metrics_payload(composed["metrics"]), composed["result"],
             results.gap_decisions(db, row.id), composed.get("strategy_version"),
             _identity(db, row, composed.get("strategy_version")),
+            _persisted_market_requirements(composed["strategy_version"])
+            if composed.get("strategy_version") is not None
+            else None,
         )
 
     @router.post("/{experiment_id}/run")
