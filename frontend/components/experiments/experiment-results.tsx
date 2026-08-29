@@ -82,6 +82,11 @@ function StateDisclosure({ data }: { data: Json }) {
   const quality = object(data.resultQuality);
   const gaps = Array.isArray(data.gapDecisions) ? data.gapDecisions : [];
   const provenance = object(data.provenance);
+  const market = object(
+    data.marketRequirements ?? object(data.strategy).marketRequirements,
+  );
+  const analysis = `${text(market.resolution, 'M15')} ${text(market.priceComponent, 'MID')}`;
+  const execution = `${text(config.execution_resolution, 'M1')} ${Array.isArray(config.execution_components) ? config.execution_components.map(String).join('/') : 'BID/ASK'}`;
   return (
     <div className="rounded-lg border border-atlas-border bg-atlas-surface-hover p-5 text-sm">
       <h2 className="font-medium">Assumptions and provenance</h2>
@@ -94,6 +99,13 @@ function StateDisclosure({ data }: { data: Json }) {
           <dt className="text-atlas-foreground-muted">Instrument / account</dt>
           <dd className="font-medium">
             {marketIdentity(data) || 'Market identity not provided'}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-atlas-foreground-muted">Market requirement</dt>
+          <dd className="font-medium">
+            {text(market.instrument, 'Instrument unavailable')} · {analysis} ·
+            pip {text(market.pipSize, '—')}
           </dd>
         </div>
         <div>
@@ -114,8 +126,7 @@ function StateDisclosure({ data }: { data: Json }) {
         <div>
           <dt className="text-atlas-foreground-muted">Execution</dt>
           <dd>
-            Native M15 MID analysis · sparse{' '}
-            {text(config.execution_resolution, 'M1')} BID/ASK
+            Native {analysis} analysis · sparse {execution}
             <span className="block text-xs text-atlas-foreground-muted">
               Execution uses eligible post-decision M1 BID/ASK observations
               according to the Strategy’s entry policy and trigger window.
@@ -164,6 +175,41 @@ function StateDisclosure({ data }: { data: Json }) {
         metrics.
       </p>
     </div>
+  );
+}
+
+function ParameterSnapshot({ data }: { data: Json }) {
+  const schema = Array.isArray(object(data.strategy).parameterSchema)
+    ? (object(data.strategy).parameterSchema as unknown[])
+    : [];
+  const values = object(data.parameters);
+  if (!schema.length) return null;
+  return (
+    <section
+      aria-labelledby="parameter-snapshot-heading"
+      className="rounded-lg border border-atlas-border bg-atlas-surface-hover p-5"
+    >
+      <h2 id="parameter-snapshot-heading" className="font-medium">
+        Strategy parameters
+      </h2>
+      <p className="mt-1 text-sm text-atlas-foreground-muted">
+        Exact immutable values captured for this Experiment.
+      </p>
+      <dl className="mt-4 grid gap-x-6 gap-y-3 sm:grid-cols-2">
+        {schema.map((raw, index) => {
+          const descriptor = object(raw);
+          const key = text(descriptor.key, `parameter-${index + 1}`);
+          return (
+            <div key={key}>
+              <dt className="text-xs text-atlas-foreground-muted">
+                {text(descriptor.label, key)}
+              </dt>
+              <dd className="break-words text-sm">{text(values[key], '—')}</dd>
+            </div>
+          );
+        })}
+      </dl>
+    </section>
   );
 }
 
@@ -233,6 +279,7 @@ export function ExperimentResults({ id, data }: { id: string; data: Json }) {
           <MetricCard label="Trade Count" value={metrics.tradeCount} />
         </dl>
       </section>
+      <ParameterSnapshot data={data} />
       {zeroTrades && (
         <div className="rounded-lg border border-atlas-primary bg-atlas-primary-muted p-4 text-sm text-atlas-primary">
           <strong>No Trades</strong> — Strategy produced no executed Trades

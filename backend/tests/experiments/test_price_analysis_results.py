@@ -42,6 +42,7 @@ from backend.persistence.models import (
     DatasetSnapshotModel,
     StrategyVersionModel,
 )
+from backend.strategies.candle_confirmation_break import DEFINITION
 
 NOW = datetime(2026, 8, 17, 14, 0, tzinfo=UTC)
 
@@ -754,6 +755,57 @@ def test_price_analysis_optional_rationale_omitted_but_chart_remains_usable():
     assert value.reference == ()
     assert len(value.m15) > 0
     assert len(value.ema) > 0
+
+
+def test_candidate_evidence_is_passed_through_without_ema_projection():
+    """A completed non-EMA result keeps opaque evidence and honest diagnostics."""
+    experiment = _experiment(
+        parameter_snapshot={
+            "confirmation_bars": 2,
+            "stop_buffer_pips": "20",
+            "target_r": "1.5",
+        }
+    )
+    candidate_version = SimpleNamespace(
+        required_historical_context_bars=1,
+        primary_timeframe="15m",
+        parameter_schema=[item.to_json() for item in DEFINITION.parameter_schema],
+    )
+    evidence = {
+        "schema_key": "CANDLE_CONFIRMATION_BREAK_EVIDENCE_V1",
+        "version": 1,
+        "fields": {
+            "direction": "LONG",
+            "pip_size": "0.0001",
+            "proposed_stop": "1.1040",
+        },
+    }
+    trade = _trade(
+        1,
+        intent=SimpleNamespace(
+            id=uuid4(),
+            rationale={
+                "reason_code": "CANDLE_CONFIRMATION_BREAK_CONFIRMED",
+                "fields": {"direction": "LONG", "confirmation_count": "2"},
+                "evidence": evidence,
+            },
+        ),
+    )
+    service = ExperimentResultReadService(
+        results=FakeRepo(experiment, trades=(trade,)),
+        snapshots=_snapshot_repository(
+            SnapshotMembershipSpy(tuple(_bar(i) for i in range(8)))
+        ),
+    )
+    value = service.price_analysis(
+        FakeSession(_snapshot("candidate" * 16), candidate_version), experiment.id
+    )
+    assert value.ema == ()
+    assert value.reference == ()
+    assert value.diagnostics["ema_period"] is None
+    assert value.diagnostics["truncated"] is False
+    assert value.evidence == (({"trade_sequence": 1, "setup": evidence}),)
+    assert value.market_requirements["pipSize"] == "0.0001"
 
 
 # ---------------------------------------------------------------------------

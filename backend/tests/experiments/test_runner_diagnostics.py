@@ -311,9 +311,10 @@ def test_runner_has_one_authoritative_loop_and_no_superseded_seams() -> None:
         isinstance(node, ast.Compare)
         and isinstance(node.ops[0], ast.Lt)
         and isinstance(node.left, ast.Attribute)
-        and node.left.attr == "watch_bars"
+        and node.left.attr == "consumed_count"
         and any(
-            isinstance(comparator, ast.Constant) and comparator.value == 5
+            isinstance(comparator, ast.Attribute)
+            and comparator.attr == "eligibility_limit"
             for comparator in node.comparators
         )
         for node in ast.walk(run_v2)

@@ -204,6 +204,21 @@ export function ExperimentForm() {
   const selectedVersion = object(
     versions.find((value) => text(object(value).id) === strategy),
   );
+  const marketRequirements = object(selectedVersion.marketRequirements);
+  const analysisResolution = text(marketRequirements.resolution, 'M15');
+  const analysisComponent = text(marketRequirements.priceComponent, 'MID');
+  const executionAssumptions = object(options.simulationAssumptions);
+  const executionResolution = text(
+    executionAssumptions.executionResolution,
+    'M1',
+  );
+  const executionComponents = Array.isArray(
+    executionAssumptions.executionComponents,
+  )
+    ? executionAssumptions.executionComponents.map(String).join('/')
+    : 'BID/ASK';
+  const analysisLabel = `native ${analysisResolution} ${analysisComponent}`;
+  const executionLabel = `sparse ${executionResolution} ${executionComponents}`;
   const schema = Array.isArray(selectedVersion.parameterSchema)
     ? selectedVersion.parameterSchema
     : [];
@@ -288,9 +303,21 @@ export function ExperimentForm() {
       const descriptor = object(value);
       const key = text(descriptor.key, '');
       const raw = parameters[key] ?? '';
-      if (!key || raw.trim() === '') return [[key, 'Enter a value.']];
+      if (!key || raw.trim() === '')
+        return descriptor.nullable === true ? [] : [[key, 'Enter a value.']];
       const kind = text(descriptor.type, '');
-      const parsed = kind === 'integer' ? Number(raw) : Number(raw);
+      if (kind === 'string') return [];
+      if (kind === 'enum') {
+        const allowed = Array.isArray(descriptor.allowedValues)
+          ? descriptor.allowedValues.map(String)
+          : [];
+        return allowed.includes(raw) ? [] : [[key, 'Choose an allowed value.']];
+      }
+      if (kind === 'boolean')
+        return raw === 'true' || raw === 'false'
+          ? []
+          : [[key, 'Choose true or false.']];
+      const parsed = Number(raw);
       if (
         !Number.isFinite(parsed) ||
         (kind === 'integer' && !Number.isInteger(parsed))
@@ -469,7 +496,9 @@ export function ExperimentForm() {
                 key,
                 text(item.type) === 'integer'
                   ? Number(parameters[key])
-                  : parameters[key],
+                  : text(item.type) === 'boolean'
+                    ? parameters[key] === 'true'
+                    : parameters[key],
               ];
             }),
           ),
@@ -507,7 +536,7 @@ export function ExperimentForm() {
       : capability?.available === false
         ? 'unavailable'
         : 'awaiting data';
-  const proofLine = `Proof: ${text(proofSource.provider, 'provider unavailable')} ${text(proofSource.instrument, 'instrument unavailable')} · native M15 MID + sparse M1 BID/ASK → immutable snapshot ${proofFingerprint === 'awaiting data' ? proofFingerprint : proofFingerprint.slice(0, 8)} · load ${proofStatus}`;
+  const proofLine = `Proof: ${text(proofSource.provider, 'provider unavailable')} ${text(proofSource.instrument, 'instrument unavailable')} · ${analysisLabel} + ${executionLabel} → immutable snapshot ${proofFingerprint === 'awaiting data' ? proofFingerprint : proofFingerprint.slice(0, 8)} · load ${proofStatus}`;
   return (
     <AppShell>
       <section
@@ -588,12 +617,12 @@ export function ExperimentForm() {
                 )}
               </label>
             </div>
-            <div className="grid gap-4 border-t border-atlas-border pt-4 text-sm sm:grid-cols-3">
+            <div className="grid gap-4 border-t border-atlas-border pt-4 text-sm sm:grid-cols-4">
               <div>
                 <p className="text-xs text-atlas-foreground-muted">Market</p>
                 <p className="font-medium">
                   {text(
-                    object(selectedVersion.marketRequirements).instrument,
+                    marketRequirements.instrument,
                     'Unavailable from this StrategyVersion response',
                   )}
                 </p>
@@ -601,17 +630,7 @@ export function ExperimentForm() {
               <div>
                 <p className="text-xs text-atlas-foreground-muted">Analysis</p>
                 <p className="font-medium">
-                  {text(
-                    object(selectedVersion.marketRequirements).resolution,
-                    text(
-                      selectedVersion.timeframe,
-                      'Unavailable from this StrategyVersion response',
-                    ),
-                  )}{' '}
-                  {text(
-                    object(selectedVersion.marketRequirements).priceComponent,
-                    'Unavailable from this StrategyVersion response',
-                  )}
+                  {analysisResolution} {analysisComponent}
                 </p>
               </div>
               <div>
@@ -620,6 +639,15 @@ export function ExperimentForm() {
                   {Number.isFinite(requiredHistoricalContextBars)
                     ? `${requiredHistoricalContextBars} completed bars`
                     : 'Requirement unavailable'}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-atlas-foreground-muted">Pip size</p>
+                <p className="font-medium">
+                  {text(
+                    marketRequirements.pipSize,
+                    'Unavailable from this StrategyVersion response',
+                  )}
                 </p>
               </div>
             </div>
@@ -636,8 +664,8 @@ export function ExperimentForm() {
               2 · Requested period &amp; data readiness
             </legend>
             <p className="max-w-2xl text-sm leading-6 text-atlas-foreground-muted">
-              Choose the UTC trading window, then confirm native M15 MID and
-              sparse M1 BID/ASK coverage before configuring the run.
+              Choose the UTC trading window, then confirm {analysisLabel} and{' '}
+              {executionLabel} coverage before configuring the run.
             </p>
             <label className="max-w-xl space-y-2 text-sm font-medium">
               DatasetSnapshot
@@ -704,7 +732,7 @@ export function ExperimentForm() {
                 <dl className="mt-3 grid gap-3 sm:grid-cols-3">
                   <div>
                     <dt className="text-xs text-atlas-foreground-muted">
-                      Earliest native M15
+                      Earliest {analysisResolution}
                     </dt>
                     <dd className="font-medium">
                       {snapshots.length
@@ -722,7 +750,7 @@ export function ExperimentForm() {
                   </div>
                   <div>
                     <dt className="text-xs text-atlas-foreground-muted">
-                      Latest native M15
+                      Latest {analysisResolution}
                     </dt>
                     <dd className="font-medium">
                       {snapshots.length
@@ -1109,36 +1137,88 @@ export function ExperimentForm() {
                 const key = text(descriptor.key, '');
                 const fixed = Number(descriptor.min) === Number(descriptor.max);
                 const error = text(parameterErrors[key], '');
+                const type = text(descriptor.type, 'string');
+                const allowed = Array.isArray(descriptor.allowedValues)
+                  ? descriptor.allowedValues.map(String)
+                  : [];
                 return (
-                  <label key={key} className="space-y-2 text-sm font-medium">
+                  <label
+                    key={key}
+                    className="flex flex-col gap-2 text-sm font-medium"
+                  >
                     <span className="block">{text(descriptor.label, key)}</span>
-                    <input
-                      aria-describedby={`${key}-hint ${key}-error`}
-                      aria-invalid={Boolean(error)}
-                      className={`form-control ${fixed ? 'bg-atlas-surface-hover text-atlas-foreground-muted' : ''}`}
-                      inputMode={
-                        text(descriptor.type) === 'integer'
-                          ? 'numeric'
-                          : 'decimal'
-                      }
-                      readOnly={fixed}
-                      type="text"
-                      value={parameters[key] ?? ''}
-                      onChange={(event) => {
-                        setParameters((current) => ({
-                          ...current,
-                          [key]: event.target.value,
-                        }));
-                        invalidate();
-                      }}
-                    />
+                    {type === 'enum' ? (
+                      <select
+                        aria-describedby={`${key}-hint ${key}-error`}
+                        aria-invalid={Boolean(error)}
+                        className="form-control"
+                        value={parameters[key] ?? ''}
+                        onChange={(event) => {
+                          setParameters((current) => ({
+                            ...current,
+                            [key]: event.target.value,
+                          }));
+                          invalidate();
+                        }}
+                      >
+                        {allowed.map((item) => (
+                          <option key={item} value={item}>
+                            {item}
+                          </option>
+                        ))}
+                      </select>
+                    ) : type === 'boolean' ? (
+                      <select
+                        aria-describedby={`${key}-hint ${key}-error`}
+                        aria-invalid={Boolean(error)}
+                        className="form-control"
+                        value={parameters[key] ?? ''}
+                        onChange={(event) => {
+                          setParameters((current) => ({
+                            ...current,
+                            [key]: event.target.value,
+                          }));
+                          invalidate();
+                        }}
+                      >
+                        <option value="true">true</option>
+                        <option value="false">false</option>
+                      </select>
+                    ) : (
+                      <input
+                        aria-describedby={`${key}-hint ${key}-error`}
+                        aria-invalid={Boolean(error)}
+                        className={`form-control ${fixed ? 'bg-atlas-surface-hover text-atlas-foreground-muted' : ''}`}
+                        inputMode={
+                          type === 'integer'
+                            ? 'numeric'
+                            : type === 'decimal'
+                              ? 'decimal'
+                              : undefined
+                        }
+                        readOnly={fixed}
+                        type="text"
+                        value={parameters[key] ?? ''}
+                        onChange={(event) => {
+                          setParameters((current) => ({
+                            ...current,
+                            [key]: event.target.value,
+                          }));
+                          invalidate();
+                        }}
+                      />
+                    )}
                     <span
                       id={`${key}-hint`}
                       className="block text-xs font-normal text-atlas-foreground-muted"
                     >
                       {fixed
                         ? 'Fixed by methodology.'
-                        : `${text(descriptor.type)} · ${text(descriptor.min)} to ${text(descriptor.max)}`}
+                        : type === 'enum'
+                          ? `${type} · ${allowed.join(', ')}`
+                          : type === 'string' || type === 'boolean'
+                            ? type
+                            : `${type} · ${text(descriptor.min)} to ${text(descriptor.max)}`}
                       {text(descriptor.description, '')
                         ? ` · ${text(descriptor.description, '')}`
                         : ''}
@@ -1235,7 +1315,7 @@ export function ExperimentForm() {
                 Technical details
               </summary>
               <p className="mt-2">
-                Native M15 MID analysis · sparse M1 BID/ASK execution · entry
+                {analysisLabel} analysis · {executionLabel} execution · entry
                 only in the immediately following one-minute bucket · Financing
                 excluded
               </p>

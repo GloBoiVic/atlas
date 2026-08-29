@@ -104,6 +104,7 @@ def test_configuration_options_preserve_strategy_version_market_requirements(
                 "priceComponent": "MID",
                 "requiredHistoricalContextBars": 100,
                 "completedOnly": True,
+                "pipSize": "0.0001",
             }
     finally:
         engine.dispose()

@@ -139,25 +139,55 @@ function Rationale({
           Array.isArray(item) && typeof item[0] === 'string',
       )
     : Object.entries(object(fields));
-  return pairs.length ? (
-    <dl className="grid gap-x-5 gap-y-3 sm:grid-cols-2">
-      {pairs
-        .filter(([key]) => !hiddenKey(key) && key !== 'setup_facts')
-        .map(([key, value]) => (
-          <div key={key}>
-            <dt className="text-xs text-atlas-foreground-muted">
-              {humanLabel(key)}
-            </dt>
-            <dd className="break-words text-sm">
-              {formatValue(key, value, timeZone)}
-            </dd>
-          </div>
-        ))}
-    </dl>
-  ) : (
-    <p className="text-sm text-atlas-foreground-muted">
-      No separate rationale fields were recorded for this Trade.
-    </p>
+  return (
+    <div className="flex flex-col gap-3">
+      {Boolean(rationale.reason_code) && (
+        <p className="text-sm font-medium">{text(rationale.reason_code)}</p>
+      )}
+      {pairs.length ? (
+        <dl className="grid gap-x-5 gap-y-3 sm:grid-cols-2">
+          {pairs
+            .filter(([key]) => !hiddenKey(key) && key !== 'setup_facts')
+            .map(([key, value]) => (
+              <div key={key}>
+                <dt className="text-xs text-atlas-foreground-muted">
+                  {humanLabel(key)}
+                </dt>
+                <dd className="break-words text-sm">
+                  {formatValue(key, value, timeZone)}
+                </dd>
+              </div>
+            ))}
+        </dl>
+      ) : (
+        <p className="text-sm text-atlas-foreground-muted">
+          No separate rationale fields were recorded for this Trade.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function GenericEvidence({
+  data,
+  timeZone,
+}: {
+  data: Json;
+  timeZone?: DisplayTimeZone;
+}) {
+  const evidence = object(data.evidence).schema_key
+    ? object(data.evidence)
+    : object(object(data.rationale).evidence);
+  if (!evidence.schema_key) return null;
+  return (
+    <section className="mt-5 rounded-md border border-atlas-border bg-atlas-surface p-3">
+      <h3 className="text-sm font-medium">Persisted evidence</h3>
+      <p className="mt-1 text-xs text-atlas-foreground-muted">
+        {text(evidence.schema_key, 'Evidence')} · version{' '}
+        {text(evidence.version)}
+      </p>
+      <Rows value={evidence.fields} timeZone={timeZone} />
+    </section>
   );
 }
 
@@ -356,6 +386,7 @@ export function Lineage({
         <div className="mt-3">
           <Rationale data={data} />
         </div>
+        <GenericEvidence data={data} />
         {Boolean(data.setupFacts) && (
           <>
             <h3 className="mt-5 text-sm font-medium">Setup facts</h3>
