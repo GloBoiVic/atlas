@@ -117,8 +117,8 @@ function StateDisclosure({ data }: { data: Json }) {
             Native M15 MID analysis · sparse{' '}
             {text(config.execution_resolution, 'M1')} BID/ASK
             <span className="block text-xs text-atlas-foreground-muted">
-              Entry only in the immediately following bucket [frontier, frontier
-              + 1 minute)
+              Execution uses eligible post-decision M1 BID/ASK observations
+              according to the Strategy’s entry policy and trigger window.
             </span>
           </dd>
         </div>
