@@ -29,6 +29,7 @@ from backend.experiments.configuration import ExperimentConfigurationService
 from backend.experiments.lifecycle import ExperimentRunService
 from backend.experiments.results import ExperimentResultReadService
 from backend.experiments.runner import ExperimentRunner
+from backend.integrations.oanda.capabilities import OANDA_CAPABILITY
 from backend.market_data.fingerprint import (
     bar_content_fingerprint,
     dataset_fingerprint_v2,
@@ -235,7 +236,12 @@ def test_candidate_persisted_v2_flow_preserves_generic_lineage(database_url: str
                 "target_r": "1.5",
             }
 
-        runner = ExperimentRunner(strategy_registry=registry)
+        runner = ExperimentRunner(
+            strategy_registry=registry,
+            market_specification=OANDA_CAPABILITY.market_specification(
+                Instrument.EUR_USD
+            ),
+        )
         lifecycle = ExperimentRunService(lambda: Session(engine), runner)
         run_result = lifecycle.run(experiment_id)
         assert run_result.status == "COMPLETED", run_result.failure

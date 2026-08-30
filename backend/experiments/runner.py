@@ -30,6 +30,7 @@ from backend.domain.market_data import (
 from backend.domain.strategy import (
     Action,
     EntryPolicy,
+    MarketSpecification,
     PendingEntryHandoff,
     PositionState,
     StateError,
@@ -289,6 +290,7 @@ class ExperimentRunner:
         trading_repository: TradingRepository | None = None,
         risk_service: RiskService | None = None,
         execution: SimulatedExecutionAdapter | None = None,
+        market_specification: MarketSpecification,
     ) -> None:
         self.registry = strategy_registry
         self.strategies = strategy_repository or StrategyRepository()
@@ -296,6 +298,7 @@ class ExperimentRunner:
         self.trading = trading_repository or TradingRepository()
         self.risk = risk_service or RiskService()
         self.execution = execution or SimulatedExecutionAdapter()
+        self.market_specification = market_specification
 
     def run(self, session: Session, experiment_id: UUID) -> ExperimentRunResult:
         experiment = self.experiments.get(session, experiment_id)
@@ -446,8 +449,9 @@ class ExperimentRunner:
                             frame.frontier,
                             frame.decision_bar.instrument,
                             tuple(history),
-                            PositionState.FLAT,
-                            False,
+                            market=self.market_specification,
+                            position=PositionState.FLAT,
+                            exposure_allowed=False,
                         ),
                         params,
                         state,
@@ -567,8 +571,9 @@ class ExperimentRunner:
                         frame.frontier,
                         frame.decision_bar.instrument,
                         tuple(history),
-                        self._position_state(position.state),
-                        True,
+                        market=self.market_specification,
+                        position=self._position_state(position.state),
+                        exposure_allowed=True,
                     ),
                     params,
                     state,

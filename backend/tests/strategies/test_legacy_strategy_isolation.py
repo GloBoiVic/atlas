@@ -9,6 +9,7 @@ from backend.domain.strategy import (
     Action,
     Direction,
     EntryPolicy,
+    MarketSpecification,
     Phase,
     Rationale,
     StopProposal,
@@ -26,6 +27,7 @@ from backend.strategies.production import (
 )
 
 ROOT = Path(__file__).parents[3]
+MARKET = MarketSpecification(Instrument.EUR_USD, Decimal("0.0001"))
 
 
 def test_production_registry_has_registered_v2_strategies() -> None:
@@ -69,7 +71,7 @@ def test_v2_contract_rejects_legacy_schema_one_phase_state() -> None:
     with pytest.raises(StrategyContractError):
         evaluate_strategy(
             implementation,
-            StrategyContext(reference_time, Instrument.EUR_USD, ()),
+            StrategyContext(reference_time, Instrument.EUR_USD, (), market=MARKET),
             StrategyParameters(),
             legacy_state,
         )
@@ -85,7 +87,10 @@ def test_v2_contract_rejects_legacy_schema_two_state_at_public_boundary() -> Non
         evaluate_strategy(
             implementation,
             StrategyContext(
-                datetime(2026, 1, 1, 10, 0, tzinfo=UTC), Instrument.EUR_USD, ()
+                datetime(2026, 1, 1, 10, 0, tzinfo=UTC),
+                Instrument.EUR_USD,
+                (),
+                market=MARKET,
             ),
             StrategyParameters(),
             StrategyState(schema_version=2),

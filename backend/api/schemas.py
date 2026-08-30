@@ -348,6 +348,37 @@ class ExperimentReadResponse(BaseModel):
     identity: ExperimentIdentity
 
 
+class ExperimentDeleteTradingPeriod(StrictModel):
+    start: str
+    end: str
+
+
+class ExperimentDeleteExpected(StrictModel):
+    label: str
+    status: str
+    strategy: str
+    instrument: str
+    provider: str
+    analysis: str
+    trading_period: ExperimentDeleteTradingPeriod
+
+
+class ExperimentDeleteRequest(StrictModel):
+    confirmation: str
+    expected: ExperimentDeleteExpected
+
+
+class ExperimentDeleteSnapshotResponse(StrictModel):
+    id: UUID
+    deleted: bool
+
+
+class ExperimentDeleteResponse(StrictModel):
+    deleted: bool
+    experiment_id: UUID
+    snapshot: ExperimentDeleteSnapshotResponse
+
+
 class ExperimentListResponse(BaseModel):
     model_config = ConfigDict(extra="allow")
 

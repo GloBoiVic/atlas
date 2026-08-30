@@ -21,6 +21,7 @@ from backend.domain.strategy import (
     Action,
     Direction,
     EntryPolicy,
+    MarketSpecification,
     ParameterError,
     ParameterSchema,
     PendingEntryHandoff,
@@ -41,6 +42,8 @@ from backend.domain.strategy import (
     VersionError,
 )
 from backend.integrations.oanda.capabilities import validate_market_specification
+
+MARKET = MarketSpecification(Instrument.EUR_USD, Decimal("0.0001"))
 
 
 def bar(at: datetime, *, close: str = "1.1000") -> Bar:
@@ -224,25 +227,35 @@ def test_context_accepts_market_data_dimensions_for_contract_validation() -> Non
         ),
     )
     for candle in bars:
-        StrategyContext(candle.end_time, Instrument.EUR_USD, (candle,))
+        StrategyContext(candle.end_time, Instrument.EUR_USD, (candle,), market=MARKET)
 
 
 def test_context_rejects_duplicate_or_future_bars() -> None:
     first = bar(datetime(2026, 1, 1, 10, 0, tzinfo=UTC))
     with pytest.raises(InputError):
-        StrategyContext(first.end_time, Instrument.EUR_USD, (first, first))
+        StrategyContext(
+            first.end_time, Instrument.EUR_USD, (first, first), market=MARKET
+        )
     with pytest.raises(InputError):
-        StrategyContext(first.start_time, Instrument.EUR_USD, (first,))
+        StrategyContext(first.start_time, Instrument.EUR_USD, (first,), market=MARKET)
 
 
 def test_context_requires_strict_enum_and_tuple_inputs() -> None:
     first = bar(datetime(2026, 1, 1, 10, 0, tzinfo=UTC))
     with pytest.raises(InputError):
-        StrategyContext(first.end_time, "EUR/USD", (first,))  # type: ignore[arg-type]
+        StrategyContext(first.end_time, "EUR/USD", (first,), market=MARKET)  # type: ignore[arg-type]
     with pytest.raises(InputError):
-        StrategyContext(first.end_time, Instrument.EUR_USD, [first])  # type: ignore[arg-type]
+        StrategyContext(
+            first.end_time, Instrument.EUR_USD, [first], market=MARKET
+        )  # type: ignore[arg-type]
     with pytest.raises(InputError):
-        StrategyContext(first.end_time, Instrument.EUR_USD, (first,), position="FLAT")  # type: ignore[arg-type]
+        StrategyContext(
+            first.end_time,
+            Instrument.EUR_USD,
+            (first,),
+            market=MARKET,
+            position="FLAT",
+        )  # type: ignore[arg-type]
 
 
 def test_parameters_are_decimal_safe_and_immutable() -> None:
@@ -515,11 +528,14 @@ def test_generic_evidence_is_bounded_and_immutable() -> None:
         )  # type: ignore[arg-type]
 
 
-def test_market_specification_comes_from_the_validated_oanda_capability() -> None:
+def test_market_specification_is_explicit_and_provider_validated_at_composition(
+) -> None:
     context = StrategyContext(
-        datetime(2026, 1, 1, 10, 15, tzinfo=UTC), Instrument.EUR_USD, ()
+        datetime(2026, 1, 1, 10, 15, tzinfo=UTC),
+        Instrument.EUR_USD,
+        (),
+        market=MARKET,
     )
-    assert context.market is not None
     assert context.market.to_json() == {
         "instrument": "EUR/USD",
         "pip_size": "0.0001",

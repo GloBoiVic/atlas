@@ -8,6 +8,7 @@ import pytest
 from backend.domain.market_data import Bar, Instrument, PriceComponent, Timeframe
 from backend.domain.strategy import (
     Action,
+    MarketSpecification,
     Phase,
     StrategyContext,
     StrategyParameters,
@@ -21,6 +22,8 @@ from backend.strategies.contract import (
     initial_strategy_state,
 )
 from backend.strategies.production import create_production_strategy_registry
+
+MARKET = MarketSpecification(Instrument.EUR_USD, Decimal("0.0001"))
 
 
 def test_production_registry_exposes_current_reference_strategy() -> None:
@@ -45,7 +48,10 @@ def test_authoritative_strategy_rejects_legacy_state_schema() -> None:
         evaluate_strategy(
             implementation,
             StrategyContext(
-                datetime(2026, 1, 1, 10, 0, tzinfo=UTC), Instrument.EUR_USD, ()
+                datetime(2026, 1, 1, 10, 0, tzinfo=UTC),
+                Instrument.EUR_USD,
+                (),
+                market=MARKET,
             ),
             StrategyParameters(),
             StrategyState(schema_version=1),
@@ -83,7 +89,12 @@ def test_registered_strategy_evaluate_arms_at_zero_and_expires_after_w5() -> Non
 
     identified = evaluate_strategy(
         implementation,
-        StrategyContext(reference.end_time, Instrument.EUR_USD, history + (reference,)),
+        StrategyContext(
+            reference.end_time,
+            Instrument.EUR_USD,
+            history + (reference,),
+            market=MARKET,
+        ),
         StrategyParameters(),
         initial,
     )
@@ -93,6 +104,7 @@ def test_registered_strategy_evaluate_arms_at_zero_and_expires_after_w5() -> Non
             confirmation.end_time,
             Instrument.EUR_USD,
             history + (reference, confirmation),
+            market=MARKET,
         ),
         StrategyParameters(),
         identified.next_state,
@@ -136,6 +148,7 @@ def test_registered_strategy_evaluate_arms_at_zero_and_expires_after_w5() -> Non
                 bar.end_time,
                 Instrument.EUR_USD,
                 history + (reference, confirmation) + watch[:expected_watch_count],
+                market=MARKET,
             ),
             StrategyParameters(),
             working,
@@ -161,6 +174,7 @@ def test_registered_strategy_evaluate_arms_at_zero_and_expires_after_w5() -> Non
             w6.end_time,
             Instrument.EUR_USD,
             history + (reference, confirmation) + watch + (w6,),
+            market=MARKET,
         ),
         StrategyParameters(),
             w5,
@@ -184,7 +198,12 @@ def _armed_ema_state() -> tuple[
     confirmation = _bar(100, "1.1000", "1.1040", "1.0980", "1.1035")
     identified = evaluate_strategy(
         implementation,
-        StrategyContext(reference.end_time, Instrument.EUR_USD, history + (reference,)),
+        StrategyContext(
+            reference.end_time,
+            Instrument.EUR_USD,
+            history + (reference,),
+            market=MARKET,
+        ),
         StrategyParameters(),
         initial_strategy_state(implementation),
     )
@@ -194,6 +213,7 @@ def _armed_ema_state() -> tuple[
             confirmation.end_time,
             Instrument.EUR_USD,
             history + (reference, confirmation),
+            market=MARKET,
         ),
         StrategyParameters(),
         identified.next_state,
@@ -224,6 +244,7 @@ def test_active_ema_timestamp_json_round_trip_continues(
             next_bar.end_time,
             Instrument.EUR_USD,
             history + (reference, confirmation, next_bar),
+            market=MARKET,
         ),
         StrategyParameters(),
         restored,
@@ -253,6 +274,7 @@ def test_round_tripped_ema_pending_state_continues_w1_through_w6() -> None:
                 current.end_time,
                 Instrument.EUR_USD,
                 history + (reference, confirmation) + watch[:expected_watch_count],
+                market=MARKET,
             ),
             StrategyParameters(),
             working,
@@ -274,6 +296,7 @@ def test_round_tripped_ema_pending_state_continues_w1_through_w6() -> None:
             watch[5].end_time,
             Instrument.EUR_USD,
             history + (reference, confirmation) + watch,
+            market=MARKET,
         ),
         StrategyParameters(),
         working,

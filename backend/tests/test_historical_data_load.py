@@ -1,6 +1,7 @@
 import os
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -13,9 +14,11 @@ from backend.market_data.historical_load import (
 )
 from backend.market_data.ingestion import classify_failure
 from backend.market_data.session_calendar import required_warmup_range
+from backend.persistence.experiment_repository import ExperimentRepository
 from backend.persistence.historical_data_load_repository import (
     HistoricalDataLoadRepository,
 )
+from backend.persistence.lifecycle_locks import lock_snapshot_then_reference
 from backend.persistence.models import HistoricalDataLoadRequestModel
 
 UTC_START = datetime(2026, 1, 5, 15, 0, tzinfo=UTC)
@@ -286,6 +289,134 @@ def test_repository_claim_uses_a_row_lock() -> None:
     assert session.statement._for_update_arg is not None
 
 
+def test_snapshot_attachment_locks_snapshot_before_reference_row() -> None:
+    snapshot = SimpleNamespace(id=uuid4())
+    request = SimpleNamespace(id=uuid4(), status="RUNNING")
+
+    class AttachmentSession:
+        def __init__(self):
+            self.statements = []
+
+        def scalar(self, statement):
+            self.statements.append(statement)
+            return snapshot if len(self.statements) == 1 else request
+
+        def flush(self):
+            pass
+
+    session = AttachmentSession()
+    locked_snapshot, locked_request = lock_snapshot_then_reference(
+        session,
+        snapshot.id,
+        reference_model=HistoricalDataLoadRequestModel,
+        reference_id=request.id,
+    )
+
+    assert locked_snapshot is snapshot
+    assert locked_request is request
+    assert len(session.statements) == 2
+    assert all(
+        statement._for_update_arg is not None for statement in session.statements
+    )
+    assert "dataset_snapshots" in str(session.statements[0])
+    assert "historical_data_load_requests" in str(session.statements[1])
+
+
+def test_experiment_creation_uses_snapshot_attachment_helper_before_insert(
+    monkeypatch,
+) -> None:
+    events = []
+    monkeypatch.setattr(
+        "backend.persistence.experiment_repository.lock_snapshot_then_reference",
+        lambda _session, _snapshot_id: events.append("snapshot"),
+    )
+
+    class ExperimentSession:
+        def add(self, _row):
+            events.append("add")
+
+        def flush(self):
+            events.append("flush")
+
+    ExperimentRepository().create(
+        ExperimentSession(),
+        strategy_version_id=uuid4(),
+        dataset_snapshot_id=uuid4(),
+        venue_instrument_id=uuid4(),
+        trading_start=UTC_START,
+        trading_end=UTC_START + timedelta(minutes=15),
+        starting_capital=Decimal("10000"),
+        risk_per_trade=Decimal("0.01"),
+        parameter_snapshot={},
+        risk_config={},
+        simulation_config={},
+        model_version="TEST_V1",
+    )
+
+    assert events == ["snapshot", "add", "flush"]
+
+
+def test_load_activation_uses_lifecycle_lock_before_pending_insert() -> None:
+    events = []
+
+    class PendingSession:
+        def execute(self, statement, _params):
+            events.append(("lifecycle", str(statement)))
+
+        def add(self, _row):
+            events.append(("add", None))
+
+        def flush(self):
+            events.append(("flush", None))
+
+    HistoricalDataLoadRepository().create_pending(
+        PendingSession(),
+        strategy_version_id=uuid4(),
+        trading_start=UTC_START,
+        trading_end=UTC_START + timedelta(minutes=15),
+        load_start=UTC_START,
+        load_end=UTC_START + timedelta(minutes=15),
+    )
+
+    assert [event[0] for event in events] == ["lifecycle", "add", "flush"]
+    assert "pg_advisory_xact_lock" in events[0][1]
+
+
+def test_completion_attaches_snapshot_only_after_both_rows_are_locked() -> None:
+    snapshot = SimpleNamespace(id=uuid4())
+    row = SimpleNamespace(
+        id=uuid4(), status="RUNNING", snapshot_id=None, finished_at=None,
+        updated_at=None,
+    )
+
+    class CompletionSession:
+        def __init__(self):
+            self.statements = []
+
+        def scalar(self, statement):
+            self.statements.append(statement)
+            return snapshot if len(self.statements) == 1 else row
+
+        def flush(self):
+            pass
+
+    session = CompletionSession()
+    assert HistoricalDataLoadRepository().complete(
+        session,
+        row.id,
+        snapshot_id=snapshot.id,
+        coverage_summary={"valid": True},
+        experiment_validation={"valid": True},
+    )
+    assert row.snapshot_id == snapshot.id
+    assert [
+        "dataset_snapshots" in str(statement) for statement in session.statements
+    ] == [True, False]
+    assert all(
+        statement._for_update_arg is not None for statement in session.statements
+    )
+
+
 def test_startup_recovery_uses_distinct_fail_closed_codes() -> None:
     pending = SimpleNamespace(status="PENDING")
     running = SimpleNamespace(status="RUNNING")
@@ -314,13 +445,18 @@ def test_explicit_resume_reopens_failed_request_without_erasing_coverage() -> No
     )
 
     class ResumeSession:
+        def execute(self, statement, _params):
+            self.statement = statement
+
         def scalar(self, _statement):
             return row
 
         def flush(self):
             pass
 
-    assert HistoricalDataLoadRepository().resume(ResumeSession(), row.id)
+    session = ResumeSession()
+    assert HistoricalDataLoadRepository().resume(session, row.id)
+    assert "pg_advisory_xact_lock" in str(session.statement)
     assert row.status == "RUNNING"
     assert row.finished_at is None
     assert row.failure_code is None
@@ -459,6 +595,8 @@ class FakeRepository:
     def fail_if_active(self, _session, *_args, **kwargs):
         self.events.append("fail")
         self.row.status = "FAILED"
+        if "snapshot_id" in kwargs:
+            self.row.snapshot_id = kwargs["snapshot_id"]
         self.row.failure_category = kwargs["category"]
         self.row.failure_code = kwargs["code"]
         self.row.failure_detail = kwargs["detail"]
@@ -539,6 +677,38 @@ def test_success_order_is_load_snapshot_m15_then_validation() -> None:
     assert events == ["load"]
     assert row.status == "COMPLETED"
     assert repository.completed_snapshot_id == snapshot.id
+
+
+def test_insufficient_warmup_preserves_the_produced_snapshot(monkeypatch) -> None:
+    snapshot = SimpleNamespace(
+        id=uuid4(),
+        snapshot_schema="ATLAS_HISTORICAL_SIMULATION_SNAPSHOT_V2",
+        integrity_summary={"warmup_count": 99},
+    )
+    row = SimpleNamespace(
+        id=uuid4(), status="PENDING", load_start=UTC_START,
+        load_end=UTC_START + timedelta(minutes=15),
+        trading_start=UTC_START, trading_end=UTC_START + timedelta(minutes=15),
+        strategy_version_id=uuid4(), snapshot_id=None,
+    )
+    repository = FakeRepository(row)
+    monkeypatch.setattr(
+        "backend.market_data.historical_load._warmup_plan",
+        lambda *_args: SimpleNamespace(outcome="INSUFFICIENT_WARMUP"),
+    )
+    coordinator = HistoricalDataLoadCoordinator(
+        lambda: FakeSession(),
+        SimpleNamespace(
+            load_v2=lambda *_args, **_kwargs: SimpleNamespace(snapshot=snapshot)
+        ),
+        SimpleNamespace(), FakeRegistry(), repository=repository,
+        strategies=FakeStrategies(),
+    )
+
+    coordinator.run(row.id)
+
+    assert row.status == "FAILED"
+    assert row.snapshot_id == snapshot.id
 
 
 def test_failed_completion_transition_becomes_inspectable_terminal_failure() -> None:

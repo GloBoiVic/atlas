@@ -11,7 +11,9 @@ from sqlalchemy.orm import Session
 
 from backend.api.app import create_app
 from backend.api.schemas import ExperimentDatasetSnapshotOptionResponse
+from backend.domain.market_data import Instrument
 from backend.experiments.runner import ExperimentRunner
+from backend.integrations.oanda.capabilities import OANDA_CAPABILITY
 from backend.persistence.database import configure_utc_session_timezone
 from backend.persistence.experiment_repository import ExperimentRepository
 from backend.persistence.models import (
@@ -40,6 +42,14 @@ def database_url():
     return os.environ["ATLAS_TEST_DATABASE_URL"]
 
 
+def _test_peer_address(_: object) -> str:
+    return "127.0.0.1"
+
+
+def _market_specification():
+    return OANDA_CAPABILITY.market_specification(Instrument.EUR_USD)
+
+
 def _complete_experiment(database_url, *, direction):
     """Persist a golden-flow Experiment, run it COMPLETED, and return its id."""
     engine = configure_utc_session_timezone(create_engine(database_url))
@@ -55,7 +65,8 @@ def _complete_experiment(database_url, *, direction):
             experiment_id, _, _ = _seed(session, direction)
         with Session(engine) as session, session.begin():
             result = ExperimentRunner(
-                strategy_registry=_registry()
+                strategy_registry=_registry(),
+                market_specification=_market_specification(),
             ).run(session, experiment_id)
             assert result.status == "COMPLETED", result.failure
         return experiment_id
@@ -89,8 +100,12 @@ def test_configuration_options_preserve_strategy_version_market_requirements(
             experiment = session.get(ExperimentModel, experiment_id)
             assert experiment is not None
             version_id = experiment.strategy_version_id
-        app = create_app(engine=engine, registry=_registry())
-        with TestClient(app) as client:
+        app = create_app(
+            engine=engine,
+            registry=_registry(),
+            peer_address_resolver=_test_peer_address,
+        )
+        with TestClient(app, base_url="http://localhost") as client:
             response = client.get("/api/v1/experiments/configuration-options")
             assert response.status_code == 200, response.text
             selected = next(
@@ -114,8 +129,13 @@ def test_http_status_poll_observes_running_while_run_is_gated(database_url):
     engine = configure_utc_session_timezone(create_engine(database_url))
     experiment_id = _create(engine)
     runner = GatedRunner()
-    app = create_app(engine=engine, registry=_registry(), runner=runner)
-    with TestClient(app) as client:
+    app = create_app(
+        engine=engine,
+        registry=_registry(),
+        runner=runner,
+        peer_address_resolver=_test_peer_address,
+    )
+    with TestClient(app, base_url="http://localhost") as client:
         responses = []
         thread = Thread(
             target=lambda: responses.append(
@@ -154,7 +174,12 @@ def test_create_and_read_contract_timestamps_are_utc_z(database_url):
         strategy.created_at = naive_created_at
         with session.no_autoflush:
             assert version_to_domain(strategy).created_at.tzinfo == UTC
-    app = create_app(engine=engine, registry=_registry(), runner=GatedRunner())
+    app = create_app(
+        engine=engine,
+        registry=_registry(),
+        runner=GatedRunner(),
+        peer_address_resolver=_test_peer_address,
+    )
     body = {
         "strategyVersionId": str(version_id),
         "datasetSnapshotId": str(snapshot_id),
@@ -170,7 +195,7 @@ def test_create_and_read_contract_timestamps_are_utc_z(database_url):
         "slippageTicks": 0,
         "commissionPerUnit": "0",
     }
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://localhost") as client:
         created = client.post("/api/v1/experiments", json=body)
         assert created.status_code == 201
         payload = created.json()
@@ -199,8 +224,13 @@ def test_experiment_cursor_is_keyset_stable_and_bounded(database_url):
                 .order_by(ExperimentModel.created_at.desc(), ExperimentModel.id.desc())
             )
         ]
-    app = create_app(engine=engine, registry=_registry(), runner=GatedRunner())
-    with TestClient(app) as client:
+    app = create_app(
+        engine=engine,
+        registry=_registry(),
+        runner=GatedRunner(),
+        peer_address_resolver=_test_peer_address,
+    )
+    with TestClient(app, base_url="http://localhost") as client:
         first = client.get("/api/v1/experiments?limit=2")
         assert first.status_code == 200
         first_ids = [item["id"] for item in first.json()["items"]]
@@ -269,8 +299,12 @@ def test_completed_experiment_list_reuses_detail_metrics_and_pagination(database
                     drawdown_percent="0" if sequence < 3 else "0.0049504950495",
                 )
             )
-    app = create_app(engine=engine, registry=_registry())
-    with TestClient(app) as client:
+    app = create_app(
+        engine=engine,
+        registry=_registry(),
+        peer_address_resolver=_test_peer_address,
+    )
+    with TestClient(app, base_url="http://localhost") as client:
         detail = client.get(f"/api/v1/experiments/{experiment_id}")
         assert detail.status_code == 200
         detail_metrics = detail.json()["metrics"]
@@ -345,8 +379,13 @@ def test_non_completed_experiment_list_hides_persisted_result(database_url):
             },
         )
 
-    app = create_app(engine=engine, registry=_registry(), runner=GatedRunner())
-    with TestClient(app) as client:
+    app = create_app(
+        engine=engine,
+        registry=_registry(),
+        runner=GatedRunner(),
+        peer_address_resolver=_test_peer_address,
+    )
+    with TestClient(app, base_url="http://localhost") as client:
         response = client.get("/api/v1/experiments?limit=1")
         assert response.status_code == 200, response.text
         item = next(
@@ -363,8 +402,12 @@ def test_non_completed_experiment_list_hides_persisted_result(database_url):
 def test_strategy_catalog_projection_uses_one_bounded_read(database_url):
     engine = configure_utc_session_timezone(create_engine(database_url))
     _create(engine)
-    app = create_app(engine=engine, registry=_registry())
-    with TestClient(app) as client:
+    app = create_app(
+        engine=engine,
+        registry=_registry(),
+        peer_address_resolver=_test_peer_address,
+    )
+    with TestClient(app, base_url="http://localhost") as client:
         statements: list[str] = []
 
         def record_select(
@@ -411,9 +454,10 @@ def test_http_comparison_uses_public_repeated_ids_and_is_read_only(database_url)
 
         for experiment_id in (first_id, second_id):
             with Session(engine) as session, session.begin():
-                result = ExperimentRunner(strategy_registry=_registry()).run(
-                    session, experiment_id
-                )
+                result = ExperimentRunner(
+                    strategy_registry=_registry(),
+                    market_specification=_market_specification(),
+                ).run(session, experiment_id)
                 assert result.status == "COMPLETED", result.failure
 
         with Session(engine) as session:
@@ -428,8 +472,12 @@ def test_http_comparison_uses_public_repeated_ids_and_is_read_only(database_url)
                 )
             }
 
-        app = create_app(engine=engine, registry=_registry())
-        with TestClient(app) as client:
+        app = create_app(
+            engine=engine,
+            registry=_registry(),
+            peer_address_resolver=_test_peer_address,
+        )
+        with TestClient(app, base_url="http://localhost") as client:
             response = client.get(
                 "/api/v1/experiments/comparison",
                 params=[
@@ -504,11 +552,13 @@ def test_price_analysis_completed_returns_m15_ema_and_markers(database_url):
                     ExperimentEquityPointModel,
                 )
             }
-        app = create_app(engine=engine, registry=_registry())
-        with TestClient(app) as client:
-            response = client.get(
-                f"/api/v1/experiments/{experiment_id}/price-analysis"
-            )
+        app = create_app(
+            engine=engine,
+            registry=_registry(),
+            peer_address_resolver=_test_peer_address,
+        )
+        with TestClient(app, base_url="http://localhost") as client:
+            response = client.get(f"/api/v1/experiments/{experiment_id}/price-analysis")
             assert response.status_code == 200, response.text
             payload = response.json()
             assert payload["tradingWindow"]["start"].endswith("Z")
@@ -565,8 +615,12 @@ def test_price_analysis_completed_returns_m15_ema_and_markers(database_url):
 def test_price_analysis_returns_404_for_missing_experiment(database_url):
     engine = configure_utc_session_timezone(create_engine(database_url))
     try:
-        app = create_app(engine=engine, registry=_registry())
-        with TestClient(app) as client:
+        app = create_app(
+            engine=engine,
+            registry=_registry(),
+            peer_address_resolver=_test_peer_address,
+        )
+        with TestClient(app, base_url="http://localhost") as client:
             bogus = "00000000-0000-0000-0000-000000000000"
             response = client.get(f"/api/v1/experiments/{bogus}/price-analysis")
             assert response.status_code == 404, response.text
@@ -583,11 +637,14 @@ def test_price_analysis_returns_409_for_pending_experiment(database_url):
     engine = configure_utc_session_timezone(create_engine(database_url))
     try:
         experiment_id = _create(engine)
-        app = create_app(engine=engine, registry=_registry(), runner=GatedRunner())
-        with TestClient(app) as client:
-            response = client.get(
-                f"/api/v1/experiments/{experiment_id}/price-analysis"
-            )
+        app = create_app(
+            engine=engine,
+            registry=_registry(),
+            runner=GatedRunner(),
+            peer_address_resolver=_test_peer_address,
+        )
+        with TestClient(app, base_url="http://localhost") as client:
+            response = client.get(f"/api/v1/experiments/{experiment_id}/price-analysis")
             assert response.status_code == 409, response.text
             body = response.json()
             error = body.get("error") or body.get("detail", {}).get("error", {})

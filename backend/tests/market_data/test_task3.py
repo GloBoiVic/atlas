@@ -17,7 +17,7 @@ from backend.domain.market_data import (
     Timeframe,
     VenueInstrument,
 )
-from backend.domain.strategy import StrategyContext
+from backend.domain.strategy import MarketSpecification, StrategyContext
 from backend.market_data.aggregation import aggregate_m1_to_m15
 from backend.market_data.coverage import (
     MissingMinute,
@@ -37,6 +37,8 @@ from backend.market_data.session_policy import (
     ExpectedSessionPolicy,
     SessionException,
 )
+
+MARKET = MarketSpecification(Instrument.EUR_USD, Decimal("0.0001"))
 
 
 def at(day: int, hour: int, minute: int = 0) -> datetime:
@@ -241,7 +243,9 @@ def test_derived_m15_mid_is_strategy_input_but_other_components_are_not() -> Non
     end = start + timedelta(minutes=15)
     mid, _diagnostics = aggregate_m1_to_m15(bars, PriceComponent.MID, start, end)
 
-    assert StrategyContext(end, Instrument.EUR_USD, tuple(mid)).bars == tuple(mid)
+    assert StrategyContext(
+        end, Instrument.EUR_USD, tuple(mid), market=MARKET
+    ).bars == tuple(mid)
     with pytest.raises(InputError):
         StrategyContext(
             end,
@@ -255,6 +259,7 @@ def test_derived_m15_mid_is_strategy_input_but_other_components_are_not() -> Non
                 start,
                 end,
             )[0],
+            market=MARKET,
         )
 
 

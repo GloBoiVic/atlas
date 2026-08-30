@@ -108,8 +108,13 @@ npm run dev:web
 **API** — base at http://127.0.0.1:8000, interactive docs at `/docs`, health at `/health/live` and `/health/ready`
 
 ```bash
-uv run uvicorn backend.api.app:create_app --factory --host 127.0.0.1 --port 8000 --reload
+uv run uvicorn backend.api.app:create_app --factory --host 127.0.0.1 --port 8000 --no-proxy-headers --reload
 ```
+
+The API accepts HTTP only from a loopback socket peer and a local `Host` (or
+`:authority`). The supported server command disables proxy-header rewriting so
+the ASGI peer remains authoritative. Test clients use the application factory's
+`peer_address_resolver` test seam; it is not an HTTP/client override.
 
 **Runtime (optional for historical Experiments)** — use `uv run atlas-runtime --check` for a one-shot readiness check, or `uv run atlas-runtime` to run until stopped:
 

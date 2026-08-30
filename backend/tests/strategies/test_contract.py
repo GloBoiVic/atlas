@@ -7,6 +7,7 @@ from backend.domain.market_data import Bar, Instrument, PriceComponent, Timefram
 from backend.domain.strategy import (
     Action,
     Direction,
+    MarketSpecification,
     ParameterSchema,
     PositionState,
     Rationale,
@@ -31,6 +32,8 @@ from backend.strategies.contract import (
     initial_strategy_state,
     validate_context,
 )
+
+MARKET = MarketSpecification(Instrument.EUR_USD, Decimal("0.0001"))
 
 
 def definition() -> StrategyDefinition:
@@ -133,7 +136,9 @@ def test_registration_is_immutable_and_runtime_checkable() -> None:
 
 def test_context_requires_warmup_when_exposure_is_allowed() -> None:
     candle = bar(datetime(2026, 1, 1, 10, 0, tzinfo=UTC))
-    context = StrategyContext(candle.end_time, Instrument.EUR_USD, (candle,))
+    context = StrategyContext(
+        candle.end_time, Instrument.EUR_USD, (candle,), market=MARKET
+    )
     with pytest.raises(StrategyContractError, match="warm-up"):
         validate_context(context, state_envelope(), definition())
 
@@ -152,7 +157,9 @@ def test_non_ema_strategy_uses_declared_analytical_metadata() -> None:
         implementation_key="range_observer.v1",
     )
     validate_context(
-        StrategyContext(candle.end_time, Instrument.EUR_USD, (candle,)),
+        StrategyContext(
+            candle.end_time, Instrument.EUR_USD, (candle,), market=MARKET
+        ),
         state_envelope(),
         non_ema_definition,
     )
@@ -162,7 +169,11 @@ def test_duplicate_frontier_is_typed_and_does_not_call_strategy() -> None:
     candle = bar(datetime(2026, 1, 1, 10, 0, tzinfo=UTC))
     state = state_envelope(frontier=candle.end_time)
     context = StrategyContext(
-        candle.end_time, Instrument.EUR_USD, (candle,), exposure_allowed=False
+        candle.end_time,
+        Instrument.EUR_USD,
+        (candle,),
+        market=MARKET,
+        exposure_allowed=False,
     )
     implementation = ExampleStrategy()
     with pytest.raises(DuplicateBarEvaluationError):
@@ -175,6 +186,7 @@ def test_public_boundary_rejects_unsafe_generic_open_when_exposure_is_blocked() 
         evaluation_time,
         Instrument.EUR_USD,
         (),
+        market=MARKET,
         exposure_allowed=False,
     )
 
@@ -190,6 +202,7 @@ def test_public_boundary_rejects_unsafe_generic_open_with_existing_position() ->
         candle.end_time,
         Instrument.EUR_USD,
         (candle,),
+        market=MARKET,
         position=PositionState.LONG,
     )
 
@@ -210,6 +223,7 @@ def test_future_envelope_frontier_is_rejected_without_bars() -> None:
         evaluation_time,
         Instrument.EUR_USD,
         (),
+        market=MARKET,
         exposure_allowed=False,
     )
 
@@ -231,7 +245,9 @@ def test_unexpected_implementation_failure_is_typed() -> None:
         bar(datetime(2026, 1, 1, 10, 0, tzinfo=UTC) + timedelta(minutes=15 * index))
         for index in range(100)
     )
-    context = StrategyContext(candles[-1].end_time, Instrument.EUR_USD, candles)
+    context = StrategyContext(
+        candles[-1].end_time, Instrument.EUR_USD, candles, market=MARKET
+    )
     with pytest.raises(StrategyEvaluationError):
         evaluate_strategy(Broken(), context, EmptyParameters(), state_envelope())
 
@@ -276,7 +292,9 @@ def test_generic_payload_parser_and_envelope_are_the_public_seams() -> None:
     candle = bar(datetime(2026, 1, 1, 10, 0, tzinfo=UTC))
     result = evaluate_strategy(
         implementation,
-        StrategyContext(candle.end_time, Instrument.EUR_USD, (candle,)),
+        StrategyContext(
+            candle.end_time, Instrument.EUR_USD, (candle,), market=MARKET
+        ),
         ValidatedParameterPayload.from_mapping(schema, {"count": 2}),
         state,
     )

@@ -237,7 +237,8 @@ export interface paths {
     get: operations['detail_api_v1_experiments__experiment_id__get'];
     put?: never;
     post?: never;
-    delete?: never;
+    /** Delete Experiment */
+    delete: operations['delete_experiment_api_v1_experiments__experiment_id__delete'];
     options?: never;
     head?: never;
     patch?: never;
@@ -489,6 +490,56 @@ export interface components {
         [key: string]: unknown;
       };
     };
+    /** ExperimentDeleteExpected */
+    ExperimentDeleteExpected: {
+      /** Label */
+      label: string;
+      /** Status */
+      status: string;
+      /** Strategy */
+      strategy: string;
+      /** Instrument */
+      instrument: string;
+      /** Provider */
+      provider: string;
+      /** Analysis */
+      analysis: string;
+      tradingPeriod: components['schemas']['ExperimentDeleteTradingPeriod'];
+    };
+    /** ExperimentDeleteRequest */
+    ExperimentDeleteRequest: {
+      /** Confirmation */
+      confirmation: string;
+      expected: components['schemas']['ExperimentDeleteExpected'];
+    };
+    /** ExperimentDeleteResponse */
+    ExperimentDeleteResponse: {
+      /** Deleted */
+      deleted: boolean;
+      /**
+       * Experimentid
+       * Format: uuid
+       */
+      experimentId: string;
+      snapshot: components['schemas']['ExperimentDeleteSnapshotResponse'];
+    };
+    /** ExperimentDeleteSnapshotResponse */
+    ExperimentDeleteSnapshotResponse: {
+      /**
+       * Id
+       * Format: uuid
+       */
+      id: string;
+      /** Deleted */
+      deleted: boolean;
+    };
+    /** ExperimentDeleteTradingPeriod */
+    ExperimentDeleteTradingPeriod: {
+      /** Start */
+      start: string;
+      /** End */
+      end: string;
+    };
     /** ExperimentIdentity */
     ExperimentIdentity: {
       strategyVersion:
@@ -566,6 +617,8 @@ export interface components {
       requiredHistoricalContextBars: number;
       /** Completedonly */
       completedOnly: boolean;
+      /** Pipsize */
+      pipSize?: string | null;
     };
     /** ExperimentStrategyVersionOptionResponse */
     ExperimentStrategyVersionOptionResponse: {
@@ -744,7 +797,7 @@ export interface components {
       /** Truncated */
       truncated: boolean;
       /** Emaperiod */
-      emaPeriod: number;
+      emaPeriod?: number | null;
       /** Requiredhistoricalcontextbars */
       requiredHistoricalContextBars: number;
       /** Snapshotfingerprint */
@@ -863,6 +916,10 @@ export interface components {
       setupFacts?: {
         [key: string]: unknown;
       }[];
+      /** Marketrequirements */
+      marketRequirements?: {
+        [key: string]: unknown;
+      };
     };
     /** PriceAnalysisTradeResponse */
     PriceAnalysisTradeResponse: {
@@ -1435,6 +1492,41 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['ExperimentReadResponse'];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  delete_experiment_api_v1_experiments__experiment_id__delete: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        experiment_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['ExperimentDeleteRequest'];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ExperimentDeleteResponse'];
         };
       };
       /** @description Validation Error */

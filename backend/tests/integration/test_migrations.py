@@ -63,7 +63,8 @@ def test_migration_cycle(migration_url: str) -> None:
             "dataset_snapshot_gaps",
             "dataset_snapshots",
             "experiment_accounts",
-            "experiment_equity_points",
+             "experiment_deletion_receipts",
+             "experiment_equity_points",
             "experiment_gap_decisions",
             "experiment_proposal_diagnostics",
             "experiment_results",
@@ -85,6 +86,16 @@ def test_migration_cycle(migration_url: str) -> None:
         ]
         assert {column["name"] for column in inspector.get_columns("experiments")} >= {
             "failure_category", "failure_code", "failure_detail"
+        }
+        assert {
+            column["name"]
+            for column in inspector.get_columns("experiment_deletion_receipts")
+        } >= {
+            "receipt_id", "deleted_experiment_id", "pre_delete_status",
+            "strategy_id", "strategy_version_id", "strategy_source_fingerprint",
+            "instrument", "provider", "trading_period_start",
+            "trading_period_end", "deleted_at", "dataset_snapshot_id",
+            "snapshot_deleted", "confirmation_schema_version",
         }
         assert {column["name"] for column in inspector.get_columns("dataset_snapshots")} >= {
             "snapshot_schema",
@@ -185,6 +196,99 @@ def test_migration_cycle(migration_url: str) -> None:
         }
         command.downgrade(config, "base")
         assert inspect(engine).get_table_names() == ["alembic_version"]
+        command.upgrade(config, "head")
+    finally:
+        engine.dispose()
+
+
+def test_downgrade_to_0020_restores_guarded_trigger_dependencies(
+    migration_url: str,
+) -> None:
+    engine = configure_utc_session_timezone(create_engine(migration_url))
+    config = alembic_config(migration_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(text("DROP SCHEMA public CASCADE"))
+            connection.execute(text("CREATE SCHEMA public"))
+        command.upgrade(config, "head")
+        with engine.begin() as connection:
+            instrument = connection.execute(
+                text(
+                    """
+                    INSERT INTO instruments (code, base_currency, quote_currency)
+                    VALUES ('EUR/USD', 'EUR', 'USD') RETURNING id
+                    """
+                )
+            ).scalar_one()
+            venue = connection.execute(
+                text(
+                    """
+                    INSERT INTO venue_instruments
+                      (instrument_id, provider, provider_symbol)
+                    VALUES (:instrument, 'OANDA', 'EUR_USD') RETURNING id
+                    """
+                ),
+                {"instrument": instrument},
+            ).scalar_one()
+            snapshot = connection.execute(
+                text(
+                    """
+                    INSERT INTO dataset_snapshots
+                      (venue_instrument_id, base_resolution, components,
+                       coverage_start, coverage_end, alignment_convention,
+                       session_policy, fingerprint_schema, fingerprint,
+                       integrity_summary, snapshot_schema)
+                    VALUES (:venue, 'M15', '["MID"]'::jsonb,
+                      '2026-01-01T00:00:00Z', '2026-01-01T01:00:00Z',
+                      'UTC_HALF_OPEN_V1', 'OANDA_FX_NY_V1',
+                      'ATLAS_DATASET_SHA256_V2', repeat('e', 64),
+                      '{"status":"VALID","policy_version":"ATLAS_HISTORICAL_GAP_POLICY_V1"}'::jsonb,
+                      'ATLAS_HISTORICAL_SIMULATION_SNAPSHOT_V2')
+                    RETURNING id
+                    """
+                ),
+                {"venue": venue},
+            ).scalar_one()
+
+        command.downgrade(config, "0020_fix_snapshot_guard")
+        with engine.begin() as connection:
+            for function in (
+                "prevent_experiment_config_mutation",
+                "phase_4_append_only_guard",
+                "phase_4_order_guard",
+                "phase_4_terminal_projection_guard",
+                "experiment_gap_decision_append_only",
+                "snapshot_v2_append_only_guard",
+                "prevent_dataset_snapshot_mutation",
+                "prevent_dataset_snapshot_bar_mutation",
+            ):
+                assert connection.execute(
+                    text("SELECT to_regprocedure(:signature)"),
+                    {"signature": f"{function}()"},
+                ).scalar_one() is not None
+            assert connection.execute(
+                text("SELECT to_regprocedure('atlas_deletion_context_matches(uuid)')")
+            ).scalar_one() is None
+            for function, message in (
+                ("prevent_completed_trade_mutation", "completed trades are immutable"),
+                ("prevent_order_fact_mutation", "order facts are immutable"),
+                ("prevent_fact_mutation", "historical facts are immutable"),
+            ):
+                definition = connection.execute(
+                    text("SELECT pg_get_functiondef(to_regprocedure(:signature))"),
+                    {"signature": f"{function}()"},
+                ).scalar_one()
+                assert "atlas_deletion_context_matches" not in definition
+                assert message in definition
+
+            for statement in (
+                "UPDATE dataset_snapshots SET fingerprint = fingerprint WHERE id = :id",
+                "DELETE FROM dataset_snapshots WHERE id = :id",
+            ):
+                with pytest.raises(Exception, match="dataset_snapshots are immutable"):
+                    with connection.begin_nested():
+                        connection.execute(text(statement), {"id": snapshot})
+
         command.upgrade(config, "head")
     finally:
         engine.dispose()

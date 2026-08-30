@@ -18,6 +18,7 @@ from backend.experiments.metric_contract import (
     LEGACY_METRIC_STATES,
 )
 
+from .lifecycle_locks import lock_snapshot_then_reference
 from .models import (
     ExperimentAccountModel,
     ExperimentEquityPointModel,
@@ -53,6 +54,10 @@ class ExperimentRepository:
         model_version: str,
         experiment_id: UUID | None = None,
     ) -> ExperimentModel:
+        # Existing snapshots are locked before the new Experiment becomes a
+        # durable reference.  The helper owns this order for every attachment
+        # path; a missing snapshot still reaches the database FK safety net.
+        lock_snapshot_then_reference(session, dataset_snapshot_id)
         row = ExperimentModel(
             id=experiment_id,
             strategy_version_id=strategy_version_id,
@@ -240,7 +245,10 @@ class ExperimentRepository:
                         "reason": None if numeric is not None else "LEGACY_RESULT",
                     }
                 state.setdefault("reason", None)
-                if state.get("state") in {"UNAVAILABLE", "INFINITE"} and not state.get("reason"):
+                if (
+                    state.get("state") in {"UNAVAILABLE", "INFINITE"}
+                    and not state.get("reason")
+                ):
                     state["reason"] = "LEGACY_RESULT"
                 states[key] = state
             values["metric_states"] = states

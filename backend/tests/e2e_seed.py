@@ -11,7 +11,9 @@ from alembic.config import Config
 from sqlalchemy import create_engine, select, text, update
 from sqlalchemy.orm import Session
 
+from backend.domain.market_data import Instrument
 from backend.experiments.runner import ExperimentRunner
+from backend.integrations.oanda.capabilities import OANDA_CAPABILITY
 from backend.persistence.database import configure_utc_session_timezone
 from backend.persistence.experiment_repository import ExperimentRepository
 from backend.persistence.models import ExperimentModel
@@ -54,7 +56,10 @@ def main() -> None:
             valid_experiment = session.get(ExperimentModel, valid_id)
             assert valid_experiment is not None
             runner = ExperimentRunner(
-                strategy_registry=create_production_strategy_registry(ROOT)
+                strategy_registry=create_production_strategy_registry(ROOT),
+                market_specification=OANDA_CAPABILITY.market_specification(
+                    Instrument.EUR_USD
+                ),
             )
             assert runner.run(session, valid_id).status == "COMPLETED"
             comparison_experiment = ExperimentRepository().create(

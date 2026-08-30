@@ -7,7 +7,11 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .models import DatasetSnapshotModel, HistoricalDataLoadRequestModel
+from .lifecycle_locks import (
+    acquire_historical_load_lifecycle_lock,
+    lock_snapshot_then_reference,
+)
+from .models import HistoricalDataLoadRequestModel
 
 ACTIVE = ("PENDING", "RUNNING")
 _PROGRESS_SCHEMA = "ATLAS_HISTORICAL_PROGRESS_V1"
@@ -125,6 +129,10 @@ class HistoricalDataLoadRepository:
         load_start: datetime,
         load_end: datetime,
     ) -> HistoricalDataLoadRequestModel:
+        # Serialize activation against Experiment snapshot orphan cleanup
+        # before making this request visible as PENDING.  The transaction
+        # owner retains the lock through commit.
+        acquire_historical_load_lifecycle_lock(session)
         row = HistoricalDataLoadRequestModel(
             strategy_version_id=strategy_version_id,
             trading_start=trading_start,
@@ -269,17 +277,18 @@ class HistoricalDataLoadRepository:
         coverage_summary: dict,
         experiment_validation: dict,
     ) -> bool:
-        row = session.scalar(
-            select(HistoricalDataLoadRequestModel)
-            .where(HistoricalDataLoadRequestModel.id == request_id)
-            .with_for_update()
+        snapshot, row = lock_snapshot_then_reference(
+            session,
+            snapshot_id,
+            reference_model=HistoricalDataLoadRequestModel,
+            reference_id=request_id,
         )
         if (
             row is None
             or row.status != "RUNNING"
             or coverage_summary.get("valid") is not True
             or experiment_validation.get("valid") is not True
-            or session.get(DatasetSnapshotModel, snapshot_id) is None
+            or snapshot is None
         ):
             return False
         row.status = "COMPLETED"
@@ -299,15 +308,31 @@ class HistoricalDataLoadRepository:
         category: str,
         code: str,
         detail: str,
+        snapshot_id: UUID | None = None,
     ) -> bool:
-        row = session.scalar(
-            select(HistoricalDataLoadRequestModel)
-            .where(HistoricalDataLoadRequestModel.id == request_id)
-            .with_for_update()
-        )
-        if row is None or row.status not in ACTIVE:
+        snapshot = None
+        if snapshot_id is not None:
+            snapshot, row = lock_snapshot_then_reference(
+                session,
+                snapshot_id,
+                reference_model=HistoricalDataLoadRequestModel,
+                reference_id=request_id,
+            )
+        else:
+            row = session.scalar(
+                select(HistoricalDataLoadRequestModel)
+                .where(HistoricalDataLoadRequestModel.id == request_id)
+                .with_for_update()
+            )
+        if (
+            row is None
+            or row.status not in ACTIVE
+            or (snapshot_id is not None and snapshot is None)
+        ):
             return False
         row.status = "FAILED"
+        if snapshot_id is not None:
+            row.snapshot_id = snapshot_id
         row.failure_category = category
         row.failure_code = code[:80]
         row.failure_detail = detail[:500]
@@ -318,6 +343,9 @@ class HistoricalDataLoadRepository:
 
     def resume(self, session: Session, request_id: UUID) -> bool:
         """Explicitly resume a failed load, retaining committed coverage facts."""
+        # Resume is a lifecycle activation and must serialize with orphan
+        # cleanup before changing FAILED to RUNNING.
+        acquire_historical_load_lifecycle_lock(session)
         row = session.scalar(
             select(HistoricalDataLoadRequestModel)
             .where(HistoricalDataLoadRequestModel.id == request_id)

@@ -8,6 +8,7 @@ from backend.domain.market_data import Bar, Instrument, PriceComponent, Timefram
 from backend.domain.strategy import (
     Action,
     EntryPolicy,
+    MarketSpecification,
     ParameterError,
     PositionState,
     StrategyContext,
@@ -32,6 +33,7 @@ from backend.strategies.production import create_production_strategy_registry
 ROOT = Path(__file__).parents[3]
 START = datetime(2026, 1, 1, 10, 0, tzinfo=UTC)
 SCHEMA = CandleConfirmationBreakStrategy.definition.parameter_schema
+MARKET = MarketSpecification(Instrument.EUR_USD, Decimal("0.0001"))
 
 
 def candle(
@@ -83,8 +85,9 @@ def context(bars: tuple[Bar, ...], *, exposure_allowed: bool = True) -> Strategy
         bars[-1].end_time,
         Instrument.EUR_USD,
         bars,
-        PositionState.FLAT,
-        exposure_allowed,
+        market=MARKET,
+        position=PositionState.FLAT,
+        exposure_allowed=exposure_allowed,
     )
 
 
@@ -305,6 +308,7 @@ def test_candidate_state_rejects_future_timestamp_without_prior_frontier() -> No
         evaluation_time,
         Instrument.EUR_USD,
         (),
+        market=MARKET,
         exposure_allowed=False,
     )
 
@@ -353,6 +357,7 @@ def test_candidate_state_rejects_future_timestamp_with_prior_frontier_without_ba
         evaluation_time,
         Instrument.EUR_USD,
         (),
+        market=MARKET,
         exposure_allowed=False,
     )
 
@@ -391,6 +396,7 @@ def test_candidate_state_rejects_invalid_timestamp_in_all_frontier_contexts(
             evaluation_time,
             Instrument.EUR_USD,
             (),
+            market=MARKET,
             exposure_allowed=False,
         )
 

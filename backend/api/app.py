@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -11,8 +11,10 @@ from fastapi.responses import JSONResponse
 from backend.api.experiments import create_experiment_router
 from backend.api.health import create_health_router
 from backend.api.historical_data import create_historical_data_router
+from backend.api.local_authority import LocalAuthorityMiddleware, PeerAddressResolver
 from backend.api.strategies import create_strategy_router
 from backend.config import get_settings
+from backend.domain.market_data import Instrument
 from backend.experiments.configuration import ExperimentConfigurationService
 from backend.experiments.lifecycle import (
     ExperimentRunService,
@@ -20,11 +22,13 @@ from backend.experiments.lifecycle import (
 )
 from backend.experiments.results import ExperimentResultReadService
 from backend.experiments.runner import ExperimentRunner
+from backend.integrations.oanda.capabilities import OANDA_CAPABILITY
 from backend.integrations.oanda.source import OandaHistoricalBarSource
 from backend.logging import configure_logging
 from backend.market_data.historical_load import HistoricalDataLoadCoordinator
 from backend.market_data.ingestion import MarketDataService
 from backend.persistence.database import create_database_engine, create_session_factory
+from backend.persistence.experiment_deletion import ExperimentDeletionService
 from backend.persistence.strategy_catalog import synchronize_strategy_catalog
 from backend.strategies.production import create_production_strategy_registry
 
@@ -38,6 +42,7 @@ def create_app(
     session_factory: Callable[[], Any] | None = None,
     lifecycle_diagnostic_sink: LifecycleDiagnosticSink | None = None,
     historical_coordinator: Any | None = None,
+    peer_address_resolver: PeerAddressResolver | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
     configure_logging(settings)
@@ -46,8 +51,9 @@ def create_app(
     registry = registry or create_production_strategy_registry(
         Path(__file__).resolve().parents[2]
     )
+    market_specification = OANDA_CAPABILITY.market_specification(Instrument.EUR_USD)
     runner = runner or ExperimentRunner(
-        strategy_registry=registry
+        strategy_registry=registry, market_specification=market_specification
     )
     if historical_coordinator is None:
         source = OandaHistoricalBarSource(
@@ -56,8 +62,10 @@ def create_app(
             read_timeout_seconds=settings.oanda_read_timeout_seconds,
         )
         historical_coordinator = HistoricalDataLoadCoordinator(
-            session_factory, MarketDataService(session_factory, source),
-            ExperimentConfigurationService(registry), registry
+            session_factory,
+            MarketDataService(session_factory, source),
+            ExperimentConfigurationService(registry),
+            registry,
         )
 
     @asynccontextmanager
@@ -72,6 +80,14 @@ def create_app(
             engine.dispose()
 
     app = FastAPI(title="Atlas API", lifespan=lifespan)
+    app.add_middleware(
+        LocalAuthorityMiddleware,
+        **(
+            {"peer_address_resolver": peer_address_resolver}
+            if peer_address_resolver is not None
+            else {}
+        ),
+    )
     app.state.database_engine = engine
     app.state.session_factory = session_factory
     app.state.strategy_registry = registry
@@ -81,6 +97,7 @@ def create_app(
         session_factory, runner, lifecycle_diagnostic_sink=lifecycle_diagnostic_sink
     )
     app.state.experiment_results = ExperimentResultReadService()
+    app.state.experiment_deletion = ExperimentDeletionService()
     app.state.historical_data_coordinator = historical_coordinator
     app.include_router(create_health_router(engine))
     app.include_router(
@@ -105,6 +122,7 @@ def create_app(
             configuration=app.state.experiment_configuration,
             lifecycle=app.state.experiment_lifecycle,
             results=app.state.experiment_results,
+            deletion=app.state.experiment_deletion,
         )
     )
 
@@ -119,6 +137,26 @@ def create_app(
                     "details": {"fields": jsonable_encoder(exc.errors())},
                 }
             },
+        )
+
+    @app.exception_handler(HTTPException)
+    async def http_error(_: Request, exc: HTTPException) -> JSONResponse:
+        """Keep Atlas's structured error envelope at the HTTP response root."""
+        detail = exc.detail
+        if isinstance(detail, dict) and "error" in detail:
+            content = detail
+        else:
+            content = {
+                "error": {
+                    "code": f"HTTP_{exc.status_code}",
+                    "message": str(detail),
+                    "details": {},
+                }
+            }
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=jsonable_encoder(content),
+            headers=exc.headers,
         )
 
     return app

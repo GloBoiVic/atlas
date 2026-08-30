@@ -31,6 +31,7 @@ from backend.domain.market_data import (
 )
 from backend.domain.strategy import StrategyVersion
 from backend.experiments.runner import MODEL_VERSION, ExperimentRunner
+from backend.integrations.oanda.capabilities import OANDA_CAPABILITY
 from backend.market_data.fingerprint import (
     bar_content_fingerprint,
     dataset_fingerprint_v2,
@@ -70,6 +71,10 @@ pytestmark = pytest.mark.integration
 
 ROOT = Path(__file__).parents[3]
 START = datetime(2026, 1, 5, tzinfo=UTC)
+
+
+def _market_specification():
+    return OANDA_CAPABILITY.market_specification(Instrument.EUR_USD)
 PARAMETERS = {
     "ema_period": 100,
     "atr_period": 14,
@@ -699,7 +704,10 @@ def test_persisted_golden_flow_and_semantic_rerun(
         with Session(engine) as session, session.begin():
             experiment_id, snapshot_id, version_id = _seed(session, direction)
         with Session(engine) as session, session.begin():
-            result = ExperimentRunner(strategy_registry=_registry()).run(
+            result = ExperimentRunner(
+                strategy_registry=_registry(),
+                market_specification=_market_specification(),
+            ).run(
                 session, experiment_id
             )
             assert result.status == "COMPLETED" and result.trade_completed, (
@@ -740,7 +748,10 @@ def test_persisted_golden_flow_and_semantic_rerun(
             rerun_id = rerun.id
         with Session(engine) as session, session.begin():
             assert (
-                ExperimentRunner(strategy_registry=_registry())
+                ExperimentRunner(
+                    strategy_registry=_registry(),
+                    market_specification=_market_specification(),
+                )
                 .run(session, rerun_id)
                 .status
                 == "COMPLETED"

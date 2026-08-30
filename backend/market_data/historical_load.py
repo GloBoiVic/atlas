@@ -229,6 +229,7 @@ class HistoricalDataLoadCoordinator:
                         "INSUFFICIENT_WARMUP",
                         "Fewer than the configured eligible native M15 bars are "
                         "available within the bounded warm-up horizon.",
+                        snapshot.id,
                     )
                     return
                 new_load_start = plan.load_start
@@ -357,9 +358,15 @@ class HistoricalDataLoadCoordinator:
         with session_scope(self.session_factory) as db:
             with db.begin():
                 if snapshot_id is not None:
-                    row = self.repository.get(db, request_id)
-                    if row:
-                        row.snapshot_id = snapshot_id
-                self.repository.fail_if_active(
-                    db, request_id, category=category, code=code, detail=detail
-                )
+                    self.repository.fail_if_active(
+                        db,
+                        request_id,
+                        category=category,
+                        code=code,
+                        detail=detail,
+                        snapshot_id=snapshot_id,
+                    )
+                else:
+                    self.repository.fail_if_active(
+                        db, request_id, category=category, code=code, detail=detail
+                    )

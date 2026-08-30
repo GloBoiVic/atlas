@@ -7,6 +7,7 @@ from backend.domain import (
     FinancialPositionState,
     InputError,
     Instrument,
+    MarketSpecification,
     Position,
     PositionState,
 )
@@ -95,5 +96,6 @@ def test_strategy_context_requires_position_state_not_financial_position() -> No
             bar.end_time,
             Instrument.EUR_USD,
             (bar,),
+            market=MarketSpecification(Instrument.EUR_USD, Decimal("0.0001")),
             position=Position(Instrument.EUR_USD),  # type: ignore[arg-type]
         )

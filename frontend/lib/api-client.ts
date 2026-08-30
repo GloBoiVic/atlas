@@ -167,6 +167,18 @@ export const atlasApi = {
     }),
   getExperiment: (id: string) =>
     request<ExperimentPayload>(`/api/v1/experiments/${id}`),
+  deleteExperiment: (
+    id: string,
+    body: components['schemas']['ExperimentDeleteRequest'],
+  ) =>
+    request<components['schemas']['ExperimentDeleteResponse']>(
+      `/api/v1/experiments/${id}`,
+      {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      },
+    ),
   runExperiment: (id: string) =>
     request<unknown>(`/api/v1/experiments/${id}/run`, { method: 'POST' }, 8000),
   getEquity: (id: string) =>

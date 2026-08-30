@@ -606,9 +606,9 @@ class StrategyContext:
     evaluation_time: datetime
     instrument: Instrument
     bars: tuple[Bar, ...]
+    market: MarketSpecification
     position: PositionState = PositionState.FLAT
     exposure_allowed: bool = True
-    market: MarketSpecification | None = None
 
     def __post_init__(self) -> None:
         if type(self.instrument) is not Instrument:
@@ -623,23 +623,10 @@ class StrategyContext:
         if type(self.exposure_allowed) is not bool:
             raise InputError("exposure_allowed must be bool")
         market = self.market
-        if market is None:
-            # Compatibility callers may omit the new fact.  The value still
-            # comes from the explicit, validated current capability resolver.
-            from backend.integrations.oanda.capabilities import OANDA_CAPABILITY
-
-            market = OANDA_CAPABILITY.market_specification(self.instrument)
-            object.__setattr__(self, "market", market)
-        if (
-            type(market) is not MarketSpecification
-            or market.instrument is not self.instrument
-        ):
+        if type(market) is not MarketSpecification:
+            raise InputError("StrategyContext market is missing or invalid")
+        if market.instrument is not self.instrument:
             raise InputError("StrategyContext market does not match its instrument")
-        from backend.integrations.oanda.capabilities import (
-            validate_market_specification,
-        )
-
-        validate_market_specification(market)
         if any(bar.instrument is not self.instrument for bar in self.bars):
             raise InputError("StrategyContext bars must match its instrument")
         for previous, current in zip(self.bars, self.bars[1:], strict=False):
@@ -650,8 +637,6 @@ class StrategyContext:
 
     def to_json(self) -> dict[str, Any]:
         market = self.market
-        if market is None:
-            raise InputError("StrategyContext market is missing")
         return {
             "evaluation_time": self.evaluation_time.isoformat().replace("+00:00", "Z"),
             "instrument": self.instrument.value,

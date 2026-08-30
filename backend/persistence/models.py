@@ -408,6 +408,68 @@ class ExperimentModel(Base):
     failure_detail: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
 
+class ExperimentDeletionReceiptModel(Base):
+    """Append-only identity receipt for a permanent Experiment deletion."""
+
+    __tablename__ = "experiment_deletion_receipts"
+    __table_args__ = (
+        UniqueConstraint("deleted_experiment_id"),
+        CheckConstraint(
+            "strategy_source_fingerprint ~ '^[0-9a-f]{64}$'",
+            name=conv(
+                "ck_experiment_deletion_receipts_sha256_strategy_source__74ef"
+            ),
+        ),
+        CheckConstraint(
+            "pre_delete_status IN ('PENDING', 'FAILED', 'COMPLETED')",
+            name="deletable_pre_delete_status",
+        ),
+        CheckConstraint(
+            "confirmation_schema_version <> ''",
+            name=conv(
+                "ck_experiment_deletion_receipts_confirmation_schema_ver_1fd5"
+            ),
+        ),
+    )
+
+    receipt_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    deleted_experiment_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=False
+    )
+    pre_delete_status: Mapped[str] = mapped_column(String(20), nullable=False)
+    strategy_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=False
+    )
+    strategy_version_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=False
+    )
+    strategy_source_fingerprint: Mapped[str] = mapped_column(
+        String(64), nullable=False
+    )
+    instrument: Mapped[str] = mapped_column(String(20), nullable=False)
+    provider: Mapped[str] = mapped_column(String(20), nullable=False)
+    trading_period_start: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    trading_period_end: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    deleted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+    dataset_snapshot_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=False
+    )
+    snapshot_deleted: Mapped[bool] = mapped_column(nullable=False)
+    confirmation_schema_version: Mapped[str] = mapped_column(
+        String(100), nullable=False
+    )
+
+
 class ExperimentAccountModel(Base):
     __tablename__ = "experiment_accounts"
     __table_args__ = (

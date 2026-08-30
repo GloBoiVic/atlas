@@ -14,6 +14,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.domain.market_data import Instrument
@@ -33,6 +34,13 @@ from backend.experiments.results import ExperimentResultReadService, ResultReadE
 from backend.integrations.oanda.capabilities import OANDA_CAPABILITY
 from backend.market_data.coverage import diagnostic_payloads
 from backend.persistence.database import session_scope
+from backend.persistence.experiment_deletion import (
+    ExperimentDeletionError,
+    ExperimentDeletionNotFound,
+    ExperimentDeletionRunning,
+    ExperimentDeletionService,
+    ExperimentDeletionStateInvalid,
+)
 from backend.persistence.models import (
     DatasetSnapshotModel,
     ExperimentModel,
@@ -47,6 +55,8 @@ from .schemas import (
     ExperimentComparisonResponse,
     ExperimentConfigurationOptionsResponse,
     ExperimentCreateRequest,
+    ExperimentDeleteRequest,
+    ExperimentDeleteResponse,
     ExperimentListResponse,
     ExperimentReadResponse,
     PeriodRequest,
@@ -307,6 +317,47 @@ def _detail(
     return payload
 
 
+def _analysis_label(snapshot: DatasetSnapshotModel) -> str:
+    resolution = {"15m": "M15", "M15": "M15"}.get(
+        snapshot.base_resolution, snapshot.base_resolution
+    )
+    component = snapshot.components[0] if snapshot.components else ""
+    return f"native {resolution} {component}".strip()
+
+
+def _delete_confirmation_projection(
+    db: Session,
+    row: ExperimentModel,
+    strategy_repo: StrategyRepository,
+) -> dict[str, Any]:
+    """Project the locked persisted facts required by the delete confirmation."""
+    snapshot = db.scalar(
+        select(DatasetSnapshotModel)
+        .where(DatasetSnapshotModel.id == row.dataset_snapshot_id)
+        .with_for_update()
+    )
+    strategy_version = strategy_repo.get_version(db, row.strategy_version_id)
+    venue = db.get(VenueInstrumentModel, row.venue_instrument_id)
+    instrument = db.get(InstrumentModel, venue.instrument_id) if venue else None
+    if snapshot is None or strategy_version is None or venue is None or instrument is None:
+        raise ExperimentDeletionError(
+            "EXPERIMENT_DELETE_FAILED",
+            "Experiment provenance integrity is invalid.",
+        )
+    return {
+        "label": f"Experiment · {_utc(row.trading_start)[:10]} → {_utc(row.trading_end)[:10]}",
+        "status": row.status,
+        "strategy": f"{strategy_version.strategy.name} v{strategy_version.version_number}",
+        "instrument": instrument.code,
+        "provider": venue.provider,
+        "analysis": _analysis_label(snapshot),
+        "tradingPeriod": {
+            "start": _utc(row.trading_start),
+            "end": _utc(row.trading_end),
+        },
+    }
+
+
 def _metrics_payload(metrics: Any) -> dict[str, Any] | None:
     if metrics is None:
         return None
@@ -354,10 +405,12 @@ def create_experiment_router(
     lifecycle: ExperimentRunService,
     results: ExperimentResultReadService,
     strategies: StrategyRepository | None = None,
+    deletion: ExperimentDeletionService | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/v1/experiments", tags=["experiments"])
     result_repo = ExperimentResultRepository()
     strategy_repo = strategies or StrategyRepository()
+    deletion_service = deletion or ExperimentDeletionService()
     comparison = ExperimentComparisonReadService(
         results=result_repo, result_service=results
     )
@@ -645,6 +698,73 @@ def create_experiment_router(
             if composed.get("strategy_version") is not None
             else None,
         )
+
+    @router.delete(
+        "/{experiment_id}", response_model=ExperimentDeleteResponse
+    )
+    def delete_experiment(
+        experiment_id: UUID,
+        request: ExperimentDeleteRequest,
+        db: Session = Depends(session),
+    ) -> dict[str, Any]:
+        try:
+            with db.begin():
+                row = db.scalar(
+                    select(ExperimentModel)
+                    .where(ExperimentModel.id == experiment_id)
+                    .with_for_update()
+                )
+                if row is None:
+                    raise ExperimentDeletionNotFound()
+                expected = _delete_confirmation_projection(db, row, strategy_repo)
+
+                # A locked RUNNING state always wins over stale or mismatched
+                # human facts. It is never a permission to delete partial work.
+                if row.status == "RUNNING":
+                    raise ExperimentDeletionRunning()
+                if row.status not in {"PENDING", "FAILED", "COMPLETED"}:
+                    raise ExperimentDeletionStateInvalid()
+                if request.confirmation != "DELETE":
+                    raise _error(
+                        "DELETE_CONFIRMATION_REQUIRED",
+                        "Type DELETE to permanently remove this Experiment.",
+                        http_status=422,
+                    )
+                if request.expected.model_dump(by_alias=True) != expected:
+                    raise _error(
+                        "DELETE_CONFIRMATION_MISMATCH",
+                        "The Experiment facts changed; review and confirm again.",
+                        http_status=409,
+                    )
+                result = deletion_service.delete(db, experiment_id)
+        except HTTPException:
+            raise
+        except ExperimentDeletionError as exc:
+            code_status = {
+                "NOT_FOUND": 404,
+                "EXPERIMENT_RUNNING": 409,
+                "EXPERIMENT_DELETE_STATE_INVALID": 409,
+                "DELETE_OWNERSHIP_CONFLICT": 409,
+            }
+            raise _error(
+                exc.code, exc.message, http_status=code_status.get(exc.code, 500)
+            ) from exc
+        except Exception as exc:
+            # The caller-owned transaction has already rolled back. Never expose
+            # driver details or imply that an uncertain delete succeeded.
+            raise _error(
+                "EXPERIMENT_DELETE_FAILED",
+                "Experiment deletion failed and was rolled back.",
+                http_status=500,
+            ) from exc
+        return {
+            "deleted": True,
+            "experiment_id": result.experiment_id,
+            "snapshot": {
+                "id": result.snapshot_id,
+                "deleted": result.snapshot_deleted,
+            },
+        }
 
     @router.post("/{experiment_id}/run")
     def run(experiment_id: UUID, db: Session = Depends(session)) -> dict[str, Any]:

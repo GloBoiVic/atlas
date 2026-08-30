@@ -1,6 +1,7 @@
 import ast
 from dataclasses import fields, is_dataclass
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, NoReturn, Protocol, cast
@@ -10,6 +11,8 @@ import pytest
 from sqlalchemy.orm import Session as OrmSession
 
 import backend.experiments.runner as runner_module
+from backend.domain.market_data import Instrument
+from backend.domain.strategy import MarketSpecification
 from backend.experiments.configuration import missing_analytical_frontiers
 from backend.experiments.runner import (
     ExperimentDiagnosticStage,
@@ -24,6 +27,8 @@ from backend.market_data.session_calendar import eligible_m15_windows
 from backend.persistence.experiment_repository import ExperimentRepository
 from backend.persistence.models import DatasetSnapshotModel
 from backend.strategies.registry import StrategyVersionUnavailableError
+
+MARKET = MarketSpecification(Instrument.EUR_USD, Decimal("0.0001"))
 
 
 class _DataclassParamsView(Protocol):
@@ -104,6 +109,7 @@ def test_v2_unexpected_engine_failure_is_not_persistence() -> None:
         strategy_registry=SimpleNamespace(),
         strategy_repository=ExplodingStrategies(),
         experiment_repository=FailureRepository(),
+        market_specification=MARKET,
     )
 
     result = runner._run_v2(SimpleNamespace(), experiment)
@@ -137,6 +143,7 @@ def test_v2_unrelated_lookup_errors_are_not_strategy_version_unavailable(error) 
         strategy_registry=Registry(),
         strategy_repository=Strategies(),
         experiment_repository=FailureRepository(),
+        market_specification=MARKET,
     )
 
     # The database/domain conversion is not part of this seam regression.
@@ -174,6 +181,7 @@ def test_v2_registry_unavailability_is_strategy_version_unavailable() -> None:
         strategy_registry=Registry(),
         strategy_repository=Strategies(),
         experiment_repository=FailureRepository(),
+        market_specification=MARKET,
     )
 
     import backend.experiments.runner as runner_module
@@ -456,6 +464,7 @@ def test_v2_malformed_risk_config_fails_before_empty_frame_completion(
         ),
         strategy_repository=cast(Any, Strategies()),
         experiment_repository=cast(Any, Experiments()),
+        market_specification=MARKET,
     )
     monkeypatch.setattr(
         runner_module,
@@ -507,6 +516,7 @@ def test_unsupported_snapshot_schema_fails_without_legacy_runner(
     runner = ExperimentRunner(
         strategy_registry=SimpleNamespace(),
         experiment_repository=cast(ExperimentRepository, Experiments()),
+        market_specification=MARKET,
     )
 
     def reject_v2(*_args: object, **_kwargs: object) -> NoReturn:

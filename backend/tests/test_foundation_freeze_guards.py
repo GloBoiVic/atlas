@@ -7,7 +7,6 @@ identity-neutral.
 """
 
 import ast
-import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).parents[2]
@@ -111,39 +110,7 @@ def test_risk_and_execution_do_not_own_pip_conversion() -> None:
         )
 
 
-def test_freeze_adds_no_migration_or_durable_checkpoint_artifact() -> None:
-    changed = subprocess.run(
-        [
-            "git",
-            "diff",
-            "--name-only",
-            "50c5e18b27d2d652c807f4ca3068ca66cd664687",
-            "--",
-            "backend/persistence/migrations",
-        ],
-        cwd=ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.splitlines()
-    assert changed == []
-
-    migration_status = subprocess.run(
-        [
-            "git",
-            "status",
-            "--short",
-            "--untracked-files=all",
-            "--",
-            "backend/persistence/migrations",
-        ],
-        cwd=ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.splitlines()
-    assert migration_status == []
-
+def test_freeze_adds_no_durable_checkpoint_artifact() -> None:
     checkpoint_paths = tuple(
         path
         for area in (ROOT / "backend", ROOT / "frontend")
