@@ -1,5 +1,29 @@
 # Completed
 
+<!-- completion-id: foundation-freeze-07-experiment-lifecycle-local-authority -->
+## Foundation Freeze 07 — Experiment Lifecycle & Local Authority — completion record
+
+- **Date/status:** 2026-08-30 — terminal closure approved; validation and targeted
+  rereview **PASS** with no unresolved Critical or Important findings.
+- **Commit:** `469edd3` Implement Foundation Freeze 07 lifecycle authority;
+  fast-forward merged into `main`.
+- **Scope:** Explicit transactional Experiment deletion with populated-graph,
+  rollback, receipt, snapshot-retention, and lifecycle-lock proof; loopback
+  actual-peer/local-authority enforcement with proxy-header rewriting disabled;
+  provider-neutral StrategyContext capability composition; strict delete API and
+  human-confirmed modal workflow. No pre-PAPER audit, PAPER, LIVE, or unrelated
+  infrastructure work started.
+- **Validation:** Dedicated PostgreSQL migration/deletion/lifecycle/authority
+  evidence passed, including the initial broad matrix and targeted remediation
+  checks; frontend focused tests, TypeScript, lint, formatting, build, and Local
+  Host failure/modal workflows passed. Known repository-wide typing/frontend
+  baseline issues remain non-gating and documented in the workstream artifacts.
+- **Review:** `dispatch/workstreams/foundation-freeze-07-experiment-lifecycle-local-authority/REVIEW.md`
+  — targeted rereview **PASS**; no unresolved Critical or Important findings.
+- **Git/state:** Feature branch fast-forward merged into `main`. Known
+  pre-existing `.codegraph/` and `frontend/.env.local` remain untracked and
+  excluded. Active dispatch state cleared.
+
 <!-- completion-id: foundation-freeze-06-strategy-extensibility-proof -->
 ## Foundation Freeze 06 — Strategy Extensibility Proof — completion record
 
