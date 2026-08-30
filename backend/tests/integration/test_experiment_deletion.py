@@ -11,7 +11,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select, text, update
+from sqlalchemy import event, select, text, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -1043,6 +1043,57 @@ def test_http_delete_is_confirmed_once_and_repeat_is_not_found(
         assert repeated.status_code == 404
         assert repeated.json()["error"]["code"] == "NOT_FOUND"
         assert client.get(f"/api/v1/experiments/{experiment_id}").status_code == 404
+    engine.dispose()
+
+
+def test_http_delete_locks_snapshot_before_experiment_once(database_url: str) -> None:
+    engine = _engine(database_url)
+    with Session(engine) as session:
+        experiment_id, _snapshot_id, _version_id = _seed_one(session)
+        session.commit()
+
+    with _api_client(engine) as client:
+        detail = client.get(f"/api/v1/experiments/{experiment_id}")
+        assert detail.status_code == 200, detail.text
+        statements: list[str] = []
+
+        def record_select(
+            _conn, _cursor, statement, _parameters, _context, _executemany
+        ):
+            if statement.lstrip().upper().startswith("SELECT"):
+                statements.append(statement.upper())
+
+        event.listen(engine, "before_cursor_execute", record_select)
+        try:
+            response = client.request(
+                "DELETE",
+                f"/api/v1/experiments/{experiment_id}",
+                json=_confirmation(detail.json()),
+            )
+        finally:
+            event.remove(engine, "before_cursor_execute", record_select)
+
+        assert response.status_code == 200, response.text
+        snapshot_locks = [
+            index
+            for index, statement in enumerate(statements)
+            if "FROM DATASET_SNAPSHOTS" in statement and "FOR UPDATE" in statement
+        ]
+        experiment_selects = [
+            (index, statement)
+            for index, statement in enumerate(statements)
+            if "FROM EXPERIMENTS" in statement and "WHERE EXPERIMENTS.ID =" in statement
+        ]
+        experiment_locks = [
+            index
+            for index, statement in experiment_selects
+            if "FOR UPDATE" in statement
+        ]
+        assert len(snapshot_locks) == 1
+        assert len(experiment_selects) == 2
+        assert len(experiment_locks) == 1
+        assert "FOR UPDATE" not in experiment_selects[0][1]
+        assert snapshot_locks[0] < experiment_locks[0]
     engine.dispose()
 
 

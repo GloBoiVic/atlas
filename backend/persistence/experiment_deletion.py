@@ -94,6 +94,14 @@ class ExperimentDeletionResult:
 
 
 @dataclass(frozen=True, slots=True)
+class ExperimentDeletionLock:
+    """The root rows locked for one caller-owned deletion transaction."""
+
+    experiment: ExperimentModel
+    snapshot: DatasetSnapshotModel
+
+
+@dataclass(frozen=True, slots=True)
 class _DeletionPlan:
     experiment_id: UUID
     snapshot_id: UUID
@@ -126,8 +134,9 @@ class ExperimentDeletionRepository:
         experiment_id: UUID,
         *,
         stage_hook: Callable[[str], None] | None = None,
+        locked: ExperimentDeletionLock | None = None,
     ) -> ExperimentDeletionResult:
-        plan = self._preflight(session, experiment_id)
+        plan = self._preflight(session, experiment_id, locked=locked)
         # The snapshot row was locked during preflight.  Acquire the shared
         # lifecycle lock before any mutation and retain it through the orphan
         # decision and caller-owned transaction commit.  Load activation takes
@@ -262,7 +271,10 @@ class ExperimentDeletionRepository:
     ) -> ExperimentDeletionResult:
         return self.delete(session, experiment_id, stage_hook=stage_hook)
 
-    def _preflight(self, session: Session, experiment_id: UUID) -> _DeletionPlan:
+    def lock_for_delete(
+        self, session: Session, experiment_id: UUID
+    ) -> ExperimentDeletionLock:
+        """Acquire the canonical root lock order for a delete transaction."""
         initial = session.get(ExperimentModel, experiment_id)
         if initial is None:
             raise ExperimentDeletionNotFound()
@@ -287,6 +299,20 @@ class ExperimentDeletionRepository:
                 "EXPERIMENT_DELETE_FAILED",
                 "Experiment snapshot changed during deletion.",
             )
+        return ExperimentDeletionLock(experiment=experiment, snapshot=snapshot)
+
+    def _preflight(
+        self,
+        session: Session,
+        experiment_id: UUID,
+        *,
+        locked: ExperimentDeletionLock | None = None,
+    ) -> _DeletionPlan:
+        if locked is None:
+            locked = self.lock_for_delete(session, experiment_id)
+        root = locked
+        experiment = root.experiment
+        snapshot = root.snapshot
         if experiment.status == "RUNNING":
             raise ExperimentDeletionRunning()
         if experiment.status not in _DELETABLE_STATUSES:
@@ -601,20 +627,29 @@ class ExperimentDeletionService:
     def __init__(self, repository: ExperimentDeletionRepository | None = None) -> None:
         self.repository = repository or ExperimentDeletionRepository()
 
+    def lock_for_delete(
+        self, session: Session, experiment_id: UUID
+    ) -> ExperimentDeletionLock:
+        return self.repository.lock_for_delete(session, experiment_id)
+
     def delete(
         self,
         session: Session,
         experiment_id: UUID,
         *,
         stage_hook: Callable[[str], None] | None = None,
+        locked: ExperimentDeletionLock | None = None,
     ) -> ExperimentDeletionResult:
-        return self.repository.delete(session, experiment_id, stage_hook=stage_hook)
+        return self.repository.delete(
+            session, experiment_id, stage_hook=stage_hook, locked=locked
+        )
 
 
 __all__ = [
     "EXPERIMENT_DELETE_CONFIRMATION_SCHEMA_VERSION",
     "HISTORICAL_LOAD_LIFECYCLE_LOCK_KEY",
     "ExperimentDeletionError",
+    "ExperimentDeletionLock",
     "ExperimentDeletionNotFound",
     "ExperimentDeletionOwnershipConflict",
     "ExperimentDeletionRepository",

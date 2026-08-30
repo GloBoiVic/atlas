@@ -15,6 +15,10 @@ from backend.persistence.database import configure_utc_session_timezone
 pytestmark = pytest.mark.integration
 
 
+def normalized_sql(value: str) -> str:
+    return " ".join(value.split())
+
+
 @pytest.fixture(scope="module")
 def migration_url() -> str:
     value = os.environ.get("ATLAS_TEST_DATABASE_URL")
@@ -249,9 +253,96 @@ def test_downgrade_to_0020_restores_guarded_trigger_dependencies(
                 ),
                 {"venue": venue},
             ).scalar_one()
+            legacy_snapshot = connection.execute(
+                text(
+                    """
+                    INSERT INTO dataset_snapshots
+                      (venue_instrument_id, base_resolution, components,
+                       coverage_start, coverage_end, alignment_convention,
+                       session_policy, fingerprint_schema, fingerprint,
+                       integrity_summary)
+                    VALUES (:venue, 'M1', '["ASK","BID","MID"]'::jsonb,
+                      '2026-01-01T00:00:00Z', '2026-01-01T01:00:00Z',
+                      'UTC_HALF_OPEN_V1', 'OANDA_FX_NY_V1',
+                      'ATLAS_DATASET_SHA256_V1', repeat('f', 64),
+                      jsonb_build_object('status', 'VALID',
+                        'expected_open_minutes', 60,
+                        'expected_closure_minutes', 0, 'member_minutes', 60,
+                        'bar_count', 60, 'unexpected_gap_count', 0,
+                        'unexpected_observation_count', 0,
+                        'session_policy', 'OANDA_FX_NY_V1'))
+                    RETURNING id
+                    """
+                ),
+                {"venue": venue},
+            ).scalar_one()
 
         command.downgrade(config, "0020_fix_snapshot_guard")
         with engine.begin() as connection:
+            append_only_definition = connection.execute(
+                text("SELECT pg_get_functiondef(to_regprocedure(:signature))"),
+                {"signature": "snapshot_v2_append_only_guard()"},
+            ).scalar_one()
+            assert normalized_sql(append_only_definition) == normalized_sql(
+                """CREATE OR REPLACE FUNCTION public.snapshot_v2_append_only_guard()
+                RETURNS trigger LANGUAGE plpgsql AS $function$ BEGIN
+                  IF TG_OP = 'INSERT' THEN
+                    RAISE EXCEPTION 'insert validation must use the statement trigger';
+                  END IF;
+                  RAISE EXCEPTION 'dataset snapshot memberships are immutable';
+                END; $function$"""
+            )
+
+            expected_triggers = {
+                (
+                    f"{table}_append_only",
+                    normalized_sql(
+                        f"CREATE TRIGGER {table}_append_only BEFORE DELETE OR UPDATE "
+                        f"ON public.{table} FOR EACH ROW EXECUTE FUNCTION "
+                        "snapshot_v2_append_only_guard()"
+                    ),
+                )
+                for table in (
+                    "dataset_snapshot_analytical_bars",
+                    "dataset_snapshot_execution_observations",
+                    "dataset_snapshot_gaps",
+                )
+            } | {
+                (
+                    f"{table}_insert_guard",
+                    normalized_sql(
+                        f"CREATE TRIGGER {table}_insert_guard AFTER INSERT ON public.{table} "
+                        "REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE "
+                        "FUNCTION snapshot_v2_insert_guard()"
+                    ),
+                )
+                for table in (
+                    "dataset_snapshot_analytical_bars",
+                    "dataset_snapshot_execution_observations",
+                    "dataset_snapshot_gaps",
+                )
+            }
+            actual_triggers = {
+                (name, normalized_sql(definition))
+                for name, definition in connection.execute(
+                    text(
+                        """
+                        SELECT t.tgname, pg_get_triggerdef(t.oid)
+                        FROM pg_trigger t
+                        JOIN pg_class c ON c.oid = t.tgrelid
+                        WHERE NOT t.tgisinternal
+                          AND c.relname IN (
+                            'dataset_snapshot_analytical_bars',
+                            'dataset_snapshot_execution_observations',
+                            'dataset_snapshot_gaps'
+                          )
+                          AND t.tgname LIKE 'dataset_snapshot_%'
+                        """
+                    )
+                ).all()
+            }
+            assert actual_triggers == expected_triggers
+
             for function in (
                 "prevent_experiment_config_mutation",
                 "phase_4_append_only_guard",
@@ -286,6 +377,46 @@ def test_downgrade_to_0020_restores_guarded_trigger_dependencies(
                 "DELETE FROM dataset_snapshots WHERE id = :id",
             ):
                 with pytest.raises(Exception, match="dataset_snapshots are immutable"):
+                    with connection.begin_nested():
+                        connection.execute(text(statement), {"id": snapshot})
+
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO dataset_snapshot_analytical_bars
+                      (dataset_snapshot_id, sequence, start_time, end_time,
+                       resolution, price_component, open_price, high_price,
+                       low_price, close_price, complete, content_fingerprint,
+                       retrieved_at)
+                    VALUES (:snapshot, 2, '2026-01-01T00:15:00Z',
+                      '2026-01-01T00:30:00Z', 'M15', 'MID', 1.1, 1.2, 1.0,
+                      1.15, true, repeat('a', 64), '2026-01-01T00:31:00Z')
+                    """
+                ),
+                {"snapshot": snapshot},
+            )
+            with pytest.raises(Exception, match="V2 membership requires a V2 snapshot"):
+                with connection.begin_nested():
+                    connection.execute(
+                        text(
+                            """
+                            INSERT INTO dataset_snapshot_analytical_bars
+                              (dataset_snapshot_id, sequence, start_time, end_time,
+                               resolution, price_component, open_price, high_price,
+                               low_price, close_price, complete, content_fingerprint,
+                               retrieved_at)
+                            VALUES (:snapshot, 3, '2026-01-01T00:30:00Z',
+                              '2026-01-01T00:45:00Z', 'M15', 'MID', 1.1, 1.2, 1.0,
+                              1.15, true, repeat('b', 64), '2026-01-01T00:46:00Z')
+                            """
+                        ),
+                        {"snapshot": legacy_snapshot},
+                    )
+            for statement in (
+                "UPDATE dataset_snapshot_analytical_bars SET open_price = 2 WHERE dataset_snapshot_id = :id AND sequence = 2",
+                "DELETE FROM dataset_snapshot_analytical_bars WHERE dataset_snapshot_id = :id AND sequence = 2",
+            ):
+                with pytest.raises(Exception, match="dataset snapshot memberships are immutable"):
                     with connection.begin_nested():
                         connection.execute(text(statement), {"id": snapshot})
 

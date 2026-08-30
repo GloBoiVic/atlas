@@ -185,11 +185,12 @@ def downgrade() -> None:
       IF TG_OP <> 'INSERT' THEN RAISE EXCEPTION 'experiment gap decisions are immutable'; END IF;
       RETURN NEW;
     END; $$""")
-    op.execute("""CREATE OR REPLACE FUNCTION snapshot_v2_append_only_guard() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
-      IF TG_OP <> 'INSERT' THEN RAISE EXCEPTION 'dataset snapshot memberships are immutable'; END IF;
-      IF NOT EXISTS (SELECT 1 FROM dataset_snapshots WHERE id = NEW.dataset_snapshot_id AND snapshot_schema = 'ATLAS_HISTORICAL_SIMULATION_SNAPSHOT_V2') THEN RAISE EXCEPTION 'V2 membership requires a V2 snapshot'; END IF;
-      IF TG_TABLE_NAME = 'dataset_snapshot_execution_observations' AND NOT EXISTS (SELECT 1 FROM market_bars WHERE id = NEW.market_bar_id AND resolution = 'M1' AND price_component = NEW.price_component AND complete IS TRUE) THEN RAISE EXCEPTION 'execution membership must reference a completed matching M1 observation'; END IF;
-      RETURN NEW;
+    op.execute("""CREATE OR REPLACE FUNCTION snapshot_v2_append_only_guard() RETURNS trigger
+    LANGUAGE plpgsql AS $$ BEGIN
+      IF TG_OP = 'INSERT' THEN
+        RAISE EXCEPTION 'insert validation must use the statement trigger';
+      END IF;
+      RAISE EXCEPTION 'dataset snapshot memberships are immutable';
     END; $$""")
     op.execute("""CREATE OR REPLACE FUNCTION prevent_dataset_snapshot_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
       BEGIN RAISE EXCEPTION 'dataset_snapshots are immutable'; END; $$""")

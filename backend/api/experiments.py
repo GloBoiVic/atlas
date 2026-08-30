@@ -14,7 +14,6 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.domain.market_data import Instrument
@@ -36,7 +35,6 @@ from backend.market_data.coverage import diagnostic_payloads
 from backend.persistence.database import session_scope
 from backend.persistence.experiment_deletion import (
     ExperimentDeletionError,
-    ExperimentDeletionNotFound,
     ExperimentDeletionRunning,
     ExperimentDeletionService,
     ExperimentDeletionStateInvalid,
@@ -329,17 +327,18 @@ def _delete_confirmation_projection(
     db: Session,
     row: ExperimentModel,
     strategy_repo: StrategyRepository,
+    snapshot: DatasetSnapshotModel,
 ) -> dict[str, Any]:
-    """Project the locked persisted facts required by the delete confirmation."""
-    snapshot = db.scalar(
-        select(DatasetSnapshotModel)
-        .where(DatasetSnapshotModel.id == row.dataset_snapshot_id)
-        .with_for_update()
-    )
+    """Project facts from the root rows already locked by the delete boundary."""
     strategy_version = strategy_repo.get_version(db, row.strategy_version_id)
     venue = db.get(VenueInstrumentModel, row.venue_instrument_id)
     instrument = db.get(InstrumentModel, venue.instrument_id) if venue else None
-    if snapshot is None or strategy_version is None or venue is None or instrument is None:
+    if (
+        snapshot.id != row.dataset_snapshot_id
+        or strategy_version is None
+        or venue is None
+        or instrument is None
+    ):
         raise ExperimentDeletionError(
             "EXPERIMENT_DELETE_FAILED",
             "Experiment provenance integrity is invalid.",
@@ -709,14 +708,11 @@ def create_experiment_router(
     ) -> dict[str, Any]:
         try:
             with db.begin():
-                row = db.scalar(
-                    select(ExperimentModel)
-                    .where(ExperimentModel.id == experiment_id)
-                    .with_for_update()
+                locked = deletion_service.lock_for_delete(db, experiment_id)
+                row = locked.experiment
+                expected = _delete_confirmation_projection(
+                    db, row, strategy_repo, locked.snapshot
                 )
-                if row is None:
-                    raise ExperimentDeletionNotFound()
-                expected = _delete_confirmation_projection(db, row, strategy_repo)
 
                 # A locked RUNNING state always wins over stale or mismatched
                 # human facts. It is never a permission to delete partial work.
@@ -736,7 +732,7 @@ def create_experiment_router(
                         "The Experiment facts changed; review and confirm again.",
                         http_status=409,
                     )
-                result = deletion_service.delete(db, experiment_id)
+                result = deletion_service.delete(db, experiment_id, locked=locked)
         except HTTPException:
             raise
         except ExperimentDeletionError as exc:
