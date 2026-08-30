@@ -1,5 +1,26 @@
 # Completed
 
+<!-- completion-id: foundation-freeze-07-corrections -->
+## Foundation Freeze 07 Corrections — completion record
+
+- **Date/status:** 2026-08-30 — terminal closure approved; targeted validation
+  and targeted rereview **PASS** with no unresolved Critical or Important findings.
+- **Commit:** `e54e694` Correct Freeze 07 lock and downgrade contracts;
+  fast-forward merged into `main`.
+- **Scope:** Corrected DELETE lock ownership to the frozen non-lock Experiment
+  read → DatasetSnapshot lock → Experiment lock sequence, and restored the exact
+  revision-0020 `snapshot_v2_append_only_guard` downgrade function/trigger
+  contract. No architecture semantics, pre-PAPER audit, PAPER, Strategy
+  authoring, or unrelated code changed.
+- **Validation:** Targeted PostgreSQL C1/C2 validation passed with 51 focused
+  tests, migration-cycle and guarded-DML checks, targeted Ruff/Pyright/
+  compile/diff checks, and preserved confirmation/deletion semantics.
+- **Review:** `dispatch/workstreams/foundation-freeze-07-corrections/REVIEW.md`
+  — targeted rereview **PASS**; no unresolved Critical or Important findings.
+- **Git/state:** Correction branch fast-forward merged into `main`. Known
+  pre-existing `.codegraph/` and `frontend/.env.local` remain untracked and
+  excluded. Active dispatch state cleared.
+
 <!-- completion-id: foundation-freeze-07-experiment-lifecycle-local-authority -->
 ## Foundation Freeze 07 — Experiment Lifecycle & Local Authority — completion record
 
