@@ -5,12 +5,12 @@
 - **Workstream:** `paper-01b-oanda-practice-account-summary-snapshot`
 - **Outcome:** one explicit, validated OANDA Practice account → one successful read-only `/summary` response → immutable normalized identity plus broker-reported account-summary facts.
 - **Classification:** `Feature`. This is a bounded provider-facing capability with financial facts, but it is read-only, non-capital, non-persistent, and does not alter Risk, runtime, execution, or broker authority. `ARCHITECTURE.md` is not required.
-- **Phase:** `GIT END`; merge approval received after BUILD, VALIDATE, and REVIEW passed.
+- **Phase:** `COMPLETED`; merge approved and fast-forward merged into `main`.
 - **Base:** `main` at `16022db0e0fed9bd2d61dc0cfa4fa9a60dd1c575`.
 - **Branch:** `solo/paper-01b-oanda-practice-account-summary-snapshot`.
 - **Task:** `T001` — `DONE`; implementation and task-level evidence are complete.
-- **Next action:** commit the intended branch changes, merge to `main`, and finalize the workstream.
-- **Inherited working-tree state:** `.gitignore` is modified before this workstream and is untouched. GIT START must re-check this unrelated dirty state; no stash, reset, discard, or branch switch is authorized during PLAN.
+- **Next action:** none; workstream closed.
+- **Inherited working-tree state:** `.gitignore` was modified before this workstream, rechecked during GIT START and GIT END, and remained untouched and excluded from all commits.
 
 ## Current 01A foundation and exact gap
 

@@ -1,5 +1,15 @@
 # Completed
 
+<!-- completion-id: paper-01b-oanda-practice-account-summary-snapshot -->
+## PAPER 01B — OANDA Practice Account Summary Snapshot — completion record
+
+- **Date/status:** 2026-09-01 — terminal closure approved; BUILD, validation, and review **PASS** with no unresolved Critical or Important findings.
+- **Commit:** `9ff8e7a` Implement PAPER 01B account summary snapshot; fast-forward merged into `main`.
+- **Scope:** One authenticated read-only OANDA Practice `/summary` read normalized into an immutable account-summary snapshot containing the existing 01A identity, selected broker-reported financial facts, counts, and top-level transaction provenance. Separate identity and summary normalization preserved PAPER 01A behavior. No persistence, Risk, runtime, Deployment, reconciliation, detailed broker retrieval, order submission, activation, live data, Strategy execution, or PAPER 01C behavior was added.
+- **Validation:** Focused OANDA tests **72 passed**; non-integration/non-external backend suite **459 passed, 4 skipped, 88 deselected**; targeted Ruff and Pyright passed; `git diff --check` passed. No remediation was required.
+- **Review:** `dispatch/workstreams/paper-01b-oanda-practice-account-summary-snapshot/REVIEW.md` — **PASS**; no unresolved Critical or Important findings.
+- **Git/state:** Feature branch fast-forward merged into `main`; required workstream artifacts preserved; inherited modified `.gitignore` remained untouched and excluded; active dispatch state cleared. No credentialed external OANDA request was performed.
+
 <!-- completion-id: paper-01a-oanda-practice-account-binding -->
 ## PAPER 01A — OANDA Practice Account Binding — completion record
 
