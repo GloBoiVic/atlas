@@ -8,6 +8,14 @@ from .account import (
     bind_oanda_practice_account,
     read_oanda_practice_account_summary,
 )
+from .positions import (
+    OandaOpenPositionNormalizationError,
+    OandaPracticeOpenPosition,
+    OandaPracticeOpenPositionInventory,
+    OandaPracticeOpenPositionReader,
+    OandaPracticePositionSide,
+    read_oanda_practice_open_position_inventory,
+)
 from .source import (
     OANDA_PRACTICE_BASE_URL,
     FetchDiagnostics,
@@ -51,6 +59,12 @@ __all__ = [
     "OandaNormalizationError",
     "OandaRequestError",
     "RequestDiagnostic",
+    "OandaOpenPositionNormalizationError",
+    "OandaPracticeOpenPosition",
+    "OandaPracticeOpenPositionInventory",
+    "OandaPracticeOpenPositionReader",
+    "OandaPracticePositionSide",
+    "read_oanda_practice_open_position_inventory",
     "OandaOpenTradeNormalizationError",
     "OandaPracticeOpenTrade",
     "OandaPracticeOpenTradeInventory",
