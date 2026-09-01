@@ -1,5 +1,15 @@
 # Completed
 
+<!-- completion-id: oanda-observation-query-parameter-support -->
+## OANDA Observation Query Parameter Support — completion record
+
+- **Date/status:** 2026-09-01 — terminal closure approved; BUILD, validation, and review **PASS** with no unresolved Critical or Important findings.
+- **Commit:** `a8c627f` Implement OANDA observation query parameter support; feature branch fast-forward merged into `main`.
+- **Scope:** Added the optional keyword-only `Mapping[str, str] | None` query seam to the existing read-only OANDA Practice requester. Supplied mappings are snapshotted once locally, reused across retries, and delegated through HTTPX `params=` without mutation or retention. Existing no-query PAPER 01A–01E behavior remains unchanged.
+- **Validation:** Focused OANDA requester/account/Trade/Position/pending-Order suite **250 passed**; targeted Ruff format/lint and Pyright passed; `git diff --check` passed. No full backend, database, Alembic, frontend, browser, or credentialed external checks were run.
+- **Review:** `dispatch/workstreams/oanda-observation-query-parameter-support/REVIEW.md` — **PASS**; no unresolved Critical or Important findings.
+- **Git/state:** Feature branch fast-forward merged into `main`; active dispatch state cleared. No new endpoint, pricing, PAPER 01F, Risk/runtime, execution, persistence, reconciliation, API/UI, broker mutation, or LIVE capability was added. No credentialed external OANDA request was performed.
+
 <!-- completion-id: paper-01e-oanda-practice-pending-order-identity-inventory -->
 ## PAPER 01E — OANDA Practice Pending Order Identity Inventory — completion record
 

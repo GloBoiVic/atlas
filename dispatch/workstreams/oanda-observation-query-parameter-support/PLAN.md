@@ -6,11 +6,11 @@
 - **Outcome:** extend the existing read-only OANDA Practice observation requester with an optional narrow caller-owned query mapping while preserving PAPER 01A–01E request behavior and adding no provider capability.
 - **Classification:** `Critical`. The implementation is small, but it changes shared request infrastructure used by the closed PAPER 01A–01E observation consumers. An incorrect request-construction change could alter every existing broker observation.
 - **Base:** `main` at `190282f07246f7603cdfe14d297186c304afc24c`.
-- **Branch:** `solo/oanda-observation-query-parameter-support` — GIT START complete at base `190282f07246f7603cdfe14d297186c304afc24c`.
+- **Branch:** `solo/oanda-observation-query-parameter-support` — fast-forward merged into `main` at `a8c627f21b9cdbdfde4a699d397e12300898780d`.
 - **Task:** `T001` — `DONE`.
-- **Phase:** `READY_FOR_USER`.
-- **Next action:** obtain explicit merge approval; then perform GIT END (verify, commit branch, switch to `main`, merge, verify, and close artifacts).
-- **Approval:** developer approved PLAN and ARCHITECTURE; GIT START complete; BUILD authorized.
+- **Phase:** `COMPLETED`.
+- **Next action:** none; workstream closed after GIT END.
+- **Approval:** terminal closure approved; feature branch committed and fast-forward merged into `main`.
 - **Architecture:** required and frozen in `ARCHITECTURE.md`, including the snapshot-once invariant.
 - **Concerns:** preserving exact query-less behavior for PAPER 01A–01E, retry identity, sanitization, client ownership, and timeout/error semantics while exposing only a narrow transport capability.
 
