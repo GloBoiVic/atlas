@@ -1,80 +1,81 @@
-# AGENTS.md
+# Atlas
 
-## Atlas
+Atlas is a single-user algorithmic trading platform. The committed baseline supports
+historical EUR/USD research with an emphasis on correctness, reproducibility, capital
+safety, simplicity, and auditability.
 
-Atlas is a single-user algorithmic trading platform for moving a trading hypothesis through Strategy → Experiment → PAPER → LIVE. Prioritizes: trading correctness, reproducibility, capital safety, simplicity, auditability. Do not optimize for hypothetical scale.
+## Permanent surface and authority
 
-## Current Scope
+- `AGENTS.md` routes work; `README.md` owns setup, usage, and validation commands.
+- `DOMAIN.md` owns durable, cross-cutting trading laws.
+- Approved product/task direction owns scope; then `DOMAIN.md`, executable code,
+  tests, schemas/migrations, generated API contracts, and dispatch history.
+- Dispatch history records what happened. Do not treat historical records as current
+  capability or silently broaden an approved task when sources disagree.
 
-**Initial vertical slice:** Instrument: EUR/USD | Broker: OANDA | Account: OANDA Practice | Base Currency: USD | Strategy: EMA Sweep Confirmation Break v2 | Analysis: native M15 MID | Execution: sparse native M1 BID/ASK. Build this correctly before generalizing.
+## Progressive loading
 
-## Architecture Principle
+Read only the implementation, tests, schema/migrations, and domain rules relevant to
+the slice being changed. Follow active workstream artifacts under `dispatch/` when a
+task requires them; do not bulk-load historical records or invent a replacement
+documentation hierarchy.
 
-Atlas is intentionally simple. Primary applications: Next.js web, FastAPI API, atlas-runtime, PostgreSQL. Avoid: microservices, Redis, message brokers, distributed workers, Bot/Supervisor abstractions, container-per-process, speculative plugin frameworks. Docker is not an architectural requirement.
+## Current repository
 
-## Domain Language
+- `backend/` is the Python package: FastAPI API, domain values, market-data loading,
+  historical Experiments, simulated execution, Risk, persistence, and runtime check.
+- `frontend/` is the Next.js application. `tests/e2e/` contains Playwright coverage.
+- `backend/persistence/migrations/` contains Alembic history; PostgreSQL is durable
+  application state.
+- `backend/integrations/oanda/` is the read-only OANDA Practice historical adapter.
 
-Use canonical Atlas terminology. Prefer: Strategy, StrategyVersion, Experiment, DatasetSnapshot, TradingAccount, Deployment, TradeIntent, RiskDecision, Order, Fill, Position, Trade. Do not introduce: Bot, BacktestRun, BacktestResult, PaperBot, LiveBot, StrategyInstance. A historical backtest is an Experiment. Domain definitions: `context/architecture/domain-model.md`.
+## Supported boundary
 
-## Core Invariants
+The current workflow is OANDA Practice historical data → immutable DatasetSnapshot →
+deterministic historical Experiment → inspectable results and Trades. The primary
+Strategy is EMA Sweep Confirmation Break v2, using native M15 MID analysis and sparse
+native M1 BID/ASK execution observations. PAPER/LIVE broker execution, reconciliation,
+and live protection are not committed-main capabilities.
 
-Never violate: StrategyVersion is immutable. Completed Experiment inputs/results are immutable. Strategy does not own Risk; Risk is centralized. Position state derives from Fills. Broker truth wins in PAPER/LIVE. Unknown financial state blocks new exposure. Only completed candles trigger decisions. No lookahead. Same completed bar never evaluated twice. Native M15 is not substituted by M1 aggregation; sparse M1 never fabricates execution prices. Order submission must be retry-safe. Open PAPER/LIVE exposure must use broker-hosted protection. Reconciliation before resuming after uncertain state. PAPER/LIVE share Strategy/Risk/domain boundaries. Raw UUIDs are not normal UI labels.
+## Boundaries and safety
 
-## Context Hierarchy
+- Use Strategy, StrategyVersion, Experiment, DatasetSnapshot, TradeIntent, RiskDecision,
+  Order, Fill, Position, and Trade. A historical backtest is an Experiment.
+- Strategy is pure: it proposes setup, direction, stop, target methodology, and
+  rationale; it does not access persistence, accounts, brokers, Risk, or UI.
+- Risk is centralized; financial exposure is represented by Fill-derived Position
+  state. Immutable StrategyVersion and completed Experiment facts remain immutable.
+- Use UTC, completed candles, half-open periods, no lookahead, and one evaluation per
+  completed frontier. Never fabricate, interpolate, aggregate in place of, or silently
+  substitute a required market observation.
+- Unknown, stale, contradictory, or failed state must remain visible and fail closed;
+  never turn uncertainty into a successful order, fill, or result.
 
-Read only relevant files. **Product:** `context/product/`, `context/roadmap/`. **Architecture:** `context/architecture/` — owners: `domain-model.md` (language/invariants), `strategy-contract.md` (Strategy boundary), `market-data-model.md` (candle semantics), `accounting-model.md` (financial rules), `runtime-model.md` (runtime execution), `safety-model.md` (fail-closed rules). Architecture documents govern cross-feature semantics. **Features:** `context/features/` — load only the feature being implemented (reference-strategy, historical-data, experiments, experiment-results, experiment-comparison, trading-accounts, deployment, risk-management, execution, reconciliation, dashboard, journal). **Design:** `context/design/design.md` then screenshots. Written specs govern; screenshots are visual references. **Engineering:** `context/development/`.
+## Engineering workflow
 
-## Source Precedence
+Choose the narrowest complete slice, inspect affected callers and contracts, implement
+explicitly, test success and failure paths, and report evidence. Avoid speculative
+brokers, workers, messaging, plugins, or generalization. Keep credentials in ignored
+environment files and never log them.
 
-Document ownership governs authority: North Star and product documents own
-product direction; architecture documents own cross-feature rules and invariants;
-feature specifications own feature behavior within those architectural bounds.
-`CURRENT.md`, the roadmap, and `README.md` own status, sequencing, and usage.
-Design documents and screenshots govern appearance only where their ownership
-applies. Feature specifications cannot silently override architecture; surface
-contradictions and resolve them explicitly. Existing code is not automatically
-correct.
+## Commands
 
-## Implementation Workflow
+```bash
+uv sync --all-groups
+npm ci
+uv run alembic upgrade head
+uv run alembic current
+uv run alembic check
+uv run ruff format --check backend
+uv run ruff check backend
+uv run pyright backend
+uv run pytest -m "not integration and not external"
+ATLAS_TEST_DATABASE_URL=<dedicated *_test database> uv run pytest -m integration
+npm run check:web
+npm run test:e2e
+```
 
-Identify slice → read AGENTS.md → load relevant context → inspect existing code → identify affected contracts → smallest plan → implement → test behavior + failure paths → report changes. Prefer complete vertical slices over horizontal infrastructure. Bad: generic event/broker/Strategy/worker frameworks before a Trade exists. Good: historical EUR/USD → Strategy → TradeIntent → RiskDecision → Order → Fill → Trade → result.
-
-## Simplicity Rule
-
-Narrowest correct abstraction for current requirements. Do not generalize for future brokers, Instruments, Strategies, users, or distributed execution. Ask: does the current slice require this? If not, do not add it.
-
-## Trading Safety
-
-Correctness over convenience. Unknown financial state → block new exposure. Never silently: fabricate market data, assume Order outcome, invent exit price, retry uncertain entry, repair ambiguous state, resume before reconciliation, leave exposure unprotected. Safety failures must be persistent and inspectable.
-
-## Strategy Boundary
-
-`context/architecture/strategy-contract.md`. Strategy determines setup/direction/stop proposal/target methodology/rationale. Must not: access broker APIs, account balance, size Risk, submit Orders, query databases, contain UI. Reference Strategy gets no special infrastructure.
-
-## Experiments / PAPER / LIVE
-
-Use Experiment (not Backtest). Experiments must be deterministic, reproducible, no-lookahead, based on immutable StrategyVersion + DatasetSnapshot. OANDA Practice = PAPER. Do not implement LIVE until PAPER lifecycle is proven. PAPER proves real broker interaction, execution, protection, restart, reconciliation, operational safety — not fake execution.
-
-## UI
-
-Horizontal navigation (no sidebar). Design: quiet, focused, spacious, trader-oriented. Use: shadcn/ui, Sonner (transient feedback only), TradingView Lightweight Charts. Persistent safety conditions belong in persistent UI, not toasts.
-
-## Dependencies / External APIs / Database
-
-Before adding a dependency: confirm stack cannot solve it, verify maintenance, consult current docs, add only what feature requires. For OANDA: isolate behind adapter, normalize to Atlas types, preserve external IDs for reconciliation, never leak credentials, handle timeout/unknown explicitly. PostgreSQL is durable truth; use constraints for invariants; avoid additional persistence without measured need.
-
-## Testing
-
-Prioritize: domain invariants, Strategy behavior, no-lookahead, Risk calculations, execution semantics, idempotency, restart/reconciliation, failure paths, critical workflows. Small deterministic fixtures. External credential tests separate. Do not chase coverage percentage.
-
-## Failure Handling
-
-Failures must answer: What happened? What did Atlas do? Is new exposure blocked? Is existing exposure protected? What should happen next? Never hide failures behind logs alone. Do not convert unknown state into false certainty.
-
-## Code Quality / Scope / Completion
-
-Prefer: explicit, typed, small modules, deterministic, boring infrastructure. Avoid: premature abstraction, deep inheritance, speculative factories, hidden side effects, cleverness obscuring trading logic. Do not implement adjacent features unless required. Before declaring done: behavior works, tests pass, failure paths handled, invariants intact, UI matches scope, no unnecessary architecture, docs updated.
-
-## Guiding Question
-
-What is the simplest implementation that moves Atlas toward a trustworthy Strategy → Experiment → PAPER → LIVE lifecycle without compromising trading correctness? Build that.
+Run the API with `uv run uvicorn backend.api.app:create_app --factory --host
+127.0.0.1 --port 8000 --no-proxy-headers --reload`; run the frontend with
+`npm run dev:web`. `uv run atlas-runtime --check` is the optional database readiness
+check; it is not a historical Experiment worker.

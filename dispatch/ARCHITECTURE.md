@@ -1,3 +1,0 @@
-# Architecture
-
-No active workstream.

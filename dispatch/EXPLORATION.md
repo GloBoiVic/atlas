@@ -1,3 +1,0 @@
-# Exploration
-
-No active exploration.
