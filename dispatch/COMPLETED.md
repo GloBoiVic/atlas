@@ -1,5 +1,15 @@
 # Completed
 
+<!-- completion-id: paper-01d-oanda-practice-open-position-inventory -->
+## PAPER 01D — OANDA Practice Open Position Inventory — completion record
+
+- **Date/status:** 2026-09-01 — terminal closure approved; BUILD, validation, and review **PASS** with no unresolved Critical or Important findings.
+- **Commit:** `45c9584` Implement PAPER 01D open Position inventory; feature branch fast-forward merged into `main`.
+- **Scope:** One explicitly configured and account-validated OANDA Practice account → one read-only `/openPositions` observation → immutable normalized provider open-Position inventory. Provider Positions remain OANDA observations only, preserving long and short sides independently without netting. No Atlas Position/Trade/Order/Fill construction, ownership, accounting, persistence, reconciliation, Risk, runtime, API/UI, execution, mutation, activation, live data, Strategy execution, or PAPER 01E behavior was added.
+- **Validation:** Focused OANDA suite **169 passed**; non-integration/non-external suite **556 passed, 4 skipped, 88 deselected**; targeted Ruff and Pyright passed; `git diff --check` passed. Repository-wide Ruff/Pyright findings remain documented unrelated baseline findings.
+- **Review:** `dispatch/workstreams/paper-01d-oanda-practice-open-position-inventory/REVIEW.md` — **PASS**; no unresolved Critical or Important findings.
+- **Git/state:** Feature branch fast-forward merged into `main`; active dispatch state cleared. No credentialed external OANDA request was performed.
+
 <!-- completion-id: paper-01c-oanda-practice-open-trade-inventory -->
 ## PAPER 01C — OANDA Practice Open Trade Inventory — completion record
 

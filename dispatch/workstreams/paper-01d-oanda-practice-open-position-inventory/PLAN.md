@@ -9,9 +9,9 @@
 - **Branch:** `solo/paper-01d-oanda-practice-open-position-inventory`.
 - **Base SHA:** `faaed2ee820fd28143f08a773922fb93521aefae`.
 - **Task:** `T001` — `DONE`.
-- **Phase:** `READY_FOR_USER`.
-- **Next action:** obtain explicit merge approval, then perform GIT END.
-- **Approval:** merge approval required; BUILD, VALIDATE, and REVIEW passed.
+- **Phase:** `CLOSED`.
+- **Next action:** none; workstream merged to `main`.
+- **Approval:** merge approved and completed; BUILD, VALIDATE, and REVIEW passed.
 - **Concerns:** the result is provider aggregate state, not an Atlas financial Position; both provider sides must remain visible without netting.
 
 ## Existing foundation and exact gap
