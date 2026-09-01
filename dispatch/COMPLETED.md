@@ -1,5 +1,15 @@
 # Completed
 
+<!-- completion-id: paper-01a-oanda-practice-account-binding -->
+## PAPER 01A — OANDA Practice Account Binding — completion record
+
+- **Date/status:** 2026-09-01 — terminal closure approved; validation and review **PASS** with no unresolved Critical or Important findings.
+- **Commit:** `bc69499` Implement OANDA Practice account binding; fast-forward merged into `main`.
+- **Scope:** Explicit OANDA Practice account-ID configuration, direct read-only account-summary validation, immutable five-field normalized account identity, bounded retries, fail-closed response handling, and sanitized deterministic MockTransport coverage. No persistence, runtime, Deployment, Risk, reconciliation, Orders, live market data, PAPER activation, API/UI, or PAPER 01B behavior was added.
+- **Validation:** Targeted account/config/source tests **57 passed**; non-integration/non-external suite **432 passed, 4 skipped**; targeted Ruff and Pyright passed; `git diff --check` passed. Repository-wide pre-existing Ruff/Pyright findings remain documented in the workstream artifacts.
+- **Review:** `dispatch/workstreams/paper-01a-oanda-practice-account-binding/REVIEW.md` — **PASS**; no unresolved Critical or Important findings.
+- **Git/state:** Feature branch fast-forward merged into `main`; required workstream artifacts preserved; inherited untracked `.codegraph/` and `frontend/.env.local` remained untouched and excluded; active dispatch state cleared. PAPER 01B was not started.
+
 <!-- completion-id: foundation-freeze-07-corrections -->
 ## Foundation Freeze 07 Corrections — completion record
 

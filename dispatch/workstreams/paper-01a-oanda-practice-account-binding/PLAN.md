@@ -4,12 +4,13 @@
 
 - **Outcome:** explicit configured OANDA Practice account ID → read-only provider validation → normalized Atlas account identity → fail closed on invalid, missing, inaccessible, or uncertain state.
 - **Classification:** `Feature`. This adds a bounded provider-facing capability, but it is read-only, non-capital, local to configuration and the OANDA integration, and introduces no persistence or runtime authority. `ARCHITECTURE.md` is not required.
-- **Phase:** GIT END; developer approved; merge approved.
+- **Phase:** CLOSED; developer approved; merge approved.
 - **Planned branch:** `solo/paper-01a-oanda-practice-account-binding`.
 - **Base:** `main` at `fa2a8f5ca7a4d5da1fb7d56bd1ee69dde34a8ab2`.
 - **GIT START:** complete on `solo/paper-01a-oanda-practice-account-binding` at base `fa2a8f5ca7a4d5da1fb7d56bd1ee69dde34a8ab2`.
+- **GIT END:** implementation commit `bc69499f56518690660f1b7e49ce8c1504fd2260` fast-forward merged into `main`; closure recorded and active state cleared.
 - **Task:** `T001` — `DONE`.
-- **Next action:** commit the approved feature branch, merge it into `main`, record completion, and clear active state.
+- **Next action:** none; terminal workstream closure is complete.
 - **Known inherited state:** `.codegraph/` and `frontend/.env.local` were already untracked and were reconfirmed at GIT START; they remain untouched and will not be read, modified, staged, or removed by this workstream.
 
 ## Current implementation and gap
