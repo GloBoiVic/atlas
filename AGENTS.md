@@ -6,12 +6,19 @@ safety, simplicity, and auditability.
 
 ## Permanent surface and authority
 
+## Permanent surface and authority
+
 - `AGENTS.md` routes work; `README.md` owns setup, usage, and validation commands.
 - `DOMAIN.md` owns durable, cross-cutting trading laws.
-- Approved product/task direction owns scope; then `DOMAIN.md`, executable code,
-  tests, schemas/migrations, generated API contracts, and dispatch history.
-- Dispatch history records what happened. Do not treat historical records as current
-  capability or silently broaden an approved task when sources disagree.
+- Desired change → approved current task/workstream.
+- Current implementation behavior → code, nearby tests, schemas/migrations, and
+  generated contracts.
+- Cross-cutting trading semantics → `DOMAIN.md`.
+- Setup/run/current supported workflow → `README.md`.
+- Historical reasoning → closed dispatch workstreams/Git only when explicitly
+  needed.
+- Dispatch history records what happened. Do not treat historical records as
+  current capability or silently broaden an approved task when sources disagree.
 
 ## Progressive loading
 
