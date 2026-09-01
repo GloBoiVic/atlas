@@ -107,6 +107,71 @@ def test_get_json_performs_exact_authenticated_practice_get_without_params() -> 
     assert request.headers["Accept-Datetime-Format"] == "RFC3339"
 
 
+@pytest.mark.parametrize("params", [None, {}])
+def test_get_json_with_none_or_empty_params_has_no_caller_query(
+    params: dict[str, str] | None,
+) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={})
+
+    requester(httpx.MockTransport(handler)).get_json(
+        "/v3/accounts/example/summary", error_subject="account", params=params
+    )
+
+    assert len(requests) == 1
+    assert requests[0].url.query == b""
+
+
+def test_get_json_passes_one_query_value_to_httpx() -> None:
+    requests: list[httpx.Request] = []
+    params = {"example": "value"}
+    before = params.copy()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={})
+
+    requester(httpx.MockTransport(handler)).get_json(
+        "/v3/accounts/example/summary", error_subject="account", params=params
+    )
+
+    assert dict(requests[0].url.params) == {"example": "value"}
+    assert params == before
+
+
+def test_get_json_passes_multiple_distinct_query_values_to_httpx() -> None:
+    requests: list[httpx.Request] = []
+    params = {"first": "one", "second": "two"}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={})
+
+    requester(httpx.MockTransport(handler)).get_json(
+        "/v3/accounts/example/summary", error_subject="account", params=params
+    )
+
+    assert dict(requests[0].url.params) == params
+
+
+def test_get_json_delegates_query_value_escaping_to_httpx() -> None:
+    requests: list[httpx.Request] = []
+    params = {"example": "value with spaces & symbols"}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={})
+
+    requester(httpx.MockTransport(handler)).get_json(
+        "/v3/accounts/example/summary", error_subject="account", params=params
+    )
+
+    assert requests[0].url.params["example"] == "value with spaces & symbols"
+
+
 def test_get_json_returns_non_object_without_domain_classification() -> None:
     result = requester(
         httpx.MockTransport(lambda request: httpx.Response(200, json=["value"]))
@@ -334,6 +399,59 @@ def test_transient_failure_then_success_repeats_same_get_with_fallback_sleep(
         ("GET", "/v3/accounts/example/openTrades", b""),
     ]
     assert sleeps == [0.25]
+
+
+def test_retry_reuses_query_snapshot_after_caller_mapping_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: list[httpx.Request] = []
+    sleeps: list[float] = []
+    params = {"first": "one", "second": "two"}
+    before = params.copy()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if len(requests) == 1:
+            params["first"] = "changed"
+            params["added"] = "after-first-attempt"
+            return httpx.Response(503, headers={"Retry-After": "0"})
+        return httpx.Response(200, json={"ok": True})
+
+    monkeypatch.setattr(oanda_request, "sleep", sleeps.append)
+    result = requester(httpx.MockTransport(handler)).get_json(
+        "/v3/accounts/example/summary", error_subject="account", params=params
+    )
+
+    assert result == {"ok": True}
+    assert sleeps == [0.25]
+    assert len(requests) == 2
+    assert [request.method for request in requests] == ["GET", "GET"]
+    assert [request.url.path for request in requests] == [
+        "/v3/accounts/example/summary",
+        "/v3/accounts/example/summary",
+    ]
+    assert [dict(request.url.params) for request in requests] == [before, before]
+    assert dict(requests[1].headers) == dict(requests[0].headers)
+
+
+def test_query_mapping_remains_unchanged_and_markers_are_sanitized_on_failure() -> None:
+    query_key = "distinctive-query-key"
+    query_value = "distinctive-query-value"
+    params = {query_key: query_value}
+    before = params.copy()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, text=f"provider body {query_value}")
+
+    with pytest.raises(OandaRequestError) as error:
+        requester(httpx.MockTransport(handler)).get_json(
+            "/v3/accounts/example/summary", error_subject="account", params=params
+        )
+
+    assert params == before
+    assert query_key not in str(error.value)
+    assert query_value not in str(error.value)
+    assert str(error.value) == "OANDA account request was rejected"
 
 
 @pytest.mark.parametrize(

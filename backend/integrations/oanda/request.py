@@ -1,6 +1,7 @@
 """Internal request mechanics for read-only OANDA Practice observations."""
 
 import math
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from time import sleep
@@ -75,8 +76,15 @@ class OandaObservationRequester:
             pool=connect_timeout_seconds,
         )
 
-    def get_json(self, path: str, *, error_subject: str) -> Any:
+    def get_json(
+        self,
+        path: str,
+        *,
+        error_subject: str,
+        params: Mapping[str, str] | None = None,
+    ) -> Any:
         """Return decoded JSON from one authenticated, bounded observation GET."""
+        request_params = None if params is None else dict(params)
         validate_token(self._token)
         token = cast(SecretStr, self._token)
         headers = {
@@ -102,6 +110,7 @@ class OandaObservationRequester:
                     response = client.get(
                         f"{OANDA_PRACTICE_BASE_URL}{path}",
                         headers=headers,
+                        params=request_params,
                         timeout=self._timeout,
                     )
                 except httpx.RequestError:
