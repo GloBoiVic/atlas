@@ -1,5 +1,15 @@
 # Completed
 
+<!-- completion-id: paper-01c-oanda-practice-open-trade-inventory -->
+## PAPER 01C — OANDA Practice Open Trade Inventory — completion record
+
+- **Date/status:** 2026-09-01 — terminal closure approved; final R001 validation and review **PASS** with no unresolved Critical or Important findings.
+- **Commit:** `2e41f9a` Implement PAPER 01C open Trade inventory; feature branch pushed and fast-forward merged into `main`.
+- **Scope:** One explicitly configured and account-validated OANDA Practice account → one read-only `/openTrades` observation → immutable normalized provider open-Trade inventory. Provider-native instruments, signed units, accepted provider states, deterministic ordering, duplicate rejection, empty inventories, and response transaction provenance remain broker observations only. No Atlas Trade/Position/Order/Fill construction, ownership inference, persistence, reconciliation, Risk, runtime, API/UI, execution, mutation, activation, live data, Strategy execution, or PAPER 01D behavior was added.
+- **Validation:** Focused OANDA suite **117 passed**; targeted Ruff and Pyright passed; `git diff --check` passed. BUILD also recorded the non-integration/non-external suite **503 passed, 4 skipped, 88 deselected**; its repository-wide Ruff/Pyright findings were pre-existing and unrelated. Initial validation found IMPORTANT V-001 for leading-zero numeric ordering; R001 added the deterministic raw-ID tie-breaker and regression coverage.
+- **Review:** `dispatch/workstreams/paper-01c-oanda-practice-open-trade-inventory/remediations/R001-leading-zero-trade-order/REVIEW.md` — **PASS**; no unresolved Critical or Important findings.
+- **Git/state:** Feature branch pushed to GitHub, fast-forward merged into `main`, and `main` pushed. Required workstream and immutable remediation artifacts preserved; active dispatch state cleared. No credentialed external OANDA request was performed.
+
 <!-- completion-id: paper-01b-oanda-practice-account-summary-snapshot -->
 ## PAPER 01B — OANDA Practice Account Summary Snapshot — completion record
 
