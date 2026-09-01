@@ -390,6 +390,14 @@ def test_invalid_json_and_provider_errors_are_sanitized_and_not_retried() -> Non
     assert TEST_TOKEN not in str(auth_error.value)
 
 
+def test_non_object_json_remains_trade_normalization_failure() -> None:
+    with pytest.raises(
+        OandaOpenTradeNormalizationError,
+        match="open Trades response is not an object",
+    ):
+        reader(lambda request: httpx.Response(200, json=[])).read()
+
+
 def test_transient_open_trade_read_retries_only_same_get(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -405,7 +413,7 @@ def test_transient_open_trade_read_retries_only_same_get(
             return httpx.Response(503, headers={"Retry-After": "999"})
         return httpx.Response(200, json={"trades": [], "lastTransactionID": "7"})
 
-    monkeypatch.setattr("backend.integrations.oanda.trades.sleep", sleeps.append)
+    monkeypatch.setattr("backend.integrations.oanda.request.sleep", sleeps.append)
     result = reader(handler).read()
 
     assert result.trades == ()
@@ -424,7 +432,7 @@ def test_exhausted_transport_retries_are_bounded_and_sanitized(
         calls += 1
         raise httpx.ReadTimeout(f"provider timeout {TEST_TOKEN}")
 
-    monkeypatch.setattr("backend.integrations.oanda.trades.sleep", sleeps.append)
+    monkeypatch.setattr("backend.integrations.oanda.request.sleep", sleeps.append)
     with pytest.raises(OandaRequestError) as error:
         reader(handler).read()
 

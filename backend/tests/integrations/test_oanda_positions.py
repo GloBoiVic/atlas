@@ -526,6 +526,14 @@ def test_invalid_json_and_provider_errors_are_sanitized_and_not_retried() -> Non
     assert TEST_TOKEN not in str(auth_error.value)
 
 
+def test_non_object_json_remains_position_normalization_failure() -> None:
+    with pytest.raises(
+        OandaOpenPositionNormalizationError,
+        match="open Positions response is not an object",
+    ):
+        reader(lambda request: httpx.Response(200, json=[])).read()
+
+
 def test_transient_position_read_retries_only_same_get(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -542,7 +550,7 @@ def test_transient_position_read_retries_only_same_get(
             return httpx.Response(503, headers={"Retry-After": "999"})
         return httpx.Response(200, json=position_payload([]))
 
-    monkeypatch.setattr("backend.integrations.oanda.positions.sleep", sleeps.append)
+    monkeypatch.setattr("backend.integrations.oanda.request.sleep", sleeps.append)
     result = reader(handler).read()
 
     assert result.positions == ()
@@ -561,7 +569,7 @@ def test_exhausted_transport_retries_are_bounded_and_sanitized(
         calls += 1
         raise httpx.ReadTimeout(f"provider timeout {TEST_TOKEN}")
 
-    monkeypatch.setattr("backend.integrations.oanda.positions.sleep", sleeps.append)
+    monkeypatch.setattr("backend.integrations.oanda.request.sleep", sleeps.append)
     with pytest.raises(OandaRequestError) as error:
         reader(handler).read()
 

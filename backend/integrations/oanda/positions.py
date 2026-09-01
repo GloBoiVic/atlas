@@ -1,13 +1,8 @@
 """Read-only, provider-specific OANDA Practice open Position observations."""
 
-import math
-import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from decimal import Decimal, InvalidOperation
-from email.utils import parsedate_to_datetime
-from time import sleep
+from decimal import Decimal
 from typing import Any, cast
 from urllib.parse import quote
 
@@ -17,20 +12,19 @@ from pydantic import SecretStr
 from backend.config import Settings
 
 from .account import OandaPracticeAccountIdentity, bind_oanda_practice_account
+from .primitives import (
+    OandaPrimitiveError,
+    parse_decimal,
+    parse_instrument,
+    parse_transaction_id,
+)
+from .request import OandaObservationRequester, validate_token
 from .source import (
-    OANDA_PRACTICE_BASE_URL,
-    OandaAuthError,
-    OandaConfigurationError,
     OandaNormalizationError,
-    OandaRequestError,
 )
 
-_MAX_ATTEMPTS = 3
-_RETRY_AFTER_CAP_SECONDS = 30.0
-_BACKOFF_SECONDS = (0.25, 0.5)
 _OPEN_POSITIONS_PATH = "/v3/accounts/{account_id}/openPositions"
-_TRANSACTION_ID_PATTERN = re.compile(r"[0-9]+")
-_INSTRUMENT_PATTERN = re.compile(r"[^\s_]+_[^\s_]+")
+_REQUEST_ERROR_SUBJECT = "open Positions"
 
 
 class OandaOpenPositionNormalizationError(OandaNormalizationError):
@@ -38,26 +32,22 @@ class OandaOpenPositionNormalizationError(OandaNormalizationError):
 
 
 def _transaction_id(value: Any) -> str:
-    if type(value) is not str or _TRANSACTION_ID_PATTERN.fullmatch(value) is None:
+    try:
+        return parse_transaction_id(value)
+    except OandaPrimitiveError:
         raise OandaOpenPositionNormalizationError(
             "OANDA open Positions response has invalid lastTransactionID"
-        )
-    return value
+        ) from None
 
 
 def _decimal(value: Any, name: str, *, positive: bool = False) -> Decimal:
-    if type(value) is not str:
-        raise OandaOpenPositionNormalizationError(
-            f"OANDA open Position has invalid {name}"
-        )
     try:
-        result = Decimal(value)
-    except (InvalidOperation, ValueError):
+        result = parse_decimal(value)
+    except OandaPrimitiveError:
         raise OandaOpenPositionNormalizationError(
             f"OANDA open Position has invalid {name}"
         ) from None
-    _valid_decimal(result, name, positive=positive)
-    return result
+    return _valid_decimal(result, name, positive=positive)
 
 
 def _valid_decimal(value: Any, name: str, *, positive: bool = False) -> Decimal:
@@ -69,33 +59,12 @@ def _valid_decimal(value: Any, name: str, *, positive: bool = False) -> Decimal:
 
 
 def _instrument(value: Any) -> str:
-    if type(value) is not str or _INSTRUMENT_PATTERN.fullmatch(value) is None:
+    try:
+        return parse_instrument(value)
+    except OandaPrimitiveError:
         raise OandaOpenPositionNormalizationError(
             "OANDA open Position has invalid instrument"
-        )
-    return value
-
-
-def _retry_after(response: httpx.Response) -> float:
-    value = response.headers.get("Retry-After")
-    if value is None:
-        return 0.0
-    try:
-        seconds = float(value)
-    except ValueError:
-        seconds = -1.0
-    if math.isfinite(seconds) and seconds >= 0:
-        return min(seconds, _RETRY_AFTER_CAP_SECONDS)
-    try:
-        retry_at = parsedate_to_datetime(value)
-        if retry_at.tzinfo is None:
-            return 0.0
-        seconds = (retry_at.astimezone(UTC) - datetime.now(UTC)).total_seconds()
-    except (TypeError, ValueError, OverflowError):
-        return 0.0
-    if not math.isfinite(seconds) or seconds < 0:
-        return 0.0
-    return min(seconds, _RETRY_AFTER_CAP_SECONDS)
+        ) from None
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,24 +174,19 @@ class OandaPracticeOpenPositionReader:
         connect_timeout_seconds: float = 5.0,
         read_timeout_seconds: float = 20.0,
     ) -> None:
-        if not (0 < connect_timeout_seconds <= 30) or not (
-            0 < read_timeout_seconds <= 120
-        ):
-            raise OandaConfigurationError("OANDA timeouts are outside bounded limits")
+        self._requester = OandaObservationRequester(
+            token,
+            client=client,
+            transport=transport,
+            connect_timeout_seconds=connect_timeout_seconds,
+            read_timeout_seconds=read_timeout_seconds,
+        )
         if type(identity) is not OandaPracticeAccountIdentity:
             raise OandaOpenPositionNormalizationError(
                 "OANDA open Position reader requires a validated account identity"
             )
         self._token = token
         self._identity = identity
-        self._client = client
-        self._transport = transport
-        self._timeout = httpx.Timeout(
-            read=read_timeout_seconds,
-            connect=connect_timeout_seconds,
-            write=connect_timeout_seconds,
-            pool=connect_timeout_seconds,
-        )
 
     def read(self) -> OandaPracticeOpenPositionInventory:
         """Read and normalize one immutable open-Positions observation."""
@@ -231,90 +195,18 @@ class OandaPracticeOpenPositionReader:
 
     def _read_payload(self) -> Mapping[str, Any]:
         self._validate_configuration()
-        owned_client = self._client is None
-        client = self._client or httpx.Client(
-            transport=self._transport,
-            timeout=self._timeout,
-            base_url=OANDA_PRACTICE_BASE_URL,
-            trust_env=False,
-        )
-        try:
-            return self._request(client)
-        finally:
-            if owned_client:
-                client.close()
-
-    def _validate_configuration(self) -> None:
-        if self._token is None or not self._token.get_secret_value().strip():
-            raise OandaConfigurationError("OANDA API token is required")
-
-    def _request(self, client: httpx.Client) -> Mapping[str, Any]:
-        token = self._token
-        if token is None:
-            raise OandaConfigurationError("OANDA API token is required")
-        headers = {
-            "Authorization": f"Bearer {token.get_secret_value()}",
-            "Accept-Datetime-Format": "RFC3339",
-        }
         path = _OPEN_POSITIONS_PATH.format(
             account_id=quote(self._identity.provider_account_id, safe="-")
         )
-        attempts = 0
-        while attempts < _MAX_ATTEMPTS:
-            attempts += 1
-            try:
-                response = client.get(
-                    f"{OANDA_PRACTICE_BASE_URL}{path}",
-                    headers=headers,
-                    timeout=self._timeout,
-                )
-            except httpx.RequestError:
-                if attempts == _MAX_ATTEMPTS:
-                    raise OandaRequestError(
-                        None,
-                        attempts,
-                        "OANDA open Positions request failed after retries",
-                    ) from None
-                sleep(_BACKOFF_SECONDS[attempts - 1])
-                continue
+        payload = self._requester.get_json(path, error_subject=_REQUEST_ERROR_SUBJECT)
+        if not isinstance(payload, dict):
+            raise OandaOpenPositionNormalizationError(
+                "OANDA open Positions response is not an object"
+            )
+        return cast(Mapping[str, Any], payload)
 
-            status = response.status_code
-            if status in (401, 403):
-                raise OandaAuthError(status, attempts, "OANDA authorization failed")
-            if status in (400, 404):
-                raise OandaRequestError(
-                    status, attempts, "OANDA open Positions request was rejected"
-                )
-            if status == 408 or status == 429 or 500 <= status <= 599:
-                if attempts == _MAX_ATTEMPTS:
-                    raise OandaRequestError(
-                        status,
-                        attempts,
-                        "OANDA open Positions request failed after retries",
-                    )
-                delay = _retry_after(response)
-                if delay <= 0 or not math.isfinite(delay):
-                    delay = _BACKOFF_SECONDS[attempts - 1]
-                sleep(delay)
-                continue
-            if status < 200 or status >= 300:
-                raise OandaRequestError(
-                    status, attempts, "OANDA open Positions request failed"
-                )
-            try:
-                payload: Any = response.json()
-            except ValueError:
-                raise OandaRequestError(
-                    status,
-                    attempts,
-                    "OANDA returned invalid open Positions JSON",
-                ) from None
-            if not isinstance(payload, dict):
-                raise OandaOpenPositionNormalizationError(
-                    "OANDA open Positions response is not an object"
-                )
-            return cast(Mapping[str, Any], payload)
-        raise AssertionError("retry loop exhausted unexpectedly")
+    def _validate_configuration(self) -> None:
+        validate_token(self._token)
 
     def _normalize_inventory(
         self, payload: Mapping[str, Any]

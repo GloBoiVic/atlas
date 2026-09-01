@@ -270,6 +270,11 @@ def test_missing_or_blank_token_fails_without_network() -> None:
     assert calls == 0
 
 
+def test_token_error_precedes_account_id_error() -> None:
+    with pytest.raises(OandaConfigurationError, match="API token is required"):
+        OandaPracticeAccountValidator(SecretStr(" "), None).validate()
+
+
 def test_deterministic_rejection_is_sanitized_and_not_retried() -> None:
     calls = 0
 
@@ -298,7 +303,7 @@ def test_transient_provider_failure_is_bounded_and_sanitized(
         calls += 1
         return httpx.Response(503, headers={"Retry-After": "999"})
 
-    monkeypatch.setattr("backend.integrations.oanda.account.sleep", sleeps.append)
+    monkeypatch.setattr("backend.integrations.oanda.request.sleep", sleeps.append)
     with pytest.raises(OandaRequestError) as error:
         validator(handler).validate()
     assert calls == 3
@@ -318,7 +323,7 @@ def test_transport_failure_is_bounded_and_has_no_provider_body(
         calls += 1
         raise httpx.ReadTimeout(f"slow {TEST_TOKEN}")
 
-    monkeypatch.setattr("backend.integrations.oanda.account.sleep", sleeps.append)
+    monkeypatch.setattr("backend.integrations.oanda.request.sleep", sleeps.append)
     with pytest.raises(OandaRequestError) as error:
         validator(handler).validate()
     assert calls == 3
@@ -340,7 +345,7 @@ def test_summary_retry_repeats_only_the_same_safe_get(
             return httpx.Response(503, headers={"Retry-After": "0"})
         return httpx.Response(200, json=account_payload())
 
-    monkeypatch.setattr("backend.integrations.oanda.account.sleep", sleeps.append)
+    monkeypatch.setattr("backend.integrations.oanda.request.sleep", sleeps.append)
     snapshot = validator(handler).read_summary()
 
     assert snapshot.last_transaction_id == "42"
@@ -371,6 +376,13 @@ def test_invalid_json_fails_closed_without_exposing_body() -> None:
     assert "invalid account JSON" in str(error.value)
     assert body not in str(error.value)
     assert TEST_TOKEN not in str(error.value)
+
+
+def test_non_object_json_remains_account_normalization_failure() -> None:
+    with pytest.raises(
+        OandaAccountNormalizationError, match="account response is not an object"
+    ):
+        validator(lambda request: httpx.Response(200, json=[])).validate()
 
 
 @pytest.mark.parametrize(
