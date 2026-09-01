@@ -1,5 +1,15 @@
 # Completed
 
+<!-- completion-id: oanda-read-only-observation-infrastructure-refactor -->
+## OANDA Read-only Observation Infrastructure Refactor — completion record
+
+- **Date/status:** 2026-09-01 — terminal closure approved; BUILD, validation, and review **PASS** with no unresolved Critical or Important findings.
+- **Commit:** `75353e4` Refactor OANDA observation request infrastructure; feature branch fast-forward merged into `main`.
+- **Scope:** Behavior-preserving extraction of the demonstrated authenticated GET, bounded retry, response, and provider-format primitive mechanics used by the OANDA Practice account, open-Trade, and open-Position read-only observations. Local endpoints, account binding, domain normalization, ordering, duplicate rules, and financial semantics remain unchanged. No new endpoint, Orders, persistence, reconciliation, Risk, runtime, execution, API/UI, PAPER 01E, or LIVE capability was added.
+- **Validation:** Focused OANDA suite **253 passed**; non-integration/non-external suite **640 passed, 4 skipped, 88 deselected**; targeted Ruff format/lint and Pyright passed; `git diff --check` passed. Four pre-existing unrelated warnings remain documented in the validation artifact.
+- **Review:** `dispatch/workstreams/oanda-read-only-observation-infrastructure-refactor/REVIEW.md` — **PASS**; no unresolved Critical or Important findings.
+- **Git/state:** Feature branch fast-forward merged into `main`; active dispatch state cleared. `source.py` and `backend/integrations/oanda/__init__.py` remain unchanged. No credentialed external OANDA request was performed.
+
 <!-- completion-id: paper-01d-oanda-practice-open-position-inventory -->
 ## PAPER 01D — OANDA Practice Open Position Inventory — completion record
 
