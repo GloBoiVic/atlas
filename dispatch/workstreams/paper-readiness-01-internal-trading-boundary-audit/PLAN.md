@@ -5,14 +5,15 @@
 - **Workstream:** `paper-readiness-01-internal-trading-boundary-audit`
 - **Outcome:** Establish the code-grounded internal boundary decisions required before Atlas begins depending on OANDA Practice facts inside reusable Risk, execution, persistence, or runtime paths.
 - **Classification:** `Critical`. The audit defines dependency direction among Strategy, Risk, Experiment, PAPER, broker integration, persistence, and eventual LIVE. Incorrect boundaries could couple capital-capable trading to historical simulation mechanics or move lifecycle/broker authority into the wrong layer.
-- **Base:** `main` at `ab28188` (`Close PAPER 01F workstream`).
-- **Base SHA:** `ab28188`.
-- **Branch:** not started; architecture-only closure is committed directly on `main`.
-- **Phase:** `COMPLETED`.
-- **Approval:** developer approved the reconciled architecture-only closure on 2026-09-01; this does not approve implementation, GIT START, tasks, BUILD, PAPER/LIVE activation, or broker mutation.
+- **Base:** `main` at `d8219d5` (`Close PAPER Readiness 01 architecture audit`).
+- **Base SHA:** `d8219d52da774e9f84b39f4346f74bd87e59a291`.
+- **Branch:** `solo/paper-readiness-01-internal-trading-boundary-audit`.
+- **Phase:** `GIT_END`.
+- **Approval:** implementation and merge approved by developer on 2026-09-01; GIT END is in progress. No broader PAPER/LIVE activation, broker mutation, or unrelated implementation is authorized.
 - **Architecture:** `FROZEN_APPROVED_CANONICAL`; the approved `PLAN.md` and `ARCHITECTURE.md` are preserved as the canonical architecture decision.
-- **Task state:** no `tasks/` directory and no BUILD assignment by design.
-- **Next action:** none; workstream closed. The separately approved prerequisite implementation workstream is `paper-readiness-02-risk-lifecycle-boundary-cleanup`.
+- **Task state:** `T001` — `DONE`; BUILD receipt complete.
+- **Next action:** commit this branch, merge it into `main`, push GitHub, then record completion and clear active state. Do not begin another PAPER slice.
+- **Gate evidence:** focused VALIDATE `PASS_WITH_CONCERNS` with non-blocking baseline tooling concerns; independent REVIEW `PASS` with no Critical or Important findings.
 - **Concerns:** several generic-looking trading seams were built specifically for historical Experiments. Reuse must follow semantic compatibility, not naming or code-reuse preference.
 
 ## Objective

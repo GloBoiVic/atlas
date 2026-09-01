@@ -25,6 +25,7 @@ class RiskRejection(StrEnum):
     INVALID_STOP = "INVALID_STOP"
     INVALID_QUANTITY = "INVALID_QUANTITY"
     ACCOUNT_STATE_UNKNOWN = "ACCOUNT_STATE_UNKNOWN"
+    # Retained as a readable historical rejection vocabulary; Risk no longer emits it.
     EXPERIMENT_NOT_RUNNING = "EXPERIMENT_NOT_RUNNING"
     UNSUPPORTED_INSTRUMENT_ECONOMICS = "UNSUPPORTED_INSTRUMENT_ECONOMICS"
 
@@ -76,15 +77,13 @@ class RiskService:
         self,
         intent: TradeIntent,
         *,
-        experiment_status: str,
         position: Position | FinancialPositionState | str | None,
         account: AccountState | None,
         config: RiskConfig,
         instrument: Instrument | str,
     ) -> RiskDecision:
         common = self._common(
-            RiskPhase.PRE_FLIGHT, intent, experiment_status, position, account,
-            config, instrument,
+            RiskPhase.PRE_FLIGHT, intent, position, account, config, instrument,
         )
         if common is not None:
             return common
@@ -98,7 +97,6 @@ class RiskService:
         self,
         intent: TradeIntent,
         *,
-        experiment_status: str,
         position: Position | FinancialPositionState | str | None,
         account: AccountState | None,
         config: RiskConfig,
@@ -107,7 +105,7 @@ class RiskService:
     ) -> RiskDecision:
         phase = RiskPhase.PRE_SUBMISSION
         common = self._common(
-            phase, intent, experiment_status, position, account, config, instrument
+            phase, intent, position, account, config, instrument
         )
         if common is not None:
             return common
@@ -148,7 +146,7 @@ class RiskService:
         )
 
     def _common(
-        self, phase: RiskPhase, intent: TradeIntent, experiment_status: str,
+        self, phase: RiskPhase, intent: TradeIntent,
         position: Position | FinancialPositionState | str | None,
         account: AccountState | None, config: RiskConfig,
         instrument: Instrument | str,
@@ -157,8 +155,6 @@ class RiskService:
             account is not None and account.base_currency != "USD"
         ):
             return self._reject(phase, RiskRejection.UNSUPPORTED_INSTRUMENT_ECONOMICS)
-        if experiment_status != "RUNNING":
-            return self._reject(phase, RiskRejection.EXPERIMENT_NOT_RUNNING)
         if position is None:
             return self._reject(phase, RiskRejection.ACCOUNT_STATE_UNKNOWN)
         if not self._flat(position):

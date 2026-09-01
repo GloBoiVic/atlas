@@ -15,7 +15,6 @@ from backend.risk import (
 
 
 class Inputs(TypedDict):
-    experiment_status: str
     position: str | None
     account: AccountState | None
     config: RiskConfig
@@ -33,7 +32,6 @@ def intent(direction: Direction = Direction.LONG) -> TradeIntent:
 
 def inputs() -> Inputs:
     return {
-        "experiment_status": "RUNNING",
         "position": "FLAT",
         "account": AccountState("USD", Decimal("10000")),
         "config": RiskConfig(Decimal("0.01")),
@@ -69,12 +67,13 @@ def test_short_uses_bid_entry_and_resolves_target_from_actual_entry() -> None:
 
 
 @pytest.mark.parametrize("field, value, reason", [
-    ("experiment_status", "COMPLETED", RiskRejection.EXPERIMENT_NOT_RUNNING),
     ("position", "LONG", RiskRejection.POSITION_ALREADY_OPEN),
     ("account", None, RiskRejection.ACCOUNT_STATE_UNKNOWN),
     ("instrument", "GBP/USD", RiskRejection.UNSUPPORTED_INSTRUMENT_ECONOMICS),
 ])
-def test_required_rejections(field: str, value: object, reason: RiskRejection) -> None:
+def test_required_financial_rejections(
+    field: str, value: object, reason: RiskRejection
+) -> None:
     values = inputs()
     values[field] = value  # type: ignore[typeddict-item]
     result = RiskService().evaluate_pre_flight(intent(), **values)

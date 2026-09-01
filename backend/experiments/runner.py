@@ -1022,7 +1022,6 @@ class ExperimentRunner:
         )
         preflight = self.risk.evaluate_pre_flight(
             intent_data,
-            experiment_status=experiment.status,
             position=position.state,
             account=account_state,
             config=risk_config,
@@ -1057,7 +1056,6 @@ class ExperimentRunner:
         )
         submission = self.risk.evaluate_pre_submission(
             intent_data,
-            experiment_status=experiment.status,
             position=position.state,
             account=account_state,
             config=risk_config,

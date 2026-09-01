@@ -122,6 +122,29 @@ def test_v2_unexpected_engine_failure_is_not_persistence() -> None:
     assert failures[0][1]["code"] == "UNEXPECTED_ENGINE_FAILURE"
 
 
+def test_v2_non_running_experiment_is_rejected_before_risk() -> None:
+    class ExplodingRisk:
+        def evaluate_pre_flight(self, *_args: object, **_kwargs: object) -> NoReturn:
+            pytest.fail("Experiment lifecycle reached Risk")
+
+    experiment = SimpleNamespace(id=uuid4(), status="COMPLETED")
+    runner = ExperimentRunner(
+        strategy_registry=cast(Any, SimpleNamespace()),
+        experiment_repository=cast(Any, SimpleNamespace()),
+        risk_service=cast(Any, ExplodingRisk()),
+        market_specification=MARKET,
+    )
+
+    result = cast(Any, runner)._run_v2(
+        cast(OrmSession, SimpleNamespace()), cast(Any, experiment)
+    )
+
+    assert result.status == "FAILED"
+    assert result.failure is not None
+    assert result.failure.category is FailureCategory.VALIDATION
+    assert result.failure.code == "INVALID_INPUT"
+
+
 @pytest.mark.parametrize("error", [KeyError("unrelated"), IndexError("unrelated")])
 def test_v2_unrelated_lookup_errors_are_not_strategy_version_unavailable(error) -> None:
     class Strategies:
