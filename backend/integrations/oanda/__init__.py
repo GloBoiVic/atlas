@@ -23,6 +23,13 @@ from .positions import (
     OandaPracticePositionSide,
     read_oanda_practice_open_position_inventory,
 )
+from .pricing import (
+    OandaPracticeEurUsdPricingObservation,
+    OandaPracticeEurUsdPricingReader,
+    OandaPracticePriceBucket,
+    OandaPricingNormalizationError,
+    read_oanda_practice_eur_usd_pricing,
+)
 from .source import (
     OANDA_PRACTICE_BASE_URL,
     FetchDiagnostics,
@@ -77,6 +84,11 @@ __all__ = [
     "OandaPracticePendingOrderInventory",
     "OandaPracticePendingOrderReader",
     "read_oanda_practice_pending_order_inventory",
+    "OandaPracticeEurUsdPricingObservation",
+    "OandaPracticeEurUsdPricingReader",
+    "OandaPracticePriceBucket",
+    "OandaPricingNormalizationError",
+    "read_oanda_practice_eur_usd_pricing",
     "OandaOpenTradeNormalizationError",
     "OandaPracticeOpenTrade",
     "OandaPracticeOpenTradeInventory",
