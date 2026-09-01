@@ -1,3 +1,4 @@
+import re
 from enum import StrEnum
 from functools import lru_cache
 
@@ -31,8 +32,21 @@ class Settings(BaseSettings):
     log_level: LogLevel = LogLevel.INFO
     database_connect_timeout_seconds: int = Field(default=3, ge=1, le=30)
     oanda_api_token: SecretStr | None = None
+    oanda_account_id: str | None = None
     oanda_connect_timeout_seconds: int = Field(default=5, ge=1, le=30)
     oanda_read_timeout_seconds: int = Field(default=20, ge=1, le=120)
+
+    @field_validator("oanda_account_id")
+    @classmethod
+    def validate_oanda_account_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        # OANDA documents AccountID as four non-empty, '-' delimited
+        # components.  Do not add assumptions about the meaning or numeric
+        # range of any component; reject only values that are not safe IDs.
+        if not re.fullmatch(r"[^\s/?#\\%-]+(?:-[^\s/?#\\%-]+){3}", value):
+            raise ValueError("oanda_account_id must be a four-part OANDA AccountID")
+        return value
 
     @field_validator("database_url")
     @classmethod

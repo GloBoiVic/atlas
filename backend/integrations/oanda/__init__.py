@@ -1,5 +1,11 @@
-"""The narrow OANDA Practice historical-candle boundary."""
+"""The narrow OANDA Practice historical-candle and account boundary."""
 
+from .account import (
+    OandaAccountNormalizationError,
+    OandaPracticeAccountIdentity,
+    OandaPracticeAccountValidator,
+    bind_oanda_practice_account,
+)
 from .source import (
     OANDA_PRACTICE_BASE_URL,
     FetchDiagnostics,
@@ -17,6 +23,10 @@ from .source import (
 )
 
 __all__ = [
+    "OandaAccountNormalizationError",
+    "OandaPracticeAccountIdentity",
+    "OandaPracticeAccountValidator",
+    "bind_oanda_practice_account",
     "FetchDiagnostics",
     "FetchResult",
     "HistoricalBarSource",

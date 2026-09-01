@@ -15,6 +15,29 @@ def test_valid_configuration_and_defaults() -> None:
     assert settings.environment is Environment.DEVELOPMENT
     assert settings.log_level is LogLevel.INFO
     assert settings.database_connect_timeout_seconds == 3
+    assert settings.oanda_account_id is None
+
+
+def test_valid_explicit_oanda_account_id() -> None:
+    settings = Settings(
+        _env_file=None,
+        **valid_values(),
+        oanda_account_id="001-011-5838423-001",
+    )  # type: ignore[call-arg]
+    assert settings.oanda_account_id == "001-011-5838423-001"
+
+
+@pytest.mark.parametrize(
+    "account_id",
+    ["", "001-011-5838423", "001-011-5838423-001/other", " 001-011-5838423-001"],
+)
+def test_invalid_oanda_account_id(account_id: str) -> None:
+    with pytest.raises(ValidationError):
+        Settings(
+            _env_file=None,
+            **valid_values(),
+            oanda_account_id=account_id,
+        )  # type: ignore[call-arg]
 
 
 @pytest.mark.parametrize(
