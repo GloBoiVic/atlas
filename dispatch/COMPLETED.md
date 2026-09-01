@@ -1,5 +1,15 @@
 # Completed
 
+<!-- completion-id: paper-01e-oanda-practice-pending-order-identity-inventory -->
+## PAPER 01E — OANDA Practice Pending Order Identity Inventory — completion record
+
+- **Date/status:** 2026-09-01 — terminal closure approved; BUILD, validation, and review **PASS** with no unresolved Critical or Important findings.
+- **Commit:** `f279042` Implement PAPER 01E pending Order inventory; feature branch fast-forward merged into `main`.
+- **Scope:** One explicitly configured and account-validated OANDA Practice account → one independent read-only `/pendingOrders` observation → immutable normalized provider pending-Order identity inventory. The implementation preserves only provider Order identity, one of the seven documented pending-capable types, exact `PENDING` state, validated account identity, and response-local transaction provenance. No persistence, reconciliation, execution, Risk, runtime, API/UI, ownership, or broker mutation was added.
+- **Validation:** Focused OANDA suite **309 passed**; non-integration/non-external suite **696 passed, 4 skipped, 88 deselected**; targeted Ruff format/lint and Pyright passed; `git diff --check` passed. Four pre-existing unrelated pytest warnings remain documented in the validation artifact.
+- **Review:** `dispatch/workstreams/paper-01e-oanda-practice-pending-order-identity-inventory/REVIEW.md` — **PASS**; no unresolved Critical or Important findings.
+- **Git/state:** Feature branch fast-forward merged into `main`; active dispatch state cleared. No credentialed external OANDA request was performed. PAPER 01F and later work were not started.
+
 <!-- completion-id: oanda-read-only-observation-infrastructure-refactor -->
 ## OANDA Read-only Observation Infrastructure Refactor — completion record
 

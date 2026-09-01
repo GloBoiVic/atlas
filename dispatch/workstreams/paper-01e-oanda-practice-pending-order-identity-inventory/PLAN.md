@@ -9,9 +9,9 @@
 - **Branch:** `solo/paper-01e-oanda-practice-pending-order-identity-inventory`.
 - **Base SHA:** `43356fd3706271d10be77e54bafce434da91c112`.
 - **Task:** `T001` — `DONE`.
-- **Phase:** `READY_FOR_USER`.
-- **Next action:** await explicit merge approval; do not perform GIT END without it.
-- **Approval:** approved by developer; GIT START complete.
+- **Phase:** `COMPLETED`.
+- **Next action:** none; workstream closed after GIT END.
+- **Approval:** terminal closure approved by developer; fast-forward merged into `main`.
 - **Architecture:** not required for this Feature classification.
 - **Concerns:** the result is provider Order identity/type/state only. It must not be confused with an Atlas execution Order or treated as exposure, ownership, intent, reconciliation, or permission to act.
 
