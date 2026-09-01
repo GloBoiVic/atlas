@@ -8,6 +8,13 @@ from .account import (
     bind_oanda_practice_account,
     read_oanda_practice_account_summary,
 )
+from .orders import (
+    OandaPendingOrderNormalizationError,
+    OandaPracticePendingOrder,
+    OandaPracticePendingOrderInventory,
+    OandaPracticePendingOrderReader,
+    read_oanda_practice_pending_order_inventory,
+)
 from .positions import (
     OandaOpenPositionNormalizationError,
     OandaPracticeOpenPosition,
@@ -65,6 +72,11 @@ __all__ = [
     "OandaPracticeOpenPositionReader",
     "OandaPracticePositionSide",
     "read_oanda_practice_open_position_inventory",
+    "OandaPendingOrderNormalizationError",
+    "OandaPracticePendingOrder",
+    "OandaPracticePendingOrderInventory",
+    "OandaPracticePendingOrderReader",
+    "read_oanda_practice_pending_order_inventory",
     "OandaOpenTradeNormalizationError",
     "OandaPracticeOpenTrade",
     "OandaPracticeOpenTradeInventory",
