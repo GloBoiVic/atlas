@@ -1,5 +1,13 @@
 # Completed
 
+<!-- completion-id: paper-readiness-01-internal-trading-boundary-audit -->
+## PAPER Readiness 01 — Internal Trading Boundary Audit — completion record
+
+- **Date/status:** 2026-09-01 — developer approved terminal closure of the reconciled architecture-only audit; no implementation approval was granted.
+- **Canonical decision:** The approved `PLAN.md` and `ARCHITECTURE.md` are preserved as the canonical architecture decision. They establish the internal trading boundary and identify `paper-readiness-02-risk-lifecycle-boundary-cleanup` as the sole immediate implementation prerequisite.
+- **Execution boundary:** No application, test, migration, persistence, frontend, credential, or runtime implementation changed. No `tasks/` directory, BUILD assignment, BUILD, VALIDATE, REVIEW, GIT START, PAPER/LIVE activation, or broker mutation was performed or authorized by this closure.
+- **Git/state:** Documentation-only closure is committed directly on `main` because this architecture-only workstream has no feature branch. `dispatch/ACTIVE.md` is cleared; the separate Risk lifecycle cleanup workstream was not started.
+
 <!-- completion-id: paper-01f-oanda-practice-eur-usd-pricing-observation -->
 ## PAPER 01F — OANDA Practice EUR/USD Pricing Observation — completion record
 
