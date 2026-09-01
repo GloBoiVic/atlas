@@ -248,6 +248,17 @@ class ApiResponse(BaseModel):
     pass
 
 
+class PaperControlRequest(StrictModel):
+    command: str
+
+
+class PaperControlResponse(StrictModel):
+    deployment_id: UUID
+    desired_state: str
+    actual_state: str
+    safety_reason: str | None = None
+
+
 class StrategyLatestVersionResponse(StrictModel):
     id: UUID
     version_number: int

@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     oanda_api_token: SecretStr | None = None
     oanda_connect_timeout_seconds: int = Field(default=5, ge=1, le=30)
     oanda_read_timeout_seconds: int = Field(default=20, ge=1, le=120)
+    runtime_poll_interval_seconds: int = Field(default=5, ge=1, le=300)
 
     @field_validator("database_url")
     @classmethod

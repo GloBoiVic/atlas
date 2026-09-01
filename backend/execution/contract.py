@@ -6,6 +6,8 @@ from decimal import Decimal
 from enum import StrEnum
 from uuid import UUID
 
+from backend.domain.market_data import Instrument
+
 
 class ExecutionInputError(ValueError):
     """An invalid canonical execution input."""
@@ -52,10 +54,28 @@ class Order:
     direction: str
     quantity: Decimal
     requested_price: Decimal | None = None
+    instrument: Instrument = Instrument.EUR_USD
+    client_correlation_id: str | None = None
+    time_in_force: str | None = None
+    price_bound: Decimal | None = None
+    stop_loss_price: Decimal | None = None
 
     def __post_init__(self) -> None:
         if type(self.id) is not UUID:
             raise ExecutionInputError("order id must be a UUID")
+        if type(self.instrument) is not Instrument:
+            raise ExecutionInputError("order instrument must be an Instrument")
+        if self.client_correlation_id is not None and (
+            type(self.client_correlation_id) is not str
+            or not self.client_correlation_id
+        ):
+            raise ExecutionInputError("client correlation must be a non-empty string")
+        if self.time_in_force is not None and self.time_in_force not in {"FOK", "IOC"}:
+            raise ExecutionInputError("unsupported time in force")
+        for name in ("price_bound", "stop_loss_price"):
+            value = getattr(self, name)
+            if value is not None:
+                _positive(value, name)
         _positive(self.quantity, "order quantity")
         if self.direction not in {"LONG", "SHORT"}:
             raise ExecutionInputError("order direction must be LONG or SHORT")
@@ -129,6 +149,10 @@ class Fill:
     executable_reference_price: Decimal | None = None
     slippage_per_unit: Decimal = Decimal("0")
     slippage_cost: Decimal = Decimal("0")
+    external_execution_id: str | None = None
+    external_transaction_id: str | None = None
+    external_trade_id: str | None = None
+    related_transaction_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if type(self.order_id) is not UUID or self.sequence_number != 1:
@@ -152,6 +176,17 @@ class Fill:
             raise ExecutionInputError("unsupported price basis")
         if self.executable_reference_price is not None:
             _positive(self.executable_reference_price, "executable reference price")
+        for name in (
+            "external_execution_id", "external_transaction_id", "external_trade_id",
+        ):
+            value = getattr(self, name)
+            if value is not None and (type(value) is not str or not value):
+                raise ExecutionInputError(f"{name} must be a non-empty string")
+        if type(self.related_transaction_ids) is not tuple or any(
+            type(value) is not str or not value
+            for value in self.related_transaction_ids
+        ):
+            raise ExecutionInputError("related transaction IDs are invalid")
         _utc(self.executed_at, "fill timestamp")
 
 

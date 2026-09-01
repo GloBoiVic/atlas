@@ -8,7 +8,6 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
-from backend.domain.market_data import PriceComponent
 from backend.domain.strategy import (
     Action,
     Direction,
@@ -232,18 +231,8 @@ class EmaSweepConfirmationBreakCompatibilityAdaptor:
         ):
             raise StateError("EMA armed state cannot produce a pending handoff")
         if pending is None:
-            return PendingEntryHandoff(
-                policy=EntryPolicy.PRICE_TRIGGERED,
-                direction=state.direction,
-                trigger_price=state.trigger_price,
-                trigger_price_basis=(
-                    PriceComponent.ASK
-                    if state.direction is Direction.LONG
-                    else PriceComponent.BID
-                ),
-                decision_frontier=state.confirmation_time,
-                decision_time=state.confirmation_time,
-                eligibility_limit=5,
+            raise StateError(
+                "EMA armed state is missing its persisted stop methodology"
             )
         if (
             pending.direction is not state.direction
@@ -305,6 +294,7 @@ class EmaSweepConfirmationBreakCompatibilityAdaptor:
                 or decision.trigger_price_basis is None
                 or decision.decision_time is None
                 or decision.expiry_bars is None
+                or decision.stop is None
             ):
                 raise StateError("EMA opening decision has invalid handoff fields")
             pending = PendingEntryHandoff(
@@ -315,6 +305,12 @@ class EmaSweepConfirmationBreakCompatibilityAdaptor:
                 decision_frontier=decision.decision_time,
                 decision_time=decision.decision_time,
                 eligibility_limit=decision.expiry_bars,
+                stop_price=decision.stop.price,
+                stop_methodology=(
+                    decision.setup_facts.stop_methodology
+                    if decision.setup_facts is not None
+                    else "confirmation_extreme ± (stop_buffer × ATR14)"
+                ),
             )
         elif result.next_state.phase is not Phase.ARMED:
             pending = None

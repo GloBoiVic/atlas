@@ -60,15 +60,18 @@ def test_migration_cycle(migration_url: str) -> None:
             "ck_market_bars_minute_aligned_start",
         } & market_bar_checks
         assert sorted(inspector.get_table_names()) == [
+            "account_transaction_cursors",
             "alembic_version",
             "dataset_snapshot_analytical_bars",
             "dataset_snapshot_bars",
             "dataset_snapshot_execution_observations",
             "dataset_snapshot_gaps",
             "dataset_snapshots",
+            "deployment_frontiers",
+            "deployments",
             "experiment_accounts",
-             "experiment_deletion_receipts",
-             "experiment_equity_points",
+            "experiment_deletion_receipts",
+            "experiment_equity_points",
             "experiment_gap_decisions",
             "experiment_proposal_diagnostics",
             "experiment_results",
@@ -78,18 +81,66 @@ def test_migration_cycle(migration_url: str) -> None:
             "historical_data_load_requests",
             "instruments",
             "market_bars",
+            "oanda_transaction_receipts",
             "order_events",
             "orders",
+            "pending_entry_handoffs",
             "positions",
+            "reconciliation_records",
             "risk_decisions",
+            "runtime_heartbeats",
+            "runtime_ownership",
             "strategies",
+            "strategy_states",
             "strategy_versions",
+            "system_events",
             "trade_intents",
             "trades",
+            "trading_account_snapshots",
+            "trading_accounts",
             "venue_instruments",
         ]
         assert {column["name"] for column in inspector.get_columns("experiments")} >= {
             "failure_category", "failure_code", "failure_detail"
+        }
+        assert {column["name"] for column in inspector.get_columns("trading_accounts")} >= {
+            "external_account_id", "mode", "base_currency", "capabilities",
+            "mt4_association_status", "connection_status", "provenance",
+        }
+        assert {column["name"] for column in inspector.get_columns("deployments")} >= {
+            "trading_account_id", "strategy_version_id", "venue_instrument_id",
+            "parameter_snapshot", "risk_snapshot", "desired_state", "actual_state",
+            "safety_reason", "first_trade_at",
+        }
+        for table in ("trade_intents", "orders", "positions", "trades"):
+            assert {column["name"] for column in inspector.get_columns(table)} >= {
+                "experiment_id", "deployment_id",
+            }
+        assert {
+            "uq_deployments_active_account_instrument",
+        } <= {index["name"] for index in inspector.get_indexes("deployments")}
+        assert {
+            "uq_positions_deployment_instrument",
+            "uq_trades_deployment_sequence",
+        } <= {
+            constraint["name"]
+            for table in ("positions", "trades")
+            for constraint in inspector.get_unique_constraints(table)
+        }
+        assert {column["name"] for column in inspector.get_columns("strategy_states")} >= {
+            "deployment_id", "strategy_version_id", "state_version", "state_envelope",
+            "last_evaluated_bar_end", "analytical_bar_fingerprint",
+        }
+        assert "uq_strategy_states_deployment_frontier" in {
+            constraint["name"]
+            for constraint in inspector.get_unique_constraints("strategy_states")
+        }
+        assert "completed_m15_fingerprint" in {
+            column["name"]
+            for column in inspector.get_columns("deployment_frontiers")
+        }
+        assert {column["name"] for column in inspector.get_columns("pending_entry_handoffs")} >= {
+            "deployment_id", "trade_intent_id", "status",
         }
         assert {
             column["name"]
@@ -137,11 +188,29 @@ def test_migration_cycle(migration_url: str) -> None:
         assert {
             constraint["name"]
             for constraint in inspector.get_unique_constraints("risk_decisions")
-        } >= {"uq_risk_decisions_intent_phase"}
+        } >= {"uq_risk_decisions_intent_phase_time"}
+        assert "uq_orders_paper_entry_intent" in {
+            index["name"] for index in inspector.get_indexes("orders")
+        }
         assert {
             constraint["name"]
             for constraint in inspector.get_unique_constraints("fills")
         } >= {"uq_fills_order_sequence"}
+        assert {
+            "trading_account_id",
+            "external_transaction_id",
+            "normalized_digest",
+            "disposition",
+        } <= {
+            column["name"]
+            for column in inspector.get_columns("oanda_transaction_receipts")
+        }
+        assert "uq_oanda_transaction_receipts_account_transaction" in {
+            constraint["name"]
+            for constraint in inspector.get_unique_constraints(
+                "oanda_transaction_receipts"
+            )
+        }
         assert {
             constraint["name"]
             for constraint in inspector.get_unique_constraints("positions")
@@ -328,10 +397,12 @@ def test_downgrade_to_0020_restores_guarded_trigger_dependencies(
                     text(
                         """
                         SELECT t.tgname, pg_get_triggerdef(t.oid)
-                        FROM pg_trigger t
-                        JOIN pg_class c ON c.oid = t.tgrelid
-                        WHERE NOT t.tgisinternal
-                          AND c.relname IN (
+                            FROM pg_trigger t
+                            JOIN pg_class c ON c.oid = t.tgrelid
+                            JOIN pg_namespace n ON n.oid = c.relnamespace
+                            WHERE NOT t.tgisinternal
+                              AND n.nspname = current_schema()
+                              AND c.relname IN (
                             'dataset_snapshot_analytical_bars',
                             'dataset_snapshot_execution_observations',
                             'dataset_snapshot_gaps'

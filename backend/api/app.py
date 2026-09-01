@@ -12,6 +12,7 @@ from backend.api.experiments import create_experiment_router
 from backend.api.health import create_health_router
 from backend.api.historical_data import create_historical_data_router
 from backend.api.local_authority import LocalAuthorityMiddleware, PeerAddressResolver
+from backend.api.paper import create_paper_router
 from backend.api.strategies import create_strategy_router
 from backend.config import get_settings
 from backend.domain.market_data import Instrument
@@ -100,6 +101,7 @@ def create_app(
     app.state.experiment_deletion = ExperimentDeletionService()
     app.state.historical_data_coordinator = historical_coordinator
     app.include_router(create_health_router(engine))
+    app.include_router(create_paper_router(session_factory=session_factory))
     app.include_router(
         create_strategy_router(session_factory=session_factory, registry=registry)
     )

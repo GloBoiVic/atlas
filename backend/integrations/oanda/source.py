@@ -245,6 +245,34 @@ class OandaHistoricalBarSource:
             validate_m15_alignment=True,
         )
 
+    def fetch_completed_native_m15(
+        self, start: datetime, end: datetime, *, as_of: datetime
+    ) -> FetchResult:
+        """Fetch only M15 bars whose provider and UTC elapsed state agree."""
+        result = self.fetch_native_m15(start, end)
+        if as_of.tzinfo is None or as_of.utcoffset() != timedelta(0):
+            raise ValueError("live frontier must be timezone-aware UTC")
+        completed: list[Bar] = []
+        incomplete = list(result.incomplete)
+        for bar in result.bars:
+            if bar.end_time <= as_of:
+                completed.append(bar)
+            else:
+                incomplete.append(
+                    IncompleteCandle(
+                        bar.start_time, "provider candle interval has not elapsed"
+                    )
+                )
+        return FetchResult(
+            bars=tuple(completed),
+            incomplete=tuple(incomplete),
+            diagnostics=result.diagnostics,
+        )
+
+    # Explicit live-composition alias; historical fetch_native_m15 semantics
+    # remain unchanged for Experiment snapshots.
+    fetch_live_m15 = fetch_completed_native_m15
+
     # Explicit spelling for callers that want the contract name in code.
     fetch_m15_native = fetch_native_m15
 
@@ -259,6 +287,16 @@ class OandaHistoricalBarSource:
             components=((PriceComponent.BID, "bid"), (PriceComponent.ASK, "ask")),
             omit_unavailable_m1=True,
         )
+
+    def fetch_completed_execution_m1(
+        self, start: datetime, end: datetime, *, as_of: datetime
+    ) -> FetchResult:
+        """Fetch sparse executable M1 data only after its full interval elapsed."""
+        result = self.fetch_execution_m1(start, end)
+        if as_of.tzinfo is None or as_of.utcoffset() != timedelta(0):
+            raise ValueError("live frontier must be timezone-aware UTC")
+        completed = tuple(bar for bar in result.bars if bar.end_time <= as_of)
+        return FetchResult(completed, result.incomplete, result.diagnostics)
 
     def _fetch(
         self,

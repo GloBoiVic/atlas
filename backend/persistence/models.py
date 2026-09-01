@@ -13,6 +13,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Numeric,
     PrimaryKeyConstraint,
@@ -486,6 +487,324 @@ class ExperimentAccountModel(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP"))
 
 
+class TradingAccountModel(Base):
+    """Non-secret identity and validation facts for one broker account."""
+
+    __tablename__ = "trading_accounts"
+    __table_args__ = (
+        CheckConstraint("broker = 'OANDA'", name="paper_broker"),
+        CheckConstraint("environment = 'Practice'", name="paper_environment"),
+        CheckConstraint("mode = 'PAPER'", name="paper_mode"),
+        CheckConstraint("base_currency = 'USD'", name="paper_base_currency"),
+        CheckConstraint(
+            "mt4_association_status IN ('UNKNOWN', 'NOT_ASSOCIATED', 'ASSOCIATED')",
+            name="valid_mt4_association_status",
+        ),
+        CheckConstraint(
+            "connection_status IN ('UNKNOWN', 'VALID', 'STALE', 'DISCONNECTED', 'REJECTED')",
+            name="valid_connection_status",
+        ),
+        UniqueConstraint("external_account_id", name="uq_trading_accounts_external_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    label: Mapped[str] = mapped_column(String(120), nullable=False)
+    broker: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'OANDA'"))
+    environment: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'Practice'"))
+    external_account_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    mode: Mapped[str] = mapped_column(String(10), nullable=False, server_default=text("'PAPER'"))
+    base_currency: Mapped[str] = mapped_column(String(3), nullable=False, server_default=text("'USD'"))
+    mt4_association_status: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'UNKNOWN'"))
+    capabilities: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    connection_status: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'UNKNOWN'"))
+    provenance: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    last_validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+
+
+class DeploymentModel(Base):
+    """Persistent PAPER configuration and desired/actual lifecycle state."""
+
+    __tablename__ = "deployments"
+    __table_args__ = (
+        CheckConstraint("mode = 'PAPER'", name="paper_mode"),
+        CheckConstraint(
+            "desired_state IN ('DRAFT', 'RUNNING', 'PAUSED', 'STOPPED', 'ARCHIVED')",
+            name="valid_desired_state",
+        ),
+        CheckConstraint(
+            "actual_state IN ('DRAFT', 'STARTING', 'RUNNING', 'PAUSED', 'STOPPED', 'FAILED', 'RECONCILIATION_REQUIRED', 'ARCHIVED')",
+            name="valid_actual_state",
+        ),
+        CheckConstraint(
+            "safety_reason IS NULL OR (length(safety_reason) BETWEEN 1 AND 500 AND safety_reason !~ '[[:cntrl:]]')",
+            name="sanitized_safety_reason",
+        ),
+        Index(
+            "uq_deployments_active_account_instrument",
+            "trading_account_id",
+            "venue_instrument_id",
+            unique=True,
+            postgresql_where=text("actual_state <> 'ARCHIVED'"),
+        ),
+        UniqueConstraint(
+            "id",
+            "strategy_version_id",
+            name="uq_deployments_id_strategy_version",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    trading_account_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("trading_accounts.id", ondelete="RESTRICT"), nullable=False)
+    strategy_version_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("strategy_versions.id", ondelete="RESTRICT"), nullable=False)
+    venue_instrument_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("venue_instruments.id", ondelete="RESTRICT"), nullable=False)
+    mode: Mapped[str] = mapped_column(String(10), nullable=False, server_default=text("'PAPER'"))
+    parameter_snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    risk_snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    execution_provenance: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    desired_state: Mapped[str] = mapped_column(String(30), nullable=False, server_default=text("'DRAFT'"))
+    actual_state: Mapped[str] = mapped_column(String(30), nullable=False, server_default=text("'DRAFT'"))
+    safety_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    first_trade_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+
+
+class StrategyStateModel(Base):
+    """Append-only, versioned StrategyStateEnvelope snapshots."""
+
+    __tablename__ = "strategy_states"
+    __table_args__ = (
+        CheckConstraint("state_version > 0", name="positive_state_version"),
+        CheckConstraint("jsonb_typeof(state_envelope) = 'object'", name="state_envelope_object"),
+        CheckConstraint(
+            "(last_evaluated_bar_end IS NULL) = (analytical_bar_fingerprint IS NULL)",
+            name="analytical_frontier_fingerprint_pair",
+        ),
+        CheckConstraint(
+            "analytical_bar_fingerprint IS NULL OR analytical_bar_fingerprint ~ '^[0-9a-f]{64}$'",
+            name="valid_analytical_bar_fingerprint",
+        ),
+        UniqueConstraint("deployment_id", "state_version", name="uq_strategy_states_deployment_version"),
+        UniqueConstraint(
+            "deployment_id",
+            "last_evaluated_bar_end",
+            name="uq_strategy_states_deployment_frontier",
+        ),
+        ForeignKeyConstraint(
+            ["deployment_id", "strategy_version_id"],
+            ["deployments.id", "deployments.strategy_version_id"],
+            name="fk_strategy_states_deployment_strategy_version",
+            ondelete="RESTRICT",
+        ),
+        Index(
+            "ix_strategy_states_deployment_strategy_version",
+            "deployment_id",
+            "strategy_version_id",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    deployment_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("deployments.id", ondelete="RESTRICT"), nullable=False)
+    strategy_version_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("strategy_versions.id", ondelete="RESTRICT"), nullable=False)
+    state_version: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    state_envelope: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    last_evaluated_bar_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    analytical_bar_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+
+
+class DeploymentFrontierModel(Base):
+    """Current durable data frontier and freshness gate for a Deployment."""
+
+    __tablename__ = "deployment_frontiers"
+    __table_args__ = (
+        CheckConstraint(
+            "data_status IN ('HEALTHY', 'STALE', 'DISCONNECTED', 'EXPECTED_CLOSURE', 'BLOCKED', 'UNKNOWN')",
+            name="valid_data_status",
+        ),
+        CheckConstraint(
+            "(completed_m15_frontier IS NULL) = (completed_m15_fingerprint IS NULL)",
+            name="completed_m15_fingerprint_pair",
+        ),
+        CheckConstraint(
+            "completed_m15_fingerprint IS NULL OR completed_m15_fingerprint ~ '^[0-9a-f]{64}$'",
+            name="valid_completed_m15_fingerprint",
+        ),
+    )
+
+    deployment_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("deployments.id", ondelete="RESTRICT"), primary_key=True)
+    completed_m15_frontier: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_m15_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_execution_observation_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    data_status: Mapped[str] = mapped_column(String(25), nullable=False, server_default=text("'UNKNOWN'"))
+    source: Mapped[str] = mapped_column(String(100), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+
+
+class PendingEntryHandoffModel(Base):
+    """Lifecycle link only; methodology lives in StrategyStateModel.state_envelope."""
+
+    __tablename__ = "pending_entry_handoffs"
+    __table_args__ = (
+        CheckConstraint("status IN ('PENDING', 'FILLED', 'EXPIRED', 'REJECTED', 'BLOCKED')", name="valid_handoff_status"),
+        CheckConstraint("safety_reason IS NULL OR (length(safety_reason) BETWEEN 1 AND 500 AND safety_reason !~ '[[:cntrl:]]')", name="sanitized_safety_reason"),
+        Index("uq_pending_entry_handoffs_active", "deployment_id", unique=True, postgresql_where=text("status = 'PENDING'")),
+        UniqueConstraint("trade_intent_id", name="uq_pending_entry_handoffs_intent"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    deployment_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("deployments.id", ondelete="RESTRICT"), nullable=False)
+    trade_intent_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("trade_intents.id", ondelete="RESTRICT"), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'PENDING'"))
+    safety_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class TradingAccountSnapshotModel(Base):
+    """Bounded, sanitized normalized account facts, never credentials."""
+
+    __tablename__ = "trading_account_snapshots"
+    __table_args__ = (
+        CheckConstraint("freshness IN ('FRESH', 'STALE', 'UNKNOWN')", name="valid_account_freshness"),
+        CheckConstraint("jsonb_typeof(facts) = 'object'", name="account_facts_object"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    trading_account_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("trading_accounts.id", ondelete="RESTRICT"), nullable=False)
+    balance: Mapped[Decimal | None] = mapped_column(Numeric(24, 10), nullable=True)
+    nav: Mapped[Decimal | None] = mapped_column(Numeric(24, 10), nullable=True)
+    equity: Mapped[Decimal | None] = mapped_column(Numeric(24, 10), nullable=True)
+    margin_available: Mapped[Decimal | None] = mapped_column(Numeric(24, 10), nullable=True)
+    margin_used: Mapped[Decimal | None] = mapped_column(Numeric(24, 10), nullable=True)
+    facts: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    freshness: Mapped[str] = mapped_column(String(10), nullable=False)
+    source: Mapped[str] = mapped_column(String(100), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+
+
+class RuntimeOwnershipModel(Base):
+    """Durable companion to the session-level Deployment advisory lock."""
+
+    __tablename__ = "runtime_ownership"
+    deployment_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("deployments.id", ondelete="RESTRICT"), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    lock_key: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    acquired_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_heartbeat_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    lock_held: Mapped[bool] = mapped_column(nullable=False)
+    db_connected: Mapped[bool] = mapped_column(nullable=False)
+    health_status: Mapped[str] = mapped_column(String(30), nullable=False)
+    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class RuntimeHeartbeatModel(Base):
+    __tablename__ = "runtime_heartbeats"
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    deployment_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("deployments.id", ondelete="RESTRICT"), nullable=False)
+    owner_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    lock_held: Mapped[bool] = mapped_column(nullable=False)
+    db_connected: Mapped[bool] = mapped_column(nullable=False)
+    health_status: Mapped[str] = mapped_column(String(30), nullable=False)
+    details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+
+
+class SystemEventModel(Base):
+    __tablename__ = "system_events"
+    __table_args__ = (
+        CheckConstraint("severity IN ('INFO', 'WARNING', 'CRITICAL')", name="valid_severity"),
+        CheckConstraint("length(code) BETWEEN 1 AND 80 AND code !~ '[^A-Z0-9_]'", name="sanitized_event_code"),
+        CheckConstraint("length(detail) BETWEEN 1 AND 500 AND detail !~ '[[:cntrl:]]'", name="sanitized_event_detail"),
+    )
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    deployment_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("deployments.id", ondelete="RESTRICT"), nullable=True)
+    severity: Mapped[str] = mapped_column(String(10), nullable=False)
+    code: Mapped[str] = mapped_column(String(80), nullable=False)
+    detail: Mapped[str] = mapped_column(String(500), nullable=False)
+    details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+
+
+class ReconciliationRecordModel(Base):
+    __tablename__ = "reconciliation_records"
+    __table_args__ = (
+        CheckConstraint("outcome IN ('MATCHED', 'REPAIRED', 'RECONCILIATION_REQUIRED')", name="valid_reconciliation_outcome"),
+        CheckConstraint("jsonb_typeof(summary) = 'object'", name="reconciliation_summary_object"),
+    )
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    deployment_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("deployments.id", ondelete="RESTRICT"), nullable=False)
+    trigger: Mapped[str] = mapped_column(String(40), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(30), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    finished_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    summary: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+
+
+class AccountTransactionCursorModel(Base):
+    __tablename__ = "account_transaction_cursors"
+    __table_args__ = (
+        CheckConstraint("last_transaction_id ~ '^[0-9]+$'", name="numeric_transaction_cursor"),
+    )
+    trading_account_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("trading_accounts.id", ondelete="RESTRICT"), primary_key=True)
+    last_transaction_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    source: Mapped[str] = mapped_column(String(100), nullable=False)
+
+
+class OandaTransactionReceiptModel(Base):
+    """Sanitized, account-scoped proof of one Account Changes transaction."""
+
+    __tablename__ = "oanda_transaction_receipts"
+    __table_args__ = (
+        UniqueConstraint(
+            "trading_account_id",
+            "external_transaction_id",
+            name="uq_oanda_transaction_receipts_account_transaction",
+        ),
+        CheckConstraint(
+            "external_transaction_id ~ '^[0-9]+$'",
+            name="oanda_tx_receipt_id",
+        ),
+        CheckConstraint(
+            "normalized_digest ~ '^[0-9a-f]{64}$'",
+            name="oanda_tx_receipt_digest",
+        ),
+        CheckConstraint(
+            "disposition IN ('APPLIED','IDEMPOTENT','OBSERVED_NO_PROJECTION','IGNORED_OTHER_INSTRUMENT')",
+            name="oanda_tx_receipt_disposition",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    trading_account_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("trading_accounts.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    external_transaction_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    transaction_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    occurred_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    instrument: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    external_order_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    external_trade_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    normalized_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    disposition: Mapped[str] = mapped_column(String(30), nullable=False)
+    canonical_order_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("orders.id", ondelete="RESTRICT"), nullable=True
+    )
+    canonical_fill_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("fills.id", ondelete="RESTRICT"), nullable=True
+    )
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class TradeIntentModel(Base):
     __tablename__ = "trade_intents"
     __table_args__ = (
@@ -500,10 +819,19 @@ class TradeIntentModel(Base):
         CheckConstraint("(entry_policy = 'IMMEDIATE' AND trigger_price IS NULL AND expiry_time IS NULL) OR (entry_policy = 'PRICE_TRIGGERED' AND trigger_price IS NOT NULL AND expiry_time IS NULL)", name="entry_policy_shape"),
         CheckConstraint("expiry_bars IS NULL OR expiry_bars > 0", name="positive_expiry_bars"),
         CheckConstraint("expiry_time IS NULL OR expiry_time > decision_frontier", name="expiry_after_decision"),
+        CheckConstraint("(experiment_id IS NOT NULL) <> (deployment_id IS NOT NULL)", name="trade_intents_exactly_one_root"),
         UniqueConstraint("experiment_id", "decision_frontier", name="uq_trade_intents_experiment_frontier"),
+        Index(
+            "uq_trade_intents_deployment_frontier",
+            "deployment_id",
+            "decision_frontier",
+            unique=True,
+            postgresql_where=text("deployment_id IS NOT NULL"),
+        ),
     )
     id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
-    experiment_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("experiments.id", ondelete="RESTRICT"), nullable=False)
+    experiment_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("experiments.id", ondelete="RESTRICT"), nullable=True)
+    deployment_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("deployments.id", ondelete="RESTRICT"), nullable=True)
     strategy_version_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("strategy_versions.id", ondelete="RESTRICT"), nullable=False)
     venue_instrument_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("venue_instruments.id", ondelete="RESTRICT"), nullable=False)
     decision_frontier: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -511,6 +839,7 @@ class TradeIntentModel(Base):
     direction: Mapped[str | None] = mapped_column(String(5), nullable=True)
     proposed_stop: Mapped[Decimal | None] = mapped_column(Numeric(20, 10), nullable=True)
     target_multiple: Mapped[Decimal | None] = mapped_column(Numeric(12, 10), nullable=True)
+    target_methodology: Mapped[str | None] = mapped_column(String(80), nullable=True)
     rationale: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     entry_policy: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'IMMEDIATE'"))
     trigger_price: Mapped[Decimal | None] = mapped_column(Numeric(20, 10), nullable=True)
@@ -546,7 +875,12 @@ class RiskDecisionModel(Base):
         CheckConstraint("outcome IN ('APPROVED', 'REJECTED')", name="valid_outcome"),
         CheckConstraint("quantity IS NULL OR (quantity > 0 AND quantity <> 'NaN'::numeric)", name="positive_quantity"),
         CheckConstraint("actual_risk IS NULL OR (actual_risk >= 0 AND actual_risk <> 'NaN'::numeric)", name="phase_4_actual_risk"),
-        UniqueConstraint("trade_intent_id", "phase", name="uq_risk_decisions_intent_phase"),
+        UniqueConstraint(
+            "trade_intent_id",
+            "phase",
+            "evaluated_at",
+            name="uq_risk_decisions_intent_phase_time",
+        ),
     )
     id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
     trade_intent_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("trade_intents.id", ondelete="RESTRICT"), nullable=False)
@@ -561,6 +895,11 @@ class RiskDecisionModel(Base):
     quote_ask: Mapped[Decimal | None] = mapped_column(Numeric(20, 10), nullable=True)
     rejection_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
     actual_risk: Mapped[Decimal | None] = mapped_column(Numeric(24, 10), nullable=True)
+    target_methodology: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    target_multiple: Mapped[Decimal | None] = mapped_column(Numeric(12, 10), nullable=True)
+    quote_observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    price_bound: Mapped[Decimal | None] = mapped_column(Numeric(20, 10), nullable=True)
+    evidence: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
@@ -573,9 +912,20 @@ class OrderModel(Base):
         CheckConstraint("quantity > 0 AND quantity <> 'NaN'::numeric", name="positive_quantity"),
         UniqueConstraint("client_correlation_id", name="uq_orders_client_correlation_id"),
         UniqueConstraint("parent_entry_order_id", "purpose", name="uq_orders_parent_purpose"),
+        CheckConstraint("(experiment_id IS NOT NULL) <> (deployment_id IS NOT NULL)", name="orders_exactly_one_root"),
+        UniqueConstraint("external_order_id", name="uq_orders_external_order_id"),
+        Index(
+            "uq_orders_paper_entry_intent",
+            "trade_intent_id",
+            unique=True,
+            postgresql_where=text(
+                "deployment_id IS NOT NULL AND purpose = 'ENTRY'"
+            ),
+        ),
     )
     id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
-    experiment_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("experiments.id", ondelete="RESTRICT"), nullable=False)
+    experiment_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("experiments.id", ondelete="RESTRICT"), nullable=True)
+    deployment_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("deployments.id", ondelete="RESTRICT"), nullable=True)
     trade_intent_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("trade_intents.id", ondelete="RESTRICT"), nullable=False)
     risk_decision_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("risk_decisions.id", ondelete="RESTRICT"), nullable=False)
     order_type: Mapped[str] = mapped_column(String(10), nullable=False)
@@ -587,6 +937,13 @@ class OrderModel(Base):
     client_correlation_id: Mapped[str] = mapped_column(String(100), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP"))
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    time_in_force: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    price_bound: Mapped[Decimal | None] = mapped_column(Numeric(20, 10), nullable=True)
+    external_order_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    external_trade_ids: Mapped[list[str]] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    related_transaction_ids: Mapped[list[str]] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    provider_request_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    request_provenance: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     parent_entry_order_id: Mapped[UUID | None] = mapped_column(
         PostgreSQLUUID(as_uuid=True), ForeignKey("orders.id", ondelete="RESTRICT"), nullable=True
     )
@@ -599,6 +956,7 @@ class FillModel(Base):
         CheckConstraint("quantity > 0 AND quantity <> 'NaN'::numeric AND execution_price > 0 AND execution_price <> 'NaN'::numeric", name="positive_financials"),
         UniqueConstraint("order_id", "sequence_number", name="uq_fills_order_sequence"),
         UniqueConstraint("external_execution_id", name="uq_fills_external_execution_id"),
+        UniqueConstraint("external_transaction_id", name="uq_fills_external_transaction_id"),
         CheckConstraint("price_basis IS NULL OR price_basis IN ('OPEN', 'OPEN_GAP', 'INTRABAR_STOP', 'INTRABAR_TARGET', 'END_CLOSE')", name="phase_4_price_basis"),
     )
     id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
@@ -608,6 +966,9 @@ class FillModel(Base):
     execution_price: Mapped[Decimal] = mapped_column(Numeric(20, 10), nullable=False)
     executed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     external_execution_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    external_transaction_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    external_trade_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    related_transaction_ids: Mapped[list[str]] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
     fee: Mapped[Decimal] = mapped_column(Numeric(24, 10), nullable=False, server_default=text("0"))
     source_market_bar_id: Mapped[UUID | None] = mapped_column(
         PostgreSQLUUID(as_uuid=True), ForeignKey("market_bars.id", ondelete="RESTRICT"), nullable=True
@@ -624,9 +985,12 @@ class PositionModel(Base):
         CheckConstraint("state IN ('FLAT', 'LONG', 'SHORT')", name="valid_state"),
         CheckConstraint("(state = 'FLAT' AND quantity IS NULL AND entry_price IS NULL AND opened_at IS NULL) OR (state IN ('LONG', 'SHORT') AND quantity > 0 AND entry_price > 0 AND opened_at IS NOT NULL)", name="state_exposure_consistency"),
         UniqueConstraint("experiment_id", "venue_instrument_id", name="uq_positions_experiment_instrument"),
+        UniqueConstraint("deployment_id", "venue_instrument_id", name="uq_positions_deployment_instrument"),
+        CheckConstraint("(experiment_id IS NOT NULL) <> (deployment_id IS NOT NULL)", name="positions_exactly_one_root"),
     )
     id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
-    experiment_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("experiments.id", ondelete="RESTRICT"), nullable=False)
+    experiment_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("experiments.id", ondelete="RESTRICT"), nullable=True)
+    deployment_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("deployments.id", ondelete="RESTRICT"), nullable=True)
     venue_instrument_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("venue_instruments.id", ondelete="RESTRICT"), nullable=False)
     state: Mapped[str] = mapped_column(String(5), nullable=False, server_default=text("'FLAT'"))
     quantity: Mapped[Decimal | None] = mapped_column(Numeric(24, 10), nullable=True)
@@ -645,9 +1009,12 @@ class TradeModel(Base):
         CheckConstraint("exit_reason IS NULL OR exit_reason IN ('TAKE_PROFIT', 'STOP_LOSS', 'END_OF_EXPERIMENT')", name="phase_4_exit_reason"),
         CheckConstraint("financing_cost IS NULL OR financing_cost = 0", name="phase_4_financing_excluded"),
         UniqueConstraint("experiment_id", "sequence_number", name="uq_trades_experiment_sequence"),
+        UniqueConstraint("deployment_id", "sequence_number", name="uq_trades_deployment_sequence"),
+        CheckConstraint("(experiment_id IS NOT NULL) <> (deployment_id IS NOT NULL)", name="trades_exactly_one_root"),
     )
     id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
-    experiment_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("experiments.id", ondelete="RESTRICT"), nullable=False)
+    experiment_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("experiments.id", ondelete="RESTRICT"), nullable=True)
+    deployment_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("deployments.id", ondelete="RESTRICT"), nullable=True)
     trade_intent_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("trade_intents.id", ondelete="RESTRICT"), nullable=False)
     entry_order_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("orders.id", ondelete="RESTRICT"), nullable=False)
     exit_order_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True), ForeignKey("orders.id", ondelete="RESTRICT"), nullable=True)
@@ -678,7 +1045,7 @@ class OrderEventModel(Base):
     __tablename__ = "order_events"
     __table_args__ = (
         CheckConstraint("sequence_number > 0", name="positive_sequence"),
-        CheckConstraint("event_type IN ('ORDER_CREATED', 'ORDER_SUBMITTED', 'ORDER_FILLED', 'ORDER_CANCELED')", name="valid_event_type"),
+        CheckConstraint("event_type IN ('ORDER_CREATED', 'ORDER_SUBMITTED', 'ORDER_FILLED', 'ORDER_CANCELED', 'ORDER_REJECTED', 'ORDER_EXPIRED', 'ORDER_UNKNOWN', 'ORDER_PARTIAL', 'ORDER_REISSUED', 'PROTECTION_CONFIRMED', 'PROTECTION_FAILED')", name="valid_event_type"),
         UniqueConstraint("order_id", "sequence_number", name="uq_order_events_order_sequence"),
     )
     id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))

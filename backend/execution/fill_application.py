@@ -3,6 +3,7 @@
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Final
+from uuid import UUID
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -37,13 +38,15 @@ def _append_event(
     event_type: str,
     occurred_at: datetime,
     *,
-    source_market_bar_id=None,
+    source_market_bar_id: UUID | None = None,
     details: dict[str, object] | None = None,
 ) -> None:
     sequence = session.scalar(
         select(func.coalesce(func.max(OrderEventModel.sequence_number), 0) + 1)
         .where(OrderEventModel.order_id == order.id)
     )
+    if sequence is None:
+        raise ValueError("could not sequence Order event")
     session.add(OrderEventModel(
         order_id=order.id,
         sequence_number=int(sequence),
@@ -55,7 +58,7 @@ def _append_event(
 
 
 def _cancel_protection_siblings(
-    session: Session, entry_order_id, executed_at: datetime
+    session: Session, entry_order_id: UUID, executed_at: datetime
 ) -> None:
     siblings = session.scalars(
         select(OrderModel)
@@ -77,7 +80,7 @@ def apply_fill(
     *,
     ambiguity_policy: str | None = None,
     ambiguity_observed_at: datetime | None = None,
-    ambiguity_source_market_bar_id=None,
+    ambiguity_source_market_bar_id: UUID | None = None,
 ) -> FillModel:
     """Atomically persist one full Fill and update all financial projections.
 
@@ -97,10 +100,14 @@ def apply_fill(
         )
         if order is None:
             raise ValueError("fill order does not exist")
-        model_version = session.scalar(
-            select(ExperimentModel.model_version).where(
-                ExperimentModel.id == order.experiment_id
+        model_version = (
+            session.scalar(
+                select(ExperimentModel.model_version).where(
+                    ExperimentModel.id == order.experiment_id
+                )
             )
+            if order.experiment_id is not None
+            else None
         )
         # Historical V2 uses the same constrained exit-reason vocabulary as
         # the original Phase 4 model.  Keep the legacy value for persisted
@@ -115,20 +122,29 @@ def apply_fill(
         }:
             raise ValueError("order cannot receive another Fill")
         if fill.sequence_number != 1 or fill.quantity != order.quantity:
-            raise ValueError("historical execution requires one full sequence-one Fill")
+            raise ValueError(
+                "PAPER 01 requires one unambiguous full Fill"
+                if order.deployment_id is not None
+                else "historical execution requires one full sequence-one Fill"
+            )
         experiment_id = order.experiment_id
-        position = session.scalar(
-            select(PositionModel)
-            .where(PositionModel.experiment_id == experiment_id)
-            .with_for_update()
+        deployment_id = order.deployment_id
+        position_query = select(PositionModel).with_for_update()
+        position_query = position_query.where(
+            PositionModel.experiment_id == experiment_id
+            if experiment_id is not None
+            else PositionModel.deployment_id == deployment_id
         )
-        account = session.scalar(
-            select(ExperimentAccountModel)
-            .where(ExperimentAccountModel.experiment_id == experiment_id)
-            .with_for_update()
-        )
-        if position is None or account is None:
-            raise ValueError("experiment financial projections are missing")
+        position = session.scalar(position_query)
+        account = None
+        if experiment_id is not None:
+            account = session.scalar(
+                select(ExperimentAccountModel)
+                .where(ExperimentAccountModel.experiment_id == experiment_id)
+                .with_for_update()
+            )
+        if position is None or (experiment_id is not None and account is None):
+            raise ValueError("financial projections are missing")
         existing = session.scalar(
             select(FillModel).where(
                 FillModel.order_id == fill.order_id,
@@ -164,12 +180,20 @@ def apply_fill(
                 select(RiskDecisionModel)
                 .where(RiskDecisionModel.id == order.risk_decision_id)
             )
-            sequence = session.scalar(
-                select(func.coalesce(func.max(TradeModel.sequence_number), 0) + 1)
-                .where(TradeModel.experiment_id == experiment_id)
+            sequence_query = select(
+                func.coalesce(func.max(TradeModel.sequence_number), 0) + 1
             )
+            sequence_query = sequence_query.where(
+                TradeModel.experiment_id == experiment_id
+                if experiment_id is not None
+                else TradeModel.deployment_id == deployment_id
+            )
+            sequence = session.scalar(sequence_query)
+            if sequence is None:
+                raise ValueError("could not sequence Trade")
             trade = TradeModel(
                 experiment_id=experiment_id,
+                deployment_id=deployment_id,
                 trade_intent_id=order.trade_intent_id,
                 entry_order_id=order.id,
                 direction=order.direction,
@@ -191,22 +215,22 @@ def apply_fill(
                 raise ValueError("exit Fill requires an exposed Position")
             if position.quantity != fill.quantity or position.entry_price is None:
                 raise ValueError("exit Fill must close the current Position")
-            trade = session.scalar(
-                select(TradeModel)
-                .where(
-                    TradeModel.experiment_id == experiment_id,
-                    TradeModel.status == "OPEN",
-                )
-                .with_for_update()
-            )
+            trade_query = select(TradeModel).where(TradeModel.status == "OPEN")
+            trade_query = trade_query.where(
+                TradeModel.experiment_id == experiment_id
+                if experiment_id is not None
+                else TradeModel.deployment_id == deployment_id
+            ).with_for_update()
+            trade = session.scalar(trade_query)
             if trade is None:
                 raise ValueError("exit Fill has no open Trade")
             if trade.direction != position.state:
                 raise ValueError("Trade and Position directions disagree")
+            entry_price = position.entry_price
             pnl = (
-                (fill.execution_price - position.entry_price) * fill.quantity
+                (fill.execution_price - entry_price) * fill.quantity
                 if position.state == "LONG"
-                else (position.entry_price - fill.execution_price) * fill.quantity
+                else (entry_price - fill.execution_price) * fill.quantity
             )
             trade.exit_order_id = order.id
             trade.exit_price = fill.execution_price
@@ -217,9 +241,10 @@ def apply_fill(
                 else "TAKE_PROFIT" if order.purpose == "TAKE_PROFIT"
                 else "END_OF_EXPERIMENT" if phase4 else "EXIT"
             )
-            trade.commission_cost = (trade.commission_cost or _ZERO) + fill.fee
+            commission_cost = (trade.commission_cost or _ZERO) + fill.fee
+            trade.commission_cost = commission_cost
             trade.financing_cost = None
-            trade.net_pnl = pnl - trade.commission_cost
+            trade.net_pnl = pnl - commission_cost
             if trade.initial_risk and trade.initial_risk != _ZERO:
                 trade.r_multiple = pnl / trade.initial_risk
             if ambiguity_policy is not None:
@@ -232,13 +257,15 @@ def apply_fill(
             position.quantity = None
             position.entry_price = None
             position.opened_at = None
-            account.realized_pnl += pnl - trade.commission_cost
+            if account is not None:
+                account.realized_pnl += pnl - commission_cost
             _cancel_protection_siblings(session, trade.entry_order_id, fill.executed_at)
         else:
             raise ValueError("order purpose cannot be applied by Phase 3")
 
-        account.unrealized_pnl = _ZERO
-        account.equity = account.starting_capital + account.realized_pnl
+        if account is not None:
+            account.unrealized_pnl = _ZERO
+            account.equity = account.starting_capital + account.realized_pnl
         session.flush()
         return fill_row
 

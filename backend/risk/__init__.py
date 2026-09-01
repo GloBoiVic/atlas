@@ -3,6 +3,8 @@
 from .service import (
     AccountState,
     ExecutableQuote,
+    PaperRiskConfig,
+    PaperRiskService,
     RiskConfig,
     RiskDecision,
     RiskPhase,
@@ -14,6 +16,8 @@ from .service import (
 __all__ = [
     "AccountState",
     "ExecutableQuote",
+    "PaperRiskConfig",
+    "PaperRiskService",
     "RiskConfig",
     "RiskDecision",
     "RiskPhase",

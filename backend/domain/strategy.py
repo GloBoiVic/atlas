@@ -1195,6 +1195,8 @@ class PendingEntryHandoff:
     decision_time: datetime
     eligibility_limit: int
     consumed_count: int = 0
+    stop_price: Decimal | None = None
+    stop_methodology: str | None = None
 
     def __post_init__(self) -> None:
         if self.policy is not EntryPolicy.PRICE_TRIGGERED:
@@ -1230,6 +1232,22 @@ class PendingEntryHandoff:
             or not 0 <= self.consumed_count <= self.eligibility_limit
         ):
             raise StateError("pending consumed count is outside its eligibility window")
+        if (self.stop_price is None) != (self.stop_methodology is None):
+            raise StateError(
+                "pending stop price and methodology must be present together"
+            )
+        if self.stop_price is not None:
+            try:
+                if _dec(self.stop_price, "stop_price") <= 0:
+                    raise StateError("pending stop price must be positive")
+            except (TypeError, ValueError) as error:
+                raise StateError(str(error)) from error
+            if (
+                type(self.stop_methodology) is not str
+                or not self.stop_methodology
+                or len(self.stop_methodology) > 200
+            ):
+                raise StateError("pending stop methodology is invalid")
 
     @property
     def limit(self) -> int:
@@ -1255,6 +1273,8 @@ class PendingEntryHandoff:
             "decision_time": stamp(self.decision_time),
             "eligibility_limit": self.eligibility_limit,
             "consumed_count": self.consumed_count,
+            "stop_price": str(self.stop_price) if self.stop_price is not None else None,
+            "stop_methodology": self.stop_methodology,
         }
 
     @classmethod
@@ -1263,10 +1283,11 @@ class PendingEntryHandoff:
             "policy", "direction", "trigger_price", "trigger_price_basis",
             "decision_frontier", "decision_time", "eligibility_limit", "consumed_count",
         }
+        stop_fields = {"stop_price", "stop_methodology"}
         if type(value) is not dict:
             raise StateError("pending handoff JSON has unexpected fields")
         payload = cast(dict[str, object], value)
-        if set(payload) != required:
+        if set(payload) not in (required, required | stop_fields):
             raise StateError("pending handoff JSON has unexpected fields")
         try:
             if any(
@@ -1289,8 +1310,14 @@ class PendingEntryHandoff:
             )
             eligibility_limit = payload["eligibility_limit"]
             consumed_count = payload["consumed_count"]
+            stop_price = payload.get("stop_price")
+            stop_methodology = payload.get("stop_methodology")
             if type(eligibility_limit) is not int or type(consumed_count) is not int:
                 raise StateError("pending handoff counts are invalid")
+            if stop_price is not None and type(stop_price) is not str:
+                raise StateError("pending stop price is invalid")
+            if stop_methodology is not None and type(stop_methodology) is not str:
+                raise StateError("pending stop methodology is invalid")
             return cls(
                 policy=EntryPolicy(cast(str, payload["policy"])),
                 direction=Direction(cast(str, payload["direction"])),
@@ -1302,6 +1329,8 @@ class PendingEntryHandoff:
                 decision_time=decision_time,
                 eligibility_limit=eligibility_limit,
                 consumed_count=consumed_count,
+                stop_price=Decimal(stop_price) if stop_price is not None else None,
+                stop_methodology=stop_methodology,
             )
         except (KeyError, TypeError, ValueError, ArithmeticError) as error:
             if isinstance(error, StateError):
