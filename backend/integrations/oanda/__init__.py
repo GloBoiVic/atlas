@@ -23,6 +23,13 @@ from .source import (
     OandaRequestError,
     RequestDiagnostic,
 )
+from .trades import (
+    OandaOpenTradeNormalizationError,
+    OandaPracticeOpenTrade,
+    OandaPracticeOpenTradeInventory,
+    OandaPracticeOpenTradeReader,
+    read_oanda_practice_open_trade_inventory,
+)
 
 __all__ = [
     "OandaAccountNormalizationError",
@@ -44,4 +51,9 @@ __all__ = [
     "OandaNormalizationError",
     "OandaRequestError",
     "RequestDiagnostic",
+    "OandaOpenTradeNormalizationError",
+    "OandaPracticeOpenTrade",
+    "OandaPracticeOpenTradeInventory",
+    "OandaPracticeOpenTradeReader",
+    "read_oanda_practice_open_trade_inventory",
 ]
