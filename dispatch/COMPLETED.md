@@ -1,5 +1,15 @@
 # Completed
 
+<!-- completion-id: paper-01f-oanda-practice-eur-usd-pricing-observation -->
+## PAPER 01F — OANDA Practice EUR/USD Pricing Observation — completion record
+
+- **Date/status:** 2026-09-01 — terminal closure approved; BUILD, validation, and review **PASS** with no unresolved Critical or Important findings.
+- **Commit:** `37a2510` Implement PAPER 01F EUR/USD pricing observation; feature branch fast-forward merged into `main`.
+- **Scope:** One explicitly configured and account-validated OANDA Practice account → one independent read-only `/pricing` observation → immutable normalized EUR/USD provider pricing facts. The slice retains the validated identity, provider instrument, UTC ClientPrice timestamp, exact tradeability, and ordered immutable bid/ask price-liquidity buckets. No persistence, polling, streaming, Risk/runtime, execution, reconciliation, API/UI, broker mutation, PAPER activation, or PAPER 01G/later behavior was added.
+- **Validation:** Focused OANDA pricing/account/requester/primitive suite **199 passed**; targeted Ruff format/lint and Pyright passed; `git diff --check` passed. No full backend, database, Alembic, frontend, browser, or credentialed external OANDA checks were run.
+- **Review:** `dispatch/workstreams/paper-01f-oanda-practice-eur-usd-pricing-observation/REVIEW.md` — **PASS**; no unresolved Critical or Important findings.
+- **Git/state:** Feature branch pushed to GitHub, fast-forward merged into `main`, and `main` pushed. Required workstream and immutable task/validation/review artifacts preserved; active dispatch state cleared. No credentialed external OANDA request was performed.
+
 <!-- completion-id: oanda-observation-query-parameter-support -->
 ## OANDA Observation Query Parameter Support — completion record
 
