@@ -1,88 +1,117 @@
 # Atlas
 
-Atlas is a single-user algorithmic trading platform. The committed baseline supports
-historical EUR/USD research with an emphasis on correctness, reproducibility, capital
-safety, simplicity, and auditability.
+Atlas is a single-user algorithmic trading platform for taking a trading methodology through controlled, reproducible research and eventually PAPER and LIVE operation.
 
-## Permanent surface and authority
+Atlas prioritizes correctness, reproducibility, capital safety, simplicity, auditability, and trader control over speculative abstraction or scale.
 
-## Permanent surface and authority
+## Sources of truth
 
-- `AGENTS.md` routes work; `README.md` owns setup, usage, and validation commands.
-- `DOMAIN.md` owns durable, cross-cutting trading laws.
-- Desired change → approved current task/workstream.
-- Current implementation behavior → code, nearby tests, schemas/migrations, and
-  generated contracts.
-- Cross-cutting trading semantics → `DOMAIN.md`.
-- Setup/run/current supported workflow → `README.md`.
-- Historical reasoning → closed dispatch workstreams/Git only when explicitly
-  needed.
-- Dispatch history records what happened. Do not treat historical records as
-  current capability or silently broaden an approved task when sources disagree.
+Use each source only for the question it owns.
 
-## Progressive loading
+- **Desired change:** the approved active task/workstream.
+- **Current implementation behavior:** code, nearby tests, schemas/migrations, and generated contracts.
+- **Durable trading semantics:** `DOMAIN.md`.
+- **Setup, operation, and supported user workflow:** `README.md`.
+- **Historical reasoning:** closed `dispatch/` workstreams and Git history, only when explicitly needed.
 
-Read only the implementation, tests, schema/migrations, and domain rules relevant to
-the slice being changed. Follow active workstream artifacts under `dispatch/` when a
-task requires them; do not bulk-load historical records or invent a replacement
-documentation hierarchy.
+Historical workstreams describe what happened at that time. They are not current specifications.
 
-## Current repository
+If prose conflicts with current implementation, do not silently make code match stale prose. Determine which source owns the question and surface genuine contradictions.
 
-- `backend/` is the Python package: FastAPI API, domain values, market-data loading,
-  historical Experiments, simulated execution, Risk, persistence, and runtime check.
-- `frontend/` is the Next.js application. `tests/e2e/` contains Playwright coverage.
-- `backend/persistence/migrations/` contains Alembic history; PostgreSQL is durable
-  application state.
-- `backend/integrations/oanda/` is the read-only OANDA Practice historical adapter.
+## Progressive context loading
 
-## Supported boundary
+For implementation work:
 
-The current workflow is OANDA Practice historical data → immutable DatasetSnapshot →
-deterministic historical Experiment → inspectable results and Trades. The primary
-Strategy is EMA Sweep Confirmation Break v2, using native M15 MID analysis and sparse
-native M1 BID/ASK execution observations. PAPER/LIVE broker execution, reconciliation,
-and live protection are not committed-main capabilities.
+1. Read this file.
+2. Read the approved active workstream/task.
+3. Inspect the affected implementation and nearby tests.
+4. Inspect relevant schemas and migrations when persistence is involved.
+5. Consult only applicable sections of `DOMAIN.md`.
+6. Consult `README.md` when setup, runtime, or supported workflow matters.
+7. Load closed workstreams or Git history only for explicit regression, provenance, or rationale investigation.
 
-## Boundaries and safety
+Do not bulk-load historical documentation.
 
-- Use Strategy, StrategyVersion, Experiment, DatasetSnapshot, TradeIntent, RiskDecision,
-  Order, Fill, Position, and Trade. A historical backtest is an Experiment.
-- Strategy is pure: it proposes setup, direction, stop, target methodology, and
-  rationale; it does not access persistence, accounts, brokers, Risk, or UI.
-- Risk is centralized; financial exposure is represented by Fill-derived Position
-  state. Immutable StrategyVersion and completed Experiment facts remain immutable.
-- Use UTC, completed candles, half-open periods, no lookahead, and one evaluation per
-  completed frontier. Never fabricate, interpolate, aggregate in place of, or silently
-  substitute a required market observation.
-- Unknown, stale, contradictory, or failed state must remain visible and fail closed;
-  never turn uncertainty into a successful order, fill, or result.
+Do not create a parallel prose representation of the application.
 
-## Engineering workflow
+## Repository map
 
-Choose the narrowest complete slice, inspect affected callers and contracts, implement
-explicitly, test success and failure paths, and report evidence. Avoid speculative
-brokers, workers, messaging, plugins, or generalization. Keep credentials in ignored
-environment files and never log them.
+- `backend/domain/` — core typed domain values and contracts.
+- `backend/strategies/` — Strategy contracts, registration, provenance, and implementations.
+- `backend/experiments/` — deterministic historical Experiment execution.
+- `backend/market_data/` — historical market-data acquisition, validation, and provenance.
+- `backend/risk/` — centralized Risk decisions.
+- `backend/execution/` — execution-domain behavior and Fill application.
+- `backend/integrations/` — external provider boundaries, currently including OANDA historical data.
+- `backend/persistence/` — SQLAlchemy persistence and Alembic migrations.
+- `backend/api/` — FastAPI application and HTTP contracts.
+- `backend/runtime/` — runtime process boundary.
+- `frontend/` — Next.js trader interface.
+- `backend/tests/` and `tests/e2e/` — executable behavior and workflow evidence.
+- `dispatch/` — active and historical SoloFlow workstreams.
 
-## Commands
+## Current boundary
+
+Committed `main` supports historical EUR/USD research using OANDA Practice historical data, immutable DatasetSnapshots, deterministic Experiments, centralized Risk, simulated execution, and inspectable Trade/results evidence.
+
+PAPER/LIVE broker execution, broker reconciliation, and capital-capable runtime behavior are not committed-main capabilities unless current code and tests explicitly show otherwise.
+
+Do not infer a future capability from historical workstreams.
+
+## Engineering rules
+
+- Implement the narrowest complete slice required by the approved task.
+- Prefer explicit, typed, local abstractions over speculative frameworks.
+- Do not generalize for future brokers, instruments, Strategies, users, workers, or deployment models unless the current task requires it.
+- Preserve existing domain meaning unless the task explicitly changes it.
+- Add or change dependencies only when the current stack cannot reasonably satisfy the requirement.
+- Keep external provider payloads behind normalization boundaries.
+- Keep credentials in ignored environment files. Never persist or log secrets.
+- Treat unknown, stale, contradictory, partial, or failed financial state explicitly. Do not convert uncertainty into success.
+
+## Trading boundaries
+
+`DOMAIN.md` contains the permanent Atlas trading laws.
+
+In particular, do not bypass:
+
+- Strategy/Risk separation;
+- immutable StrategyVersion methodology;
+- completed-data and no-lookahead requirements;
+- Fill-derived exposure;
+- explicit market-data provenance;
+- fail-closed financial uncertainty;
+- broker authority and reconciliation requirements when broker execution exists.
+
+## Validation
+
+Run the smallest relevant checks during development, then the appropriate completion gates for the changed slice.
 
 ```bash
 uv sync --all-groups
 npm ci
+
 uv run alembic upgrade head
 uv run alembic current
 uv run alembic check
+
 uv run ruff format --check backend
 uv run ruff check backend
 uv run pyright backend
+
 uv run pytest -m "not integration and not external"
 ATLAS_TEST_DATABASE_URL=<dedicated *_test database> uv run pytest -m integration
+
 npm run check:web
 npm run test:e2e
 ```
 
-Run the API with `uv run uvicorn backend.api.app:create_app --factory --host
-127.0.0.1 --port 8000 --no-proxy-headers --reload`; run the frontend with
-`npm run dev:web`. `uv run atlas-runtime --check` is the optional database readiness
-check; it is not a historical Experiment worker.
+Integration tests must use a dedicated PostgreSQL test database.
+
+External credentialed checks are separate and must not be treated as ordinary test-suite prerequisites.
+
+## Capital boundary
+
+Code inspection, planning, deterministic tests, mocks, recorded provider-shape tests, migrations, and read-only checks do not authorize capital exposure.
+
+Creating or changing broker credentials, activating PAPER/LIVE, changing Risk policy, submitting capital-capable broker requests, or otherwise changing exposure requires explicit trader authorization.
