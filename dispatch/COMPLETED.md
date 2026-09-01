@@ -1,5 +1,15 @@
 # Completed
 
+<!-- completion-id: paper-readiness-01-risk-lifecycle-boundary-cleanup -->
+## PAPER Readiness 01 — Risk Lifecycle Boundary Cleanup — completion record
+
+- **Date/status:** 2026-09-01 — terminal closure approved; T001 BUILD, focused validation, and independent review **PASS** with no unresolved Critical or Important findings.
+- **Commit:** `5386d4b` Implement PAPER Readiness 01 Risk boundary cleanup; the feature branch was pushed and fast-forward merged into `main`. The approved architecture audit remains preserved in `d8219d5`.
+- **Scope:** Within PAPER Readiness 01, removed Experiment lifecycle coupling from reusable `RiskService`, preserved the ExperimentRunner PENDING/RUNNING gate, retained `EXPERIMENT_NOT_RUNNING` as readable historical vocabulary without reusable Risk emission, and preserved historical financial Risk behavior.
+- **Validation:** Focused Risk/runner suite **26 passed**; targeted Ruff lint, Risk Pyright, and `git diff --check` passed. Existing formatter and strict-Pyright baseline findings in touched historical files remain documented as non-blocking concerns. No full backend, database, OANDA, frontend, browser, or migration checks were run.
+- **Review:** `dispatch/workstreams/paper-readiness-01-internal-trading-boundary-audit/REVIEW.md` — **PASS**; no unresolved Critical or Important findings.
+- **Git/state:** T001 task, validation, and review evidence preserved; the branch was fast-forward merged into `main`; `dispatch/ACTIVE.md` cleared; `main` pushed to GitHub. No separate `paper-readiness-02` workstream was created, and no persistence, schema, OANDA, execution, runtime, frontend, PAPER activation, or broker mutation behavior changed.
+
 <!-- completion-id: paper-readiness-01-internal-trading-boundary-audit -->
 ## PAPER Readiness 01 — Internal Trading Boundary Audit — completion record
 
