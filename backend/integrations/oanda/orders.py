@@ -184,44 +184,61 @@ class OandaPracticePendingOrderReader:
     def _normalize_inventory(
         self, payload: Mapping[str, Any]
     ) -> OandaPracticePendingOrderInventory:
-        orders_value = payload.get("orders")
-        if not isinstance(orders_value, list):
-            raise OandaPendingOrderNormalizationError(
-                "OANDA pending Orders response has invalid orders"
-            )
-        raw_orders = cast(list[Any], orders_value)
-        if any(not isinstance(item, dict) for item in raw_orders):
-            raise OandaPendingOrderNormalizationError(
-                "OANDA pending Orders response has invalid orders"
-            )
-
-        normalized: list[OandaPracticePendingOrder] = []
-        seen_ids: set[str] = set()
-        for item in raw_orders:
-            order_item = cast(dict[str, Any], item)
-            order_id = _positive_order_id(order_item.get("id"))
-            if order_id in seen_ids:
-                raise OandaPendingOrderNormalizationError(
-                    "OANDA pending Order inventory contains duplicate Order IDs"
-                )
-            seen_ids.add(order_id)
-            normalized.append(self._normalize_order(order_item, order_id))
-
-        return OandaPracticePendingOrderInventory(
-            identity=self._identity,
-            orders=tuple(normalized),
-            last_transaction_id=_transaction_id(payload.get("lastTransactionID")),
-        )
+        return normalize_oanda_practice_pending_order_inventory(payload, self._identity)
 
     @staticmethod
     def _normalize_order(
         item: Mapping[str, Any], order_id: str
     ) -> OandaPracticePendingOrder:
-        return OandaPracticePendingOrder(
-            provider_order_id=order_id,
-            provider_order_type=_order_type(item.get("type")),
-            state=_pending_state(item.get("state")),
+        return _normalize_order(item, order_id)
+
+
+def normalize_oanda_practice_pending_order_inventory(
+    payload: Mapping[str, Any], identity: OandaPracticeAccountIdentity
+) -> OandaPracticePendingOrderInventory:
+    """Normalize pending Orders without issuing a separate observation GET."""
+    if type(identity) is not OandaPracticeAccountIdentity:
+        raise OandaPendingOrderNormalizationError(
+            "OANDA pending Order inventory has an invalid identity"
         )
+    orders_value = payload.get("orders")
+    if not isinstance(orders_value, list):
+        raise OandaPendingOrderNormalizationError(
+            "OANDA pending Orders response has invalid orders"
+        )
+    raw_orders = cast(list[Any], orders_value)
+    if any(not isinstance(item, dict) for item in raw_orders):
+        raise OandaPendingOrderNormalizationError(
+            "OANDA pending Orders response has invalid orders"
+        )
+
+    normalized: list[OandaPracticePendingOrder] = []
+    seen_ids: set[str] = set()
+    for item in raw_orders:
+        order_item = cast(dict[str, Any], item)
+        order_id = _positive_order_id(order_item.get("id"))
+        if order_id in seen_ids:
+            raise OandaPendingOrderNormalizationError(
+                "OANDA pending Order inventory contains duplicate Order IDs"
+            )
+        seen_ids.add(order_id)
+        normalized.append(_normalize_order(order_item, order_id))
+
+    return OandaPracticePendingOrderInventory(
+        identity=identity,
+        orders=tuple(normalized),
+        last_transaction_id=_transaction_id(payload.get("lastTransactionID")),
+    )
+
+
+def _normalize_order(
+    item: Mapping[str, Any], order_id: str
+) -> OandaPracticePendingOrder:
+    return OandaPracticePendingOrder(
+        provider_order_id=order_id,
+        provider_order_type=_order_type(item.get("type")),
+        state=_pending_state(item.get("state")),
+    )
 
 
 def read_oanda_practice_pending_order_inventory(
@@ -251,5 +268,6 @@ __all__ = [
     "OandaPracticePendingOrder",
     "OandaPracticePendingOrderInventory",
     "OandaPracticePendingOrderReader",
+    "normalize_oanda_practice_pending_order_inventory",
     "read_oanda_practice_pending_order_inventory",
 ]

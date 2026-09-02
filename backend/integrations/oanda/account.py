@@ -160,13 +160,13 @@ class OandaPracticeAccountValidator:
     def validate(self) -> OandaPracticeAccountIdentity:
         """Return a normalized identity or fail before/after the safe GET."""
         payload, account_id = self._read_payload()
-        return self._normalize_identity(payload, account_id)
+        return self.normalize_identity(payload, account_id)
 
     def read_summary(self) -> OandaPracticeAccountSummarySnapshot:
         """Read and normalize one immutable Practice account summary."""
         payload, account_id = self._read_payload()
-        identity = self._normalize_identity(payload, account_id)
-        return self._normalize_summary(payload, identity)
+        identity = self.normalize_identity(payload, account_id)
+        return self.normalize_summary(payload, identity)
 
     def _read_payload(self) -> tuple[Mapping[str, Any], str]:
         self._validate_configuration()
@@ -197,7 +197,7 @@ class OandaPracticeAccountValidator:
         return cast(dict[str, Any], account_value)
 
     @classmethod
-    def _normalize_identity(
+    def normalize_identity(
         cls, payload: Mapping[str, Any], configured_account_id: str
     ) -> OandaPracticeAccountIdentity:
         account = cls._account(payload)
@@ -228,7 +228,7 @@ class OandaPracticeAccountValidator:
         )
 
     @classmethod
-    def _normalize_summary(
+    def normalize_summary(
         cls,
         payload: Mapping[str, Any],
         identity: OandaPracticeAccountIdentity,
@@ -262,6 +262,25 @@ class OandaPracticeAccountValidator:
             ),
             last_transaction_id=top_level_transaction_id,
         )
+
+    @classmethod
+    def _normalize_identity(
+        cls, payload: Mapping[str, Any], configured_account_id: str
+    ) -> OandaPracticeAccountIdentity:
+        return cls.normalize_identity(payload, configured_account_id)
+
+    @classmethod
+    def _normalize_summary(
+        cls,
+        payload: Mapping[str, Any],
+        identity: OandaPracticeAccountIdentity,
+    ) -> OandaPracticeAccountSummarySnapshot:
+        return cls.normalize_summary(payload, identity)
+
+
+def is_valid_oanda_practice_account_id(value: str | None) -> bool:
+    """Return whether a value has OANDA's safe four-part AccountID shape."""
+    return _valid_account_id(value)
 
 
 def bind_oanda_practice_account(
@@ -304,5 +323,6 @@ __all__ = [
     "OandaPracticeAccountSummarySnapshot",
     "OandaPracticeAccountValidator",
     "bind_oanda_practice_account",
+    "is_valid_oanda_practice_account_id",
     "read_oanda_practice_account_summary",
 ]

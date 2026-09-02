@@ -225,47 +225,66 @@ class OandaPracticeOpenTradeReader:
     def _normalize_inventory(
         self, payload: Mapping[str, Any]
     ) -> OandaPracticeOpenTradeInventory:
-        trades_value = payload.get("trades")
-        if not isinstance(trades_value, list):
-            raise OandaOpenTradeNormalizationError(
-                "OANDA open Trades response has invalid trades"
-            )
-        raw_trades = cast(list[Any], trades_value)
-        if any(not isinstance(item, dict) for item in raw_trades):
-            raise OandaOpenTradeNormalizationError(
-                "OANDA open Trades response has invalid trades"
-            )
-        normalized: list[OandaPracticeOpenTrade] = []
-        seen_ids: set[str] = set()
-        for item in raw_trades:
-            trade_item = cast(dict[str, Any], item)
-            trade_id = _positive_integer(trade_item.get("id"), "id")
-            if trade_id in seen_ids:
-                raise OandaOpenTradeNormalizationError(
-                    "OANDA open Trade inventory contains duplicate Trade IDs"
-                )
-            seen_ids.add(trade_id)
-            normalized.append(self._normalize_trade(trade_item))
-        return OandaPracticeOpenTradeInventory(
-            identity=self._identity,
-            trades=tuple(normalized),
-            last_transaction_id=_transaction_id(payload.get("lastTransactionID")),
-        )
+        return normalize_oanda_practice_open_trade_inventory(payload, self._identity)
 
     @staticmethod
     def _normalize_trade(item: Mapping[str, Any]) -> OandaPracticeOpenTrade:
-        state = item.get("state")
-        if state not in ("OPEN", "CLOSE_WHEN_TRADEABLE"):
-            raise OandaOpenTradeNormalizationError("OANDA open Trade has invalid state")
-        return OandaPracticeOpenTrade(
-            provider_trade_id=_positive_integer(item.get("id"), "id"),
-            provider_instrument=_instrument(item.get("instrument")),
-            open_time=_timestamp(item.get("openTime")),
-            open_price=_decimal(item.get("price"), "price", positive=True),
-            current_units=_decimal(item.get("currentUnits"), "currentUnits"),
-            state=state,
-            unrealized_pl=_decimal(item.get("unrealizedPL"), "unrealizedPL"),
+        return _normalize_trade(item)
+
+
+def normalize_oanda_practice_open_trade_inventory(
+    payload: Mapping[str, Any], identity: OandaPracticeAccountIdentity
+) -> OandaPracticeOpenTradeInventory:
+    """Normalize an open-Trades collection for a known account identity.
+
+    This pure entry point lets the coherent Account Details reader reuse the
+    existing 01C normalization rules without issuing an independent GET.
+    """
+    if type(identity) is not OandaPracticeAccountIdentity:
+        raise OandaOpenTradeNormalizationError(
+            "OANDA open Trade inventory has an invalid identity"
         )
+    trades_value = payload.get("trades")
+    if not isinstance(trades_value, list):
+        raise OandaOpenTradeNormalizationError(
+            "OANDA open Trades response has invalid trades"
+        )
+    raw_trades = cast(list[Any], trades_value)
+    if any(not isinstance(item, dict) for item in raw_trades):
+        raise OandaOpenTradeNormalizationError(
+            "OANDA open Trades response has invalid trades"
+        )
+    normalized: list[OandaPracticeOpenTrade] = []
+    seen_ids: set[str] = set()
+    for item in raw_trades:
+        trade_item = cast(dict[str, Any], item)
+        trade_id = _positive_integer(trade_item.get("id"), "id")
+        if trade_id in seen_ids:
+            raise OandaOpenTradeNormalizationError(
+                "OANDA open Trade inventory contains duplicate Trade IDs"
+            )
+        seen_ids.add(trade_id)
+        normalized.append(_normalize_trade(trade_item))
+    return OandaPracticeOpenTradeInventory(
+        identity=identity,
+        trades=tuple(normalized),
+        last_transaction_id=_transaction_id(payload.get("lastTransactionID")),
+    )
+
+
+def _normalize_trade(item: Mapping[str, Any]) -> OandaPracticeOpenTrade:
+    state = item.get("state")
+    if state not in ("OPEN", "CLOSE_WHEN_TRADEABLE"):
+        raise OandaOpenTradeNormalizationError("OANDA open Trade has invalid state")
+    return OandaPracticeOpenTrade(
+        provider_trade_id=_positive_integer(item.get("id"), "id"),
+        provider_instrument=_instrument(item.get("instrument")),
+        open_time=_timestamp(item.get("openTime")),
+        open_price=_decimal(item.get("price"), "price", positive=True),
+        current_units=_decimal(item.get("currentUnits"), "currentUnits"),
+        state=state,
+        unrealized_pl=_decimal(item.get("unrealizedPL"), "unrealizedPL"),
+    )
 
 
 def read_oanda_practice_open_trade_inventory(
@@ -295,5 +314,6 @@ __all__ = [
     "OandaPracticeOpenTrade",
     "OandaPracticeOpenTradeInventory",
     "OandaPracticeOpenTradeReader",
+    "normalize_oanda_practice_open_trade_inventory",
     "read_oanda_practice_open_trade_inventory",
 ]
