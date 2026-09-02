@@ -1,5 +1,15 @@
 # Completed
 
+<!-- completion-id: paper-01g-oanda-practice-risk-account-state-projection -->
+## PAPER 01G — OANDA Practice Risk Account-State Projection — completion record
+
+- **Date/status:** 2026-09-01 — terminal closure approved; T001 BUILD, focused validation, and independent review **PASS** with no unresolved Critical or Important findings.
+- **Commit:** `ec03d46` Implement PAPER 01G OANDA risk account-state projection; the feature branch was fast-forward merged into `main`.
+- **Scope:** Added the pure OANDA integration projection from the existing normalized `OandaPracticeAccountSummarySnapshot` to provider-neutral Risk `AccountState`, mapping only `identity.base_currency` to `base_currency` and `nav` to `equity`. Positive, zero, and negative finite NAV values are preserved exactly. No OANDA request, Risk evaluation, persistence, execution, runtime, activation, reconciliation, or broker mutation behavior was added.
+- **Validation:** Focused OANDA projection/account/Risk suite **60 passed**; targeted Ruff format/lint, Pyright, and `git diff --check` passed. No full backend, database, frontend, browser, migration, or credentialed external OANDA checks were run.
+- **Review:** `dispatch/workstreams/paper-01g-oanda-practice-risk-account-state-projection/REVIEW.md` — **PASS**; no unresolved Critical or Important findings.
+- **Git/state:** Required PLAN, T001, VALIDATION, and REVIEW evidence preserved; the feature branch was fast-forward merged into `main`; `dispatch/ACTIVE.md` cleared. No PAPER activation, LIVE behavior, or broker mutation was performed.
+
 <!-- completion-id: paper-readiness-01-risk-lifecycle-boundary-cleanup -->
 ## PAPER Readiness 01 — Risk Lifecycle Boundary Cleanup — completion record
 
