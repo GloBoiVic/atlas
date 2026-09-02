@@ -30,6 +30,7 @@ from .pricing import (
     OandaPricingNormalizationError,
     read_oanda_practice_eur_usd_pricing,
 )
+from .risk_projection import project_oanda_practice_account_state
 from .source import (
     OANDA_PRACTICE_BASE_URL,
     FetchDiagnostics,
@@ -59,6 +60,7 @@ __all__ = [
     "OandaPracticeAccountSummarySnapshot",
     "OandaPracticeAccountValidator",
     "bind_oanda_practice_account",
+    "project_oanda_practice_account_state",
     "read_oanda_practice_account_summary",
     "FetchDiagnostics",
     "FetchResult",
