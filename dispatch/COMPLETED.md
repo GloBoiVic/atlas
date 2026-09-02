@@ -1,5 +1,34 @@
 # Completed
 
+<!-- completion-id: paper-04-broker-execution -->
+## PAPER 04 — Broker Execution — completion record
+
+- **Date/status:** 2026-09-02 — terminal closure approved; T001–T005 BUILD,
+  independent validation, Critical review, and R001 remediation validation/review
+  **PASS** with no unresolved Critical or Important findings.
+- **Commit:** `ef032d1` Implement PAPER broker execution; the feature branch was
+  fast-forward merged into `main`.
+- **Scope:** Added the read-only OANDA Practice account/instrument capability
+  gates, coherent account snapshot, provider-neutral PAPER execution contracts,
+  exact MARKET/FOK/OPEN_ONLY entry translation, non-retrying entry mutation and
+  bounded uncertainty readback, actual-Fill protection completion, and one-shot
+  actual-Fill-derived Take Profit composition. No PAPER activation, LIVE behavior,
+  persistence, reconciliation, runtime, API/UI, migration, or historical
+  Experiment semantic changes were introduced.
+- **Validation:** Focused execution/capability and regression suites passed;
+  final broad non-integration/non-external suite **922 passed, 4 skipped**;
+  changed-file Ruff format/lint, Pyright, and `git diff --check` passed. All
+  mutation evidence used deterministic fakes/`httpx.MockTransport`; no
+  credentialed or external OANDA mutation was performed.
+- **Review:** Original Critical review found C-001; bounded R001 remediation
+  preserved confirmed Fill facts/provenance for invariant violations and the
+  targeted independent rereview **PASS**. Final remediation chain has no
+  unresolved Critical or Important findings.
+- **Git/state:** Feature branch fast-forward merged into `main`; `main` and
+  `solo/paper-04-broker-execution` pushed to GitHub; active dispatch state
+  cleared; workstream evidence preserved. No real broker mutation or PAPER
+  activation occurred.
+
 <!-- completion-id: paper-03-risk-executable-pricing -->
 ## PAPER 03 — Risk + Executable Pricing — completion record
 
