@@ -1,5 +1,29 @@
 # Completed
 
+<!-- completion-id: paper-03-risk-executable-pricing -->
+## PAPER 03 — Risk + Executable Pricing — completion record
+
+- **Date/status:** 2026-09-02 — terminal closure approved; T001/T002/T003 BUILD, focused
+  validation, and independent review **PASS** with no unresolved Critical or Important findings.
+- **Commit:** `ac5c00e` Implement PAPER executable pricing risk; the feature branch was
+  fast-forward merged into `main`.
+- **Scope:** Added the provider-neutral quantity-aware Risk seam, pure OANDA Practice EUR/USD
+  required-side executable-pricing projection, and pure/read-only PAPER IMMEDIATE opening Risk
+  composition with identity/count/pending-order gates, existing account/exposure projections,
+  deterministic single-bucket capacity selection, and immutable provenance/evidence. No broker
+  mutation, Order/Fill, persistence, accounting, runtime activation, API/UI, trigger execution,
+  reconciliation, or LIVE behavior was added.
+- **Validation:** Focused suite **173 passed**; non-integration/non-external suite **860 passed,
+  4 skipped**; changed-file Ruff format/lint, Pyright, and `git diff --check` passed. The optional
+  PostgreSQL candidate vertical-flow integration was not run because `ATLAS_TEST_DATABASE_URL`
+  was unset. No credentialed OANDA or broker-mutation checks were run.
+- **Review:** `dispatch/workstreams/paper-03-risk-executable-pricing/REVIEW.md` — **PASS**;
+  no unresolved Critical or Important findings.
+- **Git/state:** Required PLAN, ARCHITECTURE, T001/T002/T003, validation, and review evidence
+  preserved; the feature branch was fast-forward merged into `main`; active dispatch state
+  cleared; GitHub push follows after closure commit. No PAPER activation or capital-capable
+  behavior was performed.
+
 <!-- completion-id: paper-02-strategy-evaluation -->
 ## PAPER 02 — Strategy Evaluation — completion record
 
