@@ -2,6 +2,7 @@
 
 from .service import (
     AccountState,
+    ExecutablePrice,
     ExecutableQuote,
     RiskConfig,
     RiskDecision,
@@ -13,6 +14,7 @@ from .service import (
 
 __all__ = [
     "AccountState",
+    "ExecutablePrice",
     "ExecutableQuote",
     "RiskConfig",
     "RiskDecision",

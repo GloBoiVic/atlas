@@ -24,6 +24,9 @@ class RiskRejection(StrEnum):
     POSITION_ALREADY_OPEN = "POSITION_ALREADY_OPEN"
     INVALID_STOP = "INVALID_STOP"
     INVALID_QUANTITY = "INVALID_QUANTITY"
+    INVALID_EXECUTABLE_PRICE = "INVALID_EXECUTABLE_PRICE"
+    INVALID_EXECUTABLE_CAPACITY = "INVALID_EXECUTABLE_CAPACITY"
+    INSUFFICIENT_EXECUTABLE_CAPACITY = "INSUFFICIENT_EXECUTABLE_CAPACITY"
     ACCOUNT_STATE_UNKNOWN = "ACCOUNT_STATE_UNKNOWN"
     # Retained as a readable historical rejection vocabulary; Risk no longer emits it.
     EXPERIMENT_NOT_RUNNING = "EXPERIMENT_NOT_RUNNING"
@@ -45,6 +48,14 @@ class AccountState:
 class ExecutableQuote:
     bid: Decimal
     ask: Decimal
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutablePrice:
+    """A direction-appropriate price with finite observed capacity."""
+
+    price: Decimal
+    max_quantity: Decimal
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,7 +94,12 @@ class RiskService:
         instrument: Instrument | str,
     ) -> RiskDecision:
         common = self._common(
-            RiskPhase.PRE_FLIGHT, intent, position, account, config, instrument,
+            RiskPhase.PRE_FLIGHT,
+            intent,
+            position,
+            account,
+            config,
+            instrument,
         )
         if common is not None:
             return common
@@ -104,9 +120,7 @@ class RiskService:
         quote: ExecutableQuote,
     ) -> RiskDecision:
         phase = RiskPhase.PRE_SUBMISSION
-        common = self._common(
-            phase, intent, position, account, config, instrument
-        )
+        common = self._common(phase, intent, position, account, config, instrument)
         if common is not None:
             return common
         if (
@@ -118,6 +132,55 @@ class RiskService:
         assert account is not None
         assert intent.direction is not None and intent.stop is not None
         entry = quote.ask if intent.direction is Direction.LONG else quote.bid
+        return self._evaluate_at_entry_price(
+            phase,
+            intent,
+            account,
+            config,
+            entry,
+        )
+
+    def evaluate_pre_submission_at_executable_price(
+        self,
+        intent: TradeIntent,
+        *,
+        position: Position | FinancialPositionState | str | None,
+        account: AccountState | None,
+        config: RiskConfig,
+        instrument: Instrument | str,
+        executable_price: ExecutablePrice,
+    ) -> RiskDecision:
+        phase = RiskPhase.PRE_SUBMISSION
+        common = self._common(phase, intent, position, account, config, instrument)
+        if common is not None:
+            return common
+        if type(executable_price) is not ExecutablePrice or not self._positive(
+            executable_price.price
+        ):
+            return self._reject(phase, RiskRejection.INVALID_EXECUTABLE_PRICE)
+        capacity = executable_price.max_quantity
+        if type(capacity) is not Decimal or not capacity.is_finite() or capacity < 0:
+            return self._reject(phase, RiskRejection.INVALID_EXECUTABLE_CAPACITY)
+        assert account is not None
+        return self._evaluate_at_entry_price(
+            phase,
+            intent,
+            account,
+            config,
+            executable_price.price,
+            capacity,
+        )
+
+    def _evaluate_at_entry_price(
+        self,
+        phase: RiskPhase,
+        intent: TradeIntent,
+        account: AccountState,
+        config: RiskConfig,
+        entry: Decimal,
+        max_quantity: Decimal | None = None,
+    ) -> RiskDecision:
+        assert intent.direction is not None and intent.stop is not None
         valid_geometry = (
             intent.stop < entry
             if intent.direction is Direction.LONG
@@ -134,21 +197,31 @@ class RiskService:
         quantity = (budget / loss_per_unit).to_integral_value(rounding=ROUND_FLOOR)
         if quantity < 1 or quantity != quantity.to_integral_value():
             return self._reject(phase, RiskRejection.INVALID_QUANTITY)
+        if max_quantity is not None and quantity > max_quantity:
+            return self._reject(phase, RiskRejection.INSUFFICIENT_EXECUTABLE_CAPACITY)
         actual_risk = quantity * loss_per_unit
         if actual_risk > budget:
             return self._reject(phase, RiskRejection.INVALID_QUANTITY)
         assert intent.target is not None
         target = intent.target.resolve(entry, intent.stop, intent.direction)
         return RiskDecision(
-            phase=phase, approved=True, entry_price=entry, stop_price=intent.stop,
-            target_price=target, risk_budget=budget, quantity=quantity,
+            phase=phase,
+            approved=True,
+            entry_price=entry,
+            stop_price=intent.stop,
+            target_price=target,
+            risk_budget=budget,
+            quantity=quantity,
             actual_risk=actual_risk,
         )
 
     def _common(
-        self, phase: RiskPhase, intent: TradeIntent,
+        self,
+        phase: RiskPhase,
+        intent: TradeIntent,
         position: Position | FinancialPositionState | str | None,
-        account: AccountState | None, config: RiskConfig,
+        account: AccountState | None,
+        config: RiskConfig,
         instrument: Instrument | str,
     ) -> RiskDecision | None:
         if instrument is not Instrument.EUR_USD or (
@@ -194,6 +267,13 @@ class RiskService:
 
 
 __all__ = [
-    "AccountState", "ExecutableQuote", "RiskConfig", "RiskDecision", "RiskPhase",
-    "RiskRejection", "RiskService", "TradeIntent",
+    "AccountState",
+    "ExecutablePrice",
+    "ExecutableQuote",
+    "RiskConfig",
+    "RiskDecision",
+    "RiskPhase",
+    "RiskRejection",
+    "RiskService",
+    "TradeIntent",
 ]

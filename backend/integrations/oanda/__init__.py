@@ -34,6 +34,13 @@ from .pricing import (
     OandaPricingNormalizationError,
     read_oanda_practice_eur_usd_pricing,
 )
+from .pricing_projection import (
+    OandaPracticeExecutablePriceCandidate,
+    OandaPracticeExecutablePricingProjection,
+    OandaPricingBucketEvidence,
+    OandaPricingProjectionError,
+    project_oanda_practice_executable_pricing,
+)
 from .risk_projection import project_oanda_practice_account_state
 from .source import (
     OANDA_PRACTICE_BASE_URL,
@@ -87,6 +94,11 @@ __all__ = [
     "OandaPracticeOpenPositionReader",
     "OandaPracticePositionSide",
     "read_oanda_practice_open_position_inventory",
+    "OandaPricingBucketEvidence",
+    "OandaPricingProjectionError",
+    "OandaPracticeExecutablePriceCandidate",
+    "OandaPracticeExecutablePricingProjection",
+    "project_oanda_practice_executable_pricing",
     "OandaPendingOrderNormalizationError",
     "OandaPracticePendingOrder",
     "OandaPracticePendingOrderInventory",
