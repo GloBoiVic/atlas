@@ -8,11 +8,13 @@
 - **Base:** `main` at `64536b4` (`Close PAPER 01G workstream`).
 - **Base SHA:** `64536b433dbd17b55976f0ad16137ca9b8a8e5de`.
 - **Branch:** `solo/paper-01h-oanda-practice-eur-usd-exposure-state-projection`.
-- **Phase:** `READY_FOR_USER`.
-- **Approval:** developer implementation approval granted; GIT START complete.
+- **Phase:** `COMPLETED`.
+- **Approval:** terminal closure approved by developer on 2026-09-01; T001 implementation,
+  focused validation, independent review, commit, merge, and GitHub push completed. No
+  broader PAPER/LIVE activation, broker mutation, or unrelated implementation was authorized.
 - **Architecture:** not required. PAPER Readiness 01 already established that OANDA Position facts must not be cast directly into Atlas `Position`. Current contracts support a narrower state-only projection without changing Risk or the trading domain.
-- **Task state:** `T001` is `DONE`.
-- **Next action:** stop for explicit developer merge approval; do not merge without it.
+- **Task state:** `T001` — `DONE`; VALIDATION `PASS`; REVIEW `PASS`; no Critical or Important findings.
+- **Next action:** none; workstream closed after GIT END. Do not begin another PAPER slice from this workstream.
 - **Concerns:** `/openTrades` and `/openPositions` are independent provider observations rather than one atomic snapshot. This Feature proves only whether their retained exposure facts agree sufficiently to produce one state. It does not establish freshness, atomicity, reconciliation, or authority.
 
 ## Objective

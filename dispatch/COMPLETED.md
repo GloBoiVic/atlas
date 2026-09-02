@@ -1,5 +1,26 @@
 # Completed
 
+<!-- completion-id: paper-01h-oanda-practice-eur-usd-exposure-state-projection -->
+## PAPER 01H — OANDA Practice EUR/USD Exposure-State Projection — completion record
+
+- **Date/status:** 2026-09-01 — terminal closure approved; T001 BUILD, focused validation,
+  and independent review **PASS** with no unresolved Critical or Important findings.
+- **Commit:** `7e4db27` Implement PAPER 01H OANDA exposure-state projection; the feature
+  branch was fast-forward merged into `main`.
+- **Scope:** Added the pure normalized OANDA open-Trade/open-Position cross-view projection
+  to `FinancialPositionState`, with exact signed EUR/USD unit agreement, fail-closed
+  unsupported/directional/counterpart/identity handling, and package exports. No Atlas
+  `Position`, Risk evaluation, I/O, persistence, execution, runtime, pending-Order
+  consumption, reconciliation, activation, or broker mutation behavior was added.
+- **Validation:** Focused suite **140 passed**; targeted Ruff format/lint, Pyright, and
+  `git diff --check` passed. No full backend, database, frontend, browser, migration, or
+  credentialed external OANDA checks were run.
+- **Review:** `dispatch/workstreams/paper-01h-oanda-practice-eur-usd-exposure-state-projection/REVIEW.md`
+  — **PASS**; no unresolved Critical or Important findings.
+- **Git/state:** Required PLAN, T001, VALIDATION, and REVIEW evidence preserved; the feature
+  branch was fast-forward merged into `main`; `dispatch/ACTIVE.md` cleared and GitHub push
+  completed. No PAPER activation, LIVE behavior, or broker mutation was performed.
+
 <!-- completion-id: paper-01g-oanda-practice-risk-account-state-projection -->
 ## PAPER 01G — OANDA Practice Risk Account-State Projection — completion record
 
