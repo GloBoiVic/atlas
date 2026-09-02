@@ -7,11 +7,13 @@ any other precomputed observation is deliberately not an input to this seam.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import replace
+import hashlib
+import json
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, replace
 from datetime import datetime
 from decimal import Decimal
-from typing import Protocol
+from typing import Any, Protocol
 from uuid import UUID, uuid4
 
 from backend.domain import Action, Direction, EntryPolicy, Instrument, StrategyDecision
@@ -44,10 +46,33 @@ from .execution import (
     TransactionProvenance,
 )
 from .risk_evaluation import (
+    PaperRiskEvaluation,
     PaperRiskEvaluationError,
     PaperRiskOutcome,
     evaluate_paper_risk,
 )
+
+
+class PaperExecutionMutationBarrierError(RuntimeError):
+    """A durable mutation barrier could not be committed before a mutation."""
+
+
+BeforeTakeProfitMutation = Callable[
+    [PaperExecutionResult, ProtectionConfirmation, str], None
+]
+AfterTakeProfitMutation = Callable[[PaperExecutionResult], None]
+AfterTradeDetailRead = Callable[[PaperExecutionResult], None]
+
+
+@dataclass(frozen=True, slots=True)
+class PaperExecutionPreparation:
+    """Validated fresh PAPER facts before the first broker mutation."""
+
+    instruction: PaperExecutionInstruction
+    execution_instrument: OandaPracticeExecutionInstrument
+    risk_evaluation: PaperRiskEvaluation
+    account_equity: Decimal
+    entry_request_fingerprint: str
 
 
 class PaperExecutionReader(Protocol):
@@ -79,6 +104,10 @@ class PaperProtectionCompletion(Protocol):
         self,
         entry_result: PaperExecutionResult,
         execution_instrument: OandaPracticeExecutionInstrument,
+        *,
+        before_take_profit: BeforeTakeProfitMutation | None = None,
+        after_take_profit: AfterTakeProfitMutation | None = None,
+        after_trade_detail: AfterTradeDetailRead | None = None,
     ) -> PaperExecutionResult: ...
 
 
@@ -120,14 +149,14 @@ class PaperExecutionApplication:
         self._risk_service = risk_service
         self._attempt_id_factory = attempt_id_factory
 
-    def execute(
+    def prepare(
         self,
         strategy_decision: StrategyDecision,
         *,
         config: RiskConfig,
         attempt_id: UUID | None = None,
-    ) -> PaperExecutionRefusal | PaperExecutionResult:
-        """Execute one independent attempt, or return a bounded refusal.
+    ) -> PaperExecutionRefusal | PaperExecutionPreparation:
+        """Prepare one fresh independent attempt before broker mutation.
 
         The only accepted input authority is ``strategy_decision``.  In
         particular, this method has no parameter for a PAPER 03 result, so an
@@ -260,9 +289,10 @@ class PaperExecutionApplication:
                 trade_units_precision=execution_instrument.trade_units_precision,
             )
             # Validate all entry values before the first possible mutation.
-            translate_oanda_practice_market_order(
+            entry_payload = translate_oanda_practice_market_order(
                 instruction, execution_instrument, correlation=instruction.correlation
             )
+            entry_request_fingerprint = _request_fingerprint(entry_payload)
         except (
             PaperExecutionContractError,
             OandaPracticeEntryTranslationError,
@@ -275,6 +305,21 @@ class PaperExecutionApplication:
                 PaperExecutionRefusalCode.LOCAL_SERIALIZATION_REJECTED,
                 "ENTRY_SERIALIZATION_REJECTED",
             )
+
+        return PaperExecutionPreparation(
+            instruction=instruction,
+            execution_instrument=execution_instrument,
+            risk_evaluation=evaluation,
+            account_equity=snapshot.summary.nav,
+            entry_request_fingerprint=entry_request_fingerprint,
+        )
+
+    def submit_entry(
+        self, preparation: PaperExecutionPreparation
+    ) -> PaperExecutionResult:
+        """Invoke the existing single-attempt entry mutation seam."""
+        instruction = preparation.instruction
+        execution_instrument = preparation.execution_instrument
 
         try:
             entry_result = self._entry_mutation.submit(
@@ -301,10 +346,40 @@ class PaperExecutionApplication:
         ):
             return _unknown_result(instruction, "ENTRY_RESULT_INVALID")
 
+        return entry_result
+
+    def complete_protection(
+        self,
+        preparation: PaperExecutionPreparation,
+        entry_result: PaperExecutionResult,
+        *,
+        before_take_profit: BeforeTakeProfitMutation | None = None,
+        after_take_profit: AfterTakeProfitMutation | None = None,
+        after_trade_detail: AfterTradeDetailRead | None = None,
+    ) -> PaperExecutionResult:
+        """Complete protection while exposing the pre-PUT durable barrier."""
+        instruction = preparation.instruction
+        execution_instrument = preparation.execution_instrument
+
         try:
-            completed = self._protection_completion.complete(
-                entry_result, execution_instrument
-            )
+            if (
+                before_take_profit is None
+                and after_take_profit is None
+                and after_trade_detail is None
+            ):
+                completed = self._protection_completion.complete(
+                    entry_result, execution_instrument
+                )
+            else:
+                completed = self._protection_completion.complete(
+                    entry_result,
+                    execution_instrument,
+                    before_take_profit=before_take_profit,
+                    after_take_profit=after_take_profit,
+                    after_trade_detail=after_trade_detail,
+                )
+        except PaperExecutionMutationBarrierError:
+            raise
         except Exception:
             return _protection_failure(entry_result, "PROTECTION_COMPLETION_FAILED")
         if not _matches_instruction(completed, instruction):
@@ -315,6 +390,29 @@ class PaperExecutionApplication:
         ):
             return _protection_failure(entry_result, "PROTECTION_RESULT_INVALID")
         return completed
+
+    def execute(
+        self,
+        strategy_decision: StrategyDecision,
+        *,
+        config: RiskConfig,
+        attempt_id: UUID | None = None,
+    ) -> PaperExecutionRefusal | PaperExecutionResult:
+        """Execute one independent attempt, or return a bounded refusal."""
+        preparation = self.prepare(
+            strategy_decision, config=config, attempt_id=attempt_id
+        )
+        if isinstance(preparation, PaperExecutionRefusal):
+            return preparation
+
+        entry_result = self.submit_entry(preparation)
+        if entry_result.outcome in (
+            PaperExecutionOutcome.REJECTED,
+            PaperExecutionOutcome.CANCELLED,
+            PaperExecutionOutcome.UNKNOWN,
+        ):
+            return entry_result
+        return self.complete_protection(preparation, entry_result)
 
     def _read_account_properties(
         self, attempt_id: UUID
@@ -453,6 +551,13 @@ def _supported_strategy_decision(value: object) -> bool:
     )
 
 
+def _request_fingerprint(payload: Mapping[str, Any]) -> str:
+    encoded = json.dumps(
+        dict(payload), sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def _direction(decision: StrategyDecision) -> Direction:
     if decision.direction is None:
         raise PaperExecutionContractError("opening decision has no direction")
@@ -565,8 +670,13 @@ def _protection_failure(
 
 
 __all__ = [
+    "BeforeTakeProfitMutation",
+    "AfterTakeProfitMutation",
+    "AfterTradeDetailRead",
     "PaperEntryMutation",
     "PaperExecutionApplication",
+    "PaperExecutionMutationBarrierError",
+    "PaperExecutionPreparation",
     "PaperExecutionReader",
     "PaperPricingReader",
     "PricingReaderFactory",

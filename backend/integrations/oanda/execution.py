@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import hashlib
+import json
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -37,6 +39,7 @@ if TYPE_CHECKING:
         PaperExecutionInstruction,
         PaperExecutionOutcome,
         PaperExecutionResult,
+        ProtectionConfirmation,
         ProtectionLegStatus,
         TransactionProvenance,
     )
@@ -1100,6 +1103,13 @@ def _safe_request_id(value: Any) -> str | None:
     return value
 
 
+def _payload_fingerprint(payload: Mapping[str, Any]) -> str:
+    encoded = json.dumps(
+        dict(payload), sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def _unwrap_readback_object(payload: Mapping[str, Any], key: str) -> Mapping[str, Any]:
     value = payload.get(key)
     if not isinstance(value, Mapping):
@@ -1304,12 +1314,20 @@ class OandaPracticeProtectionCompletion:
         self,
         entry_result: PaperExecutionResult,
         execution_instrument: OandaPracticeExecutionInstrument,
+        *,
+        before_take_profit: Callable[
+            [PaperExecutionResult, ProtectionConfirmation, str], None
+        ]
+        | None = None,
+        after_take_profit: Callable[[PaperExecutionResult], None] | None = None,
+        after_trade_detail: Callable[[PaperExecutionResult], None] | None = None,
     ) -> PaperExecutionResult:
         """Confirm Stop, resolve actual target, and complete one target PUT."""
         from backend.paper.execution import (
             PaperExecutionInstruction,
             PaperExecutionOutcome,
             PaperExecutionResult,
+            ProtectionConfirmation,
             ProtectionLegStatus,
         )
 
@@ -1340,6 +1358,15 @@ class OandaPracticeProtectionCompletion:
                 "protection result has an invalid instruction"
             )
         fill = entry_result.fill
+
+        def return_without_take_profit(
+            result: PaperExecutionResult,
+        ) -> PaperExecutionResult:
+            if after_trade_detail is not None:
+                after_trade_detail(result)
+            self._results[instruction.attempt_id] = result
+            return result
+
         try:
             trade_value = self._readback.read_trade(fill.broker_trade_id)
         except Exception:
@@ -1366,8 +1393,7 @@ class OandaPracticeProtectionCompletion:
                 actual_target=None,
                 detail_code="STOP_CONFIRMATION_UNPROVEN",
             )
-            self._results[instruction.attempt_id] = result
-            return result
+            return return_without_take_profit(result)
 
         stop_observation = _observe_protection_order(
             trade,
@@ -1388,8 +1414,7 @@ class OandaPracticeProtectionCompletion:
                 actual_target=None,
                 detail_code="STOP_CONFIRMATION_UNPROVEN",
             )
-            self._results[instruction.attempt_id] = result
-            return result
+            return return_without_take_profit(result)
 
         try:
             actual_target = resolve_oanda_practice_actual_target(instruction, fill)
@@ -1403,8 +1428,7 @@ class OandaPracticeProtectionCompletion:
                 actual_target=None,
                 detail_code="TARGET_GEOMETRY_INVALID",
             )
-            self._results[instruction.attempt_id] = result
-            return result
+            return return_without_take_profit(result)
         try:
             payload = translate_oanda_practice_take_profit(
                 instruction, execution_instrument, actual_target
@@ -1419,8 +1443,20 @@ class OandaPracticeProtectionCompletion:
                 actual_target=actual_target,
                 detail_code="TARGET_PRECISION_UNREPRESENTABLE",
             )
-            self._results[instruction.attempt_id] = result
-            return result
+            return return_without_take_profit(result)
+
+        if before_take_profit is not None:
+            before_take_profit(
+                entry_result,
+                ProtectionConfirmation(
+                    stop_loss_status=ProtectionLegStatus.CONFIRMED,
+                    stop_loss=stop_observation.order,
+                    take_profit_status=ProtectionLegStatus.NOT_ATTEMPTED,
+                    take_profit=None,
+                    actual_target_price=actual_target,
+                ),
+                _payload_fingerprint(payload),
+            )
 
         try:
             response = self._requester.put_trade_orders(
@@ -1460,6 +1496,8 @@ class OandaPracticeProtectionCompletion:
                 provenance=mutation.provenance,
                 detail_code=mutation.detail_code,
             )
+            if after_take_profit is not None:
+                after_take_profit(result)
             self._results[instruction.attempt_id] = result
             return result
         if mutation.status != "CONFIRMED":
@@ -1474,8 +1512,23 @@ class OandaPracticeProtectionCompletion:
                 provenance=mutation.provenance,
                 detail_code=mutation.detail_code,
             )
+            if after_take_profit is not None:
+                after_take_profit(result)
             self._results[instruction.attempt_id] = result
             return result
+
+        mutation_result = _protection_incomplete(
+            entry_result,
+            stop_loss_status=ProtectionLegStatus.CONFIRMED,
+            stop_loss=stop_observation.order,
+            take_profit_status=ProtectionLegStatus.CONFIRMED,
+            take_profit=mutation.order,
+            actual_target=actual_target,
+            provenance=mutation.provenance,
+            detail_code=mutation.detail_code,
+        )
+        if after_take_profit is not None:
+            after_take_profit(mutation_result)
 
         try:
             final_value = self._readback.read_trade(fill.broker_trade_id)
@@ -1554,10 +1607,21 @@ def complete_oanda_practice_protection(
     execution_instrument: OandaPracticeExecutionInstrument,
     requester: OandaProtectionMutationRequester,
     readback: OandaProtectionReadbackReader,
+    *,
+    before_take_profit: Callable[
+        [PaperExecutionResult, ProtectionConfirmation, str], None
+    ]
+    | None = None,
+    after_take_profit: Callable[[PaperExecutionResult], None] | None = None,
+    after_trade_detail: Callable[[PaperExecutionResult], None] | None = None,
 ) -> PaperExecutionResult:
     """Functional public seam for completing one entry Fill's protection."""
     return OandaPracticeProtectionCompletion(requester, readback).complete(
-        entry_result, execution_instrument
+        entry_result,
+        execution_instrument,
+        before_take_profit=before_take_profit,
+        after_take_profit=after_take_profit,
+        after_trade_detail=after_trade_detail,
     )
 
 

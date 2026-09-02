@@ -38,9 +38,11 @@ from backend.market_data.session_calendar import (
     eligible_m15_windows,
     required_warmup_range,
 )
+from backend.paper.persistence_contracts import PaperStrategyEvaluationReceipt
 from backend.paper.strategy_evaluation import (
     PaperStrategyEvaluationError,
     evaluate_current_paper_strategy,
+    evaluate_current_paper_strategy_receipt,
 )
 from backend.strategies.contract import (
     Strategy,
@@ -280,6 +282,31 @@ def test_exact_version_and_complete_parameters_are_used_without_defaults() -> No
         False,
         True,
     ]
+
+
+def test_execution_receipt_binds_evaluation_to_the_verified_version() -> None:
+    implementation = FixtureStrategy()
+    repository, registry, source = make_dependencies(implementation)
+
+    receipt = evaluate_current_paper_strategy_receipt(
+        SESSION,
+        strategy_version_id=VERSION_ID,
+        parameter_values={"threshold": 2},
+        state=None,
+        financial_position_state=FinancialPositionState.FLAT,
+        now=NOW,
+        strategy_repository=repository,  # type: ignore[arg-type]
+        strategy_registry=registry,  # type: ignore[arg-type]
+        analytical_source=source,
+        market_specification=MARKET,
+    )
+
+    assert type(receipt) is PaperStrategyEvaluationReceipt
+    assert receipt.strategy_version_id == VERSION_ID
+    assert receipt.strategy_key == implementation.definition.strategy_key
+    assert receipt.implementation_key == implementation.definition.implementation_key
+    assert receipt.validated_parameter_snapshot.to_json() == {"threshold": 2}
+    assert receipt.evaluation.decision.action is Action.NO_ACTION
 
 
 @pytest.mark.parametrize(

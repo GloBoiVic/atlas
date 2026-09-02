@@ -323,6 +323,33 @@ def test_deterministic_rejection_is_immediate_and_subject_specific(status: int) 
     assert TEST_TOKEN not in str(error.value)
 
 
+def test_rejected_response_retains_supplied_request_id_without_body() -> None:
+    with pytest.raises(OandaRequestError) as error:
+        requester(
+            httpx.MockTransport(
+                lambda request: httpx.Response(
+                    404,
+                    text="provider body",
+                    headers={"RequestID": "request-404"},
+                )
+            )
+        ).get_json("/v3/accounts/example/orders", error_subject="Order")
+
+    assert error.value.request_id == "request-404"
+    assert "provider body" not in str(error.value)
+
+
+def test_rejected_response_without_request_id_remains_none() -> None:
+    with pytest.raises(OandaRequestError) as error:
+        requester(
+            httpx.MockTransport(
+                lambda request: httpx.Response(404, text="provider body")
+            )
+        ).get_json("/v3/accounts/example/orders", error_subject="Order")
+
+    assert error.value.request_id is None
+
+
 @pytest.mark.parametrize("status", [408, 429, 503])
 def test_transient_status_exhaustion_is_bounded(
     status: int, monkeypatch: pytest.MonkeyPatch

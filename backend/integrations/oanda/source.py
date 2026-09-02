@@ -48,9 +48,17 @@ class OandaNormalizationError(OandaError):
 class OandaRequestError(OandaError):
     """A provider request failed; no provider response body is retained."""
 
-    def __init__(self, status_code: int | None, attempts: int, message: str) -> None:
+    def __init__(
+        self,
+        status_code: int | None,
+        attempts: int,
+        message: str,
+        *,
+        request_id: str | None = None,
+    ) -> None:
         self.status_code = status_code
         self.attempts = attempts
+        self.request_id = request_id
         super().__init__(message)
 
 

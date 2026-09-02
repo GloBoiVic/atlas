@@ -8,7 +8,7 @@ make Risk, execution, accounting, persistence-write, or broker decisions.
 
 from collections.abc import Mapping
 from datetime import datetime
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -47,6 +47,75 @@ from .current_analytical_frontier import (
     NativeM15Source,
     load_current_analytical_frontier,
 )
+
+if TYPE_CHECKING:
+    from .persistence_contracts import PaperStrategyEvaluationReceipt
+
+
+def evaluate_current_paper_strategy(
+    session: Session,
+    *,
+    strategy_version_id: UUID,
+    parameter_values: Mapping[str, object],
+    state: StrategyStateEnvelope | None,
+    financial_position_state: FinancialPositionState,
+    now: datetime,
+    strategy_repository: StrategyRepository,
+    strategy_registry: StrategyRegistry,
+    analytical_source: NativeM15Source,
+    market_specification: MarketSpecification,
+) -> StrategyEvaluation:
+    """Evaluate one current completed frontier, preserving the PAPER 04 seam."""
+    _, _, evaluation = _evaluate_current_paper_strategy(
+        session,
+        strategy_version_id=strategy_version_id,
+        parameter_values=parameter_values,
+        state=state,
+        financial_position_state=financial_position_state,
+        now=now,
+        strategy_repository=strategy_repository,
+        strategy_registry=strategy_registry,
+        analytical_source=analytical_source,
+        market_specification=market_specification,
+    )
+    return evaluation
+
+
+def evaluate_current_paper_strategy_receipt(
+    session: Session,
+    *,
+    strategy_version_id: UUID,
+    parameter_values: Mapping[str, object],
+    state: StrategyStateEnvelope | None,
+    financial_position_state: FinancialPositionState,
+    now: datetime,
+    strategy_repository: StrategyRepository,
+    strategy_registry: StrategyRegistry,
+    analytical_source: NativeM15Source,
+    market_specification: MarketSpecification,
+) -> "PaperStrategyEvaluationReceipt":
+    """Return the exact version/parameters alongside their produced decision.
+
+    This is the execution-oriented handoff.  The returned receipt is produced
+    by the same validation and evaluation operation as
+    :func:`evaluate_current_paper_strategy`; callers cannot provide an
+    unrelated ``StrategyDecision`` as a provenance sidecar.
+    """
+    version, parameters, evaluation = _evaluate_current_paper_strategy(
+        session,
+        strategy_version_id=strategy_version_id,
+        parameter_values=parameter_values,
+        state=state,
+        financial_position_state=financial_position_state,
+        now=now,
+        strategy_repository=strategy_repository,
+        strategy_registry=strategy_registry,
+        analytical_source=analytical_source,
+        market_specification=market_specification,
+    )
+    from .persistence_contracts import PaperStrategyEvaluationReceipt
+
+    return PaperStrategyEvaluationReceipt.from_verified(version, parameters, evaluation)
 
 
 class PaperStrategyEvaluationError(ValueError):
@@ -112,7 +181,7 @@ def _require_current_analytical_contract(definition: StrategyDefinition) -> None
         )
 
 
-def evaluate_current_paper_strategy(
+def _evaluate_current_paper_strategy(
     session: Session,
     *,
     strategy_version_id: UUID,
@@ -124,7 +193,7 @@ def evaluate_current_paper_strategy(
     strategy_registry: StrategyRegistry,
     analytical_source: NativeM15Source,
     market_specification: MarketSpecification,
-) -> StrategyEvaluation:
+) -> tuple[StrategyVersion, ValidatedParameterPayload, StrategyEvaluation]:
     """Evaluate exactly one current completed analytical frontier.
 
     ``now`` is passed only to the bounded analytical read.  Strategy clocks are
@@ -215,7 +284,7 @@ def evaluate_current_paper_strategy(
     else:
         working_state = state
 
-    return evaluate_strategy(
+    evaluation = evaluate_strategy(
         implementation,
         StrategyContext(
             evaluation_time=frontier.current_bar.end_time,
@@ -228,6 +297,7 @@ def evaluate_current_paper_strategy(
         parameters,
         working_state,
     )
+    return version, parameters, evaluation
 
 
 def _next_state(evaluation: StrategyEvaluation) -> StrategyStateEnvelope:
@@ -242,4 +312,5 @@ def _next_state(evaluation: StrategyEvaluation) -> StrategyStateEnvelope:
 __all__ = [
     "PaperStrategyEvaluationError",
     "evaluate_current_paper_strategy",
+    "evaluate_current_paper_strategy_receipt",
 ]

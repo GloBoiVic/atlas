@@ -414,6 +414,13 @@ def read_oanda_practice_execution_account_snapshot(
     ).read()
 
 
+def normalize_oanda_practice_execution_account_snapshot(
+    payload: Mapping[str, Any], configured_account_id: str
+) -> OandaPracticeExecutionAccountSnapshot:
+    """Normalize one already-fetched Account Details response."""
+    return _normalize_execution_account(payload, configured_account_id)
+
+
 __all__ = [
     "OandaPracticeAccountProperties",
     "OandaPracticeAccountPropertiesNormalizationError",
@@ -423,4 +430,5 @@ __all__ = [
     "OandaPracticeExecutionAccountSnapshot",
     "read_oanda_practice_account_properties",
     "read_oanda_practice_execution_account_snapshot",
+    "normalize_oanda_practice_execution_account_snapshot",
 ]

@@ -1,5 +1,13 @@
 """The narrow OANDA Practice historical-candle and account boundary."""
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .reconciliation import (
+        OandaPracticeReconciliationReader,
+        OandaReconciliationNormalizationError,
+    )
+
 from .account import (
     OandaAccountNormalizationError,
     OandaPracticeAccountIdentity,
@@ -39,6 +47,7 @@ from .execution_account import (
     OandaPracticeExecutionAccountNormalizationError,
     OandaPracticeExecutionAccountReader,
     OandaPracticeExecutionAccountSnapshot,
+    normalize_oanda_practice_execution_account_snapshot,
     read_oanda_practice_account_properties,
     read_oanda_practice_execution_account_snapshot,
 )
@@ -125,6 +134,7 @@ __all__ = [
     "OandaPracticeExecutionAccountNormalizationError",
     "OandaPracticeExecutionAccountReader",
     "OandaPracticeExecutionAccountSnapshot",
+    "normalize_oanda_practice_execution_account_snapshot",
     "bind_oanda_practice_account",
     "is_valid_oanda_practice_account_id",
     "read_oanda_practice_account_properties",
@@ -167,6 +177,8 @@ __all__ = [
     "OandaPracticePriceBucket",
     "OandaPricingNormalizationError",
     "read_oanda_practice_eur_usd_pricing",
+    "OandaPracticeReconciliationReader",
+    "OandaReconciliationNormalizationError",
     "OandaOpenTradeNormalizationError",
     "OandaPracticeOpenTrade",
     "OandaPracticeOpenTradeInventory",
@@ -205,3 +217,14 @@ __all__ = [
     "translate_entry_order",
     "translate_oanda_practice_market_order",
 ]
+
+
+def __getattr__(name: str) -> object:
+    if name in {
+        "OandaPracticeReconciliationReader",
+        "OandaReconciliationNormalizationError",
+    }:
+        from . import reconciliation
+
+        return getattr(reconciliation, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

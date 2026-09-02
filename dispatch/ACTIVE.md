@@ -1,7 +1,7 @@
 # Active Workstream
 
-- **Workstream:** none
-- **Stage:** `IDLE`
-- **Task:** `NONE`
+- **Workstream:** `paper-05-persistence-reconciliation`
+- **Stage:** `BLOCKED`
+- **Task:** `R003`
 - **Role:** `solo-flow`
-- **Approval:** no active workstream
+- **Approval:** R003 VALIDATE found an IMPORTANT PRODUCT defect; stop for developer direction; no R004 authorized

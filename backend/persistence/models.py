@@ -786,3 +786,330 @@ class ExperimentGapDecisionModel(Base):
     affected_event: Mapped[str | None] = mapped_column(String(100))
     blocked: Mapped[bool] = mapped_column(nullable=False)
     details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+
+
+class PaperExecutionAttemptModel(Base):
+    """PAPER broker-attempt evidence, separate from historical Experiments."""
+
+    __tablename__ = "paper_execution_attempts"
+    __table_args__ = (
+        CheckConstraint("provider = 'OANDA'", name="paper_provider"),
+        CheckConstraint("environment = 'PRACTICE'", name="paper_environment"),
+        CheckConstraint("base_currency = 'USD'", name="paper_base_currency"),
+        CheckConstraint("instrument = 'EUR_USD'", name="paper_instrument"),
+        CheckConstraint("direction IN ('LONG', 'SHORT')", name="paper_direction"),
+        CheckConstraint("strategy_version_number > 0", name="paper_version_positive"),
+        CheckConstraint(
+            "source_fingerprint ~ '^[0-9a-f]{64}$'", name="paper_source_fingerprint"
+        ),
+        CheckConstraint(
+            "requested_quantity > 0 AND requested_quantity <> 'NaN'::numeric "
+            "AND requested_quantity <> 'Infinity'::numeric "
+            "AND requested_quantity <> '-Infinity'::numeric",
+            name="paper_quantity_positive_finite",
+        ),
+        CheckConstraint(
+            "approved_entry_price > 0 AND approved_entry_price <> 'NaN'::numeric "
+            "AND approved_entry_price <> 'Infinity'::numeric "
+            "AND approved_entry_price <> '-Infinity'::numeric",
+            name="paper_entry_price_positive_finite",
+        ),
+        CheckConstraint(
+            "stop_price > 0 AND stop_price <> 'NaN'::numeric "
+            "AND stop_price <> 'Infinity'::numeric "
+            "AND stop_price <> '-Infinity'::numeric",
+            name="paper_stop_price_positive_finite",
+        ),
+        CheckConstraint(
+            "display_precision >= 0 AND trade_units_precision >= 0",
+            name="paper_precision_nonnegative",
+        ),
+        CheckConstraint(
+            "(fill_broker_order_id IS NULL AND fill_transaction_id IS NULL "
+            "AND fill_trade_id IS NULL AND fill_signed_units IS NULL "
+            "AND fill_price IS NULL AND fill_executed_at IS NULL "
+            "AND fill_actual_initial_risk IS NULL) OR "
+             "(fill_broker_order_id IS NOT NULL AND fill_transaction_id IS NOT NULL "
+             "AND fill_trade_id IS NOT NULL AND fill_signed_units IS NOT NULL "
+             "AND fill_signed_units <> 0 AND fill_signed_units <> 'NaN'::numeric "
+             "AND fill_signed_units <> 'Infinity'::numeric "
+             "AND fill_signed_units <> '-Infinity'::numeric "
+             "AND fill_price IS NOT NULL AND fill_price > 0 "
+             "AND fill_price <> 'NaN'::numeric "
+             "AND fill_price <> 'Infinity'::numeric "
+             "AND fill_price <> '-Infinity'::numeric "
+             "AND fill_executed_at IS NOT NULL "
+             "AND fill_actual_initial_risk IS NOT NULL "
+             "AND fill_actual_initial_risk >= 0 "
+             "AND fill_actual_initial_risk <> 'NaN'::numeric "
+             "AND fill_actual_initial_risk <> 'Infinity'::numeric "
+             "AND fill_actual_initial_risk <> '-Infinity'::numeric)",
+            name="paper_fill_all_or_none",
+        ),
+        CheckConstraint(
+            "stop_loss_status IN ('CONFIRMED', 'REJECTED', 'UNKNOWN', 'NOT_ATTEMPTED')",
+            name="paper_stop_status",
+        ),
+        CheckConstraint(
+            "take_profit_status IN ('CONFIRMED', 'REJECTED', 'UNKNOWN', 'NOT_ATTEMPTED')",
+            name="paper_take_profit_status",
+        ),
+        CheckConstraint(
+            "execution_outcome IS NULL OR execution_outcome IN "
+            "('FILLED_PROTECTED', 'FILLED_PROTECTION_INCOMPLETE', 'REJECTED', 'CANCELLED', 'UNKNOWN')",
+            name="paper_execution_outcome",
+        ),
+        CheckConstraint(
+            "execution_outcome NOT IN ('FILLED_PROTECTED', 'FILLED_PROTECTION_INCOMPLETE') "
+            "OR fill_broker_order_id IS NOT NULL",
+            name="paper_filled_outcome_requires_fill",
+        ),
+        CheckConstraint(
+            "execution_outcome NOT IN ('REJECTED', 'CANCELLED', 'UNKNOWN') "
+            "OR fill_broker_order_id IS NULL",
+            name="paper_no_fill_outcome",
+        ),
+        CheckConstraint(
+            "execution_outcome <> 'FILLED_PROTECTED' OR "
+            "(stop_loss_status = 'CONFIRMED' AND take_profit_status = 'CONFIRMED' "
+            "AND actual_target_price IS NOT NULL)",
+            name="paper_protected_outcome",
+        ),
+        CheckConstraint(
+            "actual_target_price IS NULL OR (actual_target_price > 0 "
+            "AND actual_target_price <> 'NaN'::numeric "
+            "AND actual_target_price <> 'Infinity'::numeric "
+            "AND actual_target_price <> '-Infinity'::numeric)",
+            name="paper_actual_target_positive_finite",
+        ),
+        CheckConstraint(
+            "reconciliation_status IN ('NOT_RUN', 'CONSISTENT', 'UNRESOLVED', 'CONFLICT', 'LIFECYCLE_ADVANCED')",
+            name="paper_reconciliation_status",
+        ),
+        CheckConstraint("projection_version >= 0", name="paper_projection_version"),
+        UniqueConstraint("client_order_id", name="uq_paper_attempts_client_order"),
+        UniqueConstraint("client_trade_id", name="uq_paper_attempts_client_trade"),
+        UniqueConstraint("client_stop_loss_order_id", name="uq_paper_attempts_client_stop"),
+        UniqueConstraint("client_take_profit_order_id", name="uq_paper_attempts_client_take_profit"),
+        Index("ix_paper_execution_attempts_outcome", "execution_outcome"),
+        Index("ix_paper_execution_attempts_reconciliation", "reconciliation_status"),
+    )
+
+    attempt_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), primary_key=True
+    )
+    strategy_version_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("strategy_versions.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    strategy_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    strategy_version_number: Mapped[int] = mapped_column(nullable=False)
+    source_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    implementation_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    validated_parameter_snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    strategy_evaluation_snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    risk_authority_snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    strategy_decision: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    pre_flight_risk_decision: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    pre_submission_risk_decision: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    provider: Mapped[str] = mapped_column(String(20), nullable=False)
+    environment: Mapped[str] = mapped_column(String(20), nullable=False)
+    provider_account_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    base_currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    instrument: Mapped[str] = mapped_column(String(20), nullable=False)
+    direction: Mapped[str] = mapped_column(String(5), nullable=False)
+    requested_quantity: Mapped[Decimal] = mapped_column(Numeric(30, 10), nullable=False)
+    approved_entry_price: Mapped[Decimal] = mapped_column(Numeric(30, 10), nullable=False)
+    stop_price: Mapped[Decimal] = mapped_column(Numeric(30, 10), nullable=False)
+    decision_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    pricing_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    account_transaction_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    instrument_transaction_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    display_precision: Mapped[int] = mapped_column(nullable=False)
+    trade_units_precision: Mapped[int] = mapped_column(nullable=False)
+    client_order_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    client_trade_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    client_stop_loss_order_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    client_take_profit_order_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+    fill_broker_order_id: Mapped[str | None] = mapped_column(String(128))
+    fill_transaction_id: Mapped[str | None] = mapped_column(String(64))
+    fill_trade_id: Mapped[str | None] = mapped_column(String(128))
+    fill_signed_units: Mapped[Decimal | None] = mapped_column(Numeric(30, 10))
+    fill_price: Mapped[Decimal | None] = mapped_column(Numeric(30, 10))
+    fill_executed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    fill_actual_initial_risk: Mapped[Decimal | None] = mapped_column(Numeric(30, 10))
+    actual_target_price: Mapped[Decimal | None] = mapped_column(Numeric(30, 10))
+    stop_loss_status: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'NOT_ATTEMPTED'"))
+    stop_loss_broker_order_id: Mapped[str | None] = mapped_column(String(128))
+    stop_loss_client_order_id: Mapped[str | None] = mapped_column(String(128))
+    stop_loss_price: Mapped[Decimal | None] = mapped_column(Numeric(30, 10))
+    stop_loss_provider_state: Mapped[str | None] = mapped_column(String(64))
+    take_profit_status: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'NOT_ATTEMPTED'"))
+    take_profit_broker_order_id: Mapped[str | None] = mapped_column(String(128))
+    take_profit_client_order_id: Mapped[str | None] = mapped_column(String(128))
+    take_profit_price: Mapped[Decimal | None] = mapped_column(Numeric(30, 10))
+    take_profit_provider_state: Mapped[str | None] = mapped_column(String(64))
+    execution_outcome: Mapped[str | None] = mapped_column(String(40))
+    rejection_code: Mapped[str | None] = mapped_column(String(64))
+    rejection_broker_order_id: Mapped[str | None] = mapped_column(String(128))
+    rejection_transaction_id: Mapped[str | None] = mapped_column(String(64))
+    uncertainty_code: Mapped[str | None] = mapped_column(String(64))
+    reconciliation_status: Mapped[str] = mapped_column(String(24), nullable=False, server_default=text("'NOT_RUN'"))
+    reconciliation_block_code: Mapped[str | None] = mapped_column(String(64))
+    last_reconciliation_run_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey(
+            "paper_reconciliation_runs.run_id",
+            ondelete="RESTRICT",
+            use_alter=True,
+            name="fk_paper_execution_attempts_last_reconciliation_run",
+        ),
+    )
+    last_reconciled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_applied_transaction_id: Mapped[str | None] = mapped_column(String(64))
+    projection_version: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default=text("0"))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+
+
+class PaperMutationClaimModel(Base):
+    """Append-only possible-mutation barrier for one PAPER attempt."""
+
+    __tablename__ = "paper_mutation_claims"
+    __table_args__ = (
+        CheckConstraint("phase IN ('ENTRY', 'TAKE_PROFIT')", name="paper_claim_phase"),
+        CheckConstraint(
+            "normalized_request_fingerprint ~ '^[0-9a-f]{64}$'",
+            name="paper_claim_request_fingerprint",
+        ),
+        UniqueConstraint("attempt_id", "phase", name="uq_paper_claims_attempt_phase"),
+        Index("ix_paper_mutation_claims_attempt", "attempt_id"),
+    )
+
+    claim_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    attempt_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("paper_execution_attempts.attempt_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    phase: Mapped[str] = mapped_column(String(20), nullable=False)
+    claimed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+    provider_endpoint_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    normalized_request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class PaperBrokerObservationModel(Base):
+    """Append-only normalized provider observation; never an Atlas conclusion."""
+
+    __tablename__ = "paper_broker_observations"
+    __table_args__ = (
+        CheckConstraint("observation_sequence > 0", name="paper_observation_sequence"),
+        CheckConstraint(
+            "read_kind IN ('ENTRY_MUTATION_RESPONSE', 'TAKE_PROFIT_MUTATION_RESPONSE', 'ORDER_DETAIL', 'TRANSACTION_DETAIL', 'TRANSACTION_RANGE', 'TRADE_DETAIL', 'ACCOUNT_DETAILS')",
+            name="paper_observation_read_kind",
+        ),
+        CheckConstraint(
+            "object_kind IN ('ORDER', 'TRANSACTION', 'TRADE', 'ACCOUNT', 'MUTATION_RESULT')",
+            name="paper_observation_object_kind",
+        ),
+        CheckConstraint("provider = 'OANDA' AND environment = 'PRACTICE'", name="paper_observation_scope"),
+        CheckConstraint("instrument IS NULL OR instrument = 'EUR_USD'", name="paper_observation_instrument"),
+        CheckConstraint("jsonb_typeof(normalized_facts) = 'object'", name="paper_observation_facts_object"),
+        CheckConstraint("jsonb_typeof(related_transaction_ids) = 'array' AND jsonb_array_length(related_transaction_ids) <= 64", name="paper_observation_related_ids"),
+        CheckConstraint("normalized_schema_version <> ''", name="paper_observation_schema_version"),
+        UniqueConstraint("attempt_id", "normalized_facts_fingerprint", name="uq_paper_observations_fact"),
+        UniqueConstraint("attempt_id", "observation_sequence", name="uq_paper_observations_sequence"),
+        Index("ix_paper_broker_observations_attempt_kind", "attempt_id", "read_kind"),
+    )
+
+    observation_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    attempt_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("paper_execution_attempts.attempt_id", ondelete="RESTRICT"), nullable=False
+    )
+    mutation_claim_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("paper_mutation_claims.claim_id", ondelete="RESTRICT")
+    )
+    reconciliation_run_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("paper_reconciliation_runs.run_id", ondelete="RESTRICT")
+    )
+    observation_sequence: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    read_kind: Mapped[str] = mapped_column(String(40), nullable=False)
+    object_kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    provider: Mapped[str] = mapped_column(String(20), nullable=False)
+    environment: Mapped[str] = mapped_column(String(20), nullable=False)
+    provider_account_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    instrument: Mapped[str | None] = mapped_column(String(20))
+    provider_order_id: Mapped[str | None] = mapped_column(String(128))
+    provider_transaction_id: Mapped[str | None] = mapped_column(String(64))
+    provider_trade_id: Mapped[str | None] = mapped_column(String(128))
+    client_order_id: Mapped[str | None] = mapped_column(String(128))
+    client_trade_id: Mapped[str | None] = mapped_column(String(128))
+    client_protection_order_id: Mapped[str | None] = mapped_column(String(128))
+    provider_type: Mapped[str | None] = mapped_column(String(64))
+    provider_state: Mapped[str | None] = mapped_column(String(64))
+    signed_units: Mapped[Decimal | None] = mapped_column(Numeric(30, 10))
+    price: Mapped[Decimal | None] = mapped_column(Numeric(30, 10))
+    executed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    request_id: Mapped[str | None] = mapped_column(String(256))
+    batch_id: Mapped[str | None] = mapped_column(String(128))
+    related_transaction_ids: Mapped[list[str]] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    last_transaction_id: Mapped[str | None] = mapped_column(String(64))
+    provider_observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    atlas_observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    normalized_schema_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    normalized_facts: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    normalized_facts_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class PaperReconciliationRunModel(Base):
+    """Append-only summary of one finite, read-only reconciliation request."""
+
+    __tablename__ = "paper_reconciliation_runs"
+    __table_args__ = (
+        CheckConstraint("run_sequence > 0", name="paper_run_sequence"),
+        CheckConstraint("status IN ('PROVEN', 'UNRESOLVED', 'CONFLICT', 'LIFECYCLE_ADVANCED', 'FAILED')", name="paper_run_status"),
+        CheckConstraint("projection_version_observed >= 0", name="paper_run_observed_version"),
+        CheckConstraint("projection_version_applied IS NULL OR projection_version_applied >= 0", name="paper_run_applied_version"),
+        CheckConstraint("read_count >= 0 AND read_budget > 0 AND read_count <= read_budget", name="paper_run_budget"),
+        CheckConstraint("jsonb_typeof(finding_codes) = 'array' AND jsonb_array_length(finding_codes) <= 64", name="paper_run_findings"),
+        CheckConstraint("prior_execution_outcome IS NULL OR prior_execution_outcome IN ('FILLED_PROTECTED', 'FILLED_PROTECTION_INCOMPLETE', 'REJECTED', 'CANCELLED', 'UNKNOWN')", name="paper_run_prior_outcome"),
+        CheckConstraint("resulting_execution_outcome IS NULL OR resulting_execution_outcome IN ('FILLED_PROTECTED', 'FILLED_PROTECTION_INCOMPLETE', 'REJECTED', 'CANCELLED', 'UNKNOWN')", name="paper_run_resulting_outcome"),
+        UniqueConstraint("attempt_id", "run_sequence", name="uq_paper_runs_attempt_sequence"),
+        Index("ix_paper_reconciliation_runs_attempt_created", "attempt_id", "created_at"),
+    )
+
+    run_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    attempt_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), ForeignKey("paper_execution_attempts.attempt_id", ondelete="RESTRICT"), nullable=False
+    )
+    run_sequence: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    read_started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False)
+    projection_version_observed: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    projection_version_applied: Mapped[int | None] = mapped_column(BigInteger)
+    read_count: Mapped[int] = mapped_column(nullable=False)
+    read_budget: Mapped[int] = mapped_column(nullable=False)
+    frontier_before: Mapped[str | None] = mapped_column(String(64))
+    frontier_observed: Mapped[str | None] = mapped_column(String(64))
+    frontier_applied: Mapped[str | None] = mapped_column(String(64))
+    non_atomic_read_set: Mapped[bool] = mapped_column(nullable=False, server_default=text("true"))
+    prior_execution_outcome: Mapped[str | None] = mapped_column(String(40))
+    resulting_execution_outcome: Mapped[str | None] = mapped_column(String(40))
+    finding_codes: Mapped[list[str]] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    diagnostic_summary: Mapped[str] = mapped_column(String(500), nullable=False, server_default=text("''"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP"))

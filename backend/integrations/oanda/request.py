@@ -2,6 +2,7 @@
 
 import math
 from collections.abc import Mapping
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from time import sleep
@@ -20,6 +21,14 @@ from .source import (
 _MAX_ATTEMPTS = 3
 _RETRY_AFTER_CAP_SECONDS = 30.0
 _BACKOFF_SECONDS = (0.25, 0.5)
+
+
+@dataclass(frozen=True, slots=True)
+class OandaObservationResponse:
+    """Decoded GET data with only the provider response metadata we retain."""
+
+    payload: Any = field(repr=False)
+    request_id: str | None
 
 
 def validate_token(token: SecretStr | None) -> None:
@@ -84,6 +93,18 @@ class OandaObservationRequester:
         params: Mapping[str, str] | None = None,
     ) -> Any:
         """Return decoded JSON from one authenticated, bounded observation GET."""
+        return self.get_json_with_metadata(
+            path, error_subject=error_subject, params=params
+        ).payload
+
+    def get_json_with_metadata(
+        self,
+        path: str,
+        *,
+        error_subject: str,
+        params: Mapping[str, str] | None = None,
+    ) -> OandaObservationResponse:
+        """Return decoded JSON and supplied RequestID for one bounded GET."""
         request_params = None if params is None else dict(params)
         validate_token(self._token)
         token = cast(SecretStr, self._token)
@@ -125,12 +146,18 @@ class OandaObservationRequester:
 
                 status = response.status_code
                 if status in (401, 403):
-                    raise OandaAuthError(status, attempts, "OANDA authorization failed")
+                    raise OandaAuthError(
+                        status,
+                        attempts,
+                        "OANDA authorization failed",
+                        request_id=_response_request_id(response),
+                    )
                 if status in (400, 404):
                     raise OandaRequestError(
                         status,
                         attempts,
                         f"OANDA {error_subject} request was rejected",
+                        request_id=_response_request_id(response),
                     )
                 if status == 408 or status == 429 or 500 <= status <= 599:
                     if attempts == _MAX_ATTEMPTS:
@@ -138,6 +165,7 @@ class OandaObservationRequester:
                             status,
                             attempts,
                             f"OANDA {error_subject} request failed after retries",
+                            request_id=_response_request_id(response),
                         )
                     delay = _retry_after(response)
                     if delay <= 0 or not math.isfinite(delay):
@@ -149,9 +177,13 @@ class OandaObservationRequester:
                         status,
                         attempts,
                         f"OANDA {error_subject} request failed",
+                        request_id=_response_request_id(response),
                     )
                 try:
-                    return response.json()
+                    return OandaObservationResponse(
+                        payload=response.json(),
+                        request_id=_response_request_id(response),
+                    )
                 except ValueError:
                     raise OandaRequestError(
                         status,
@@ -162,3 +194,15 @@ class OandaObservationRequester:
         finally:
             if owned_client:
                 client.close()
+
+
+def _response_request_id(response: httpx.Response) -> str | None:
+    value = response.headers.get("RequestID")
+    if value is None or not value or len(value) > 128:
+        return None
+    if any(ord(character) < 32 for character in value):
+        return None
+    return value
+
+
+__all__ = ["OandaObservationRequester", "OandaObservationResponse", "validate_token"]
