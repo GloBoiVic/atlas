@@ -8,6 +8,10 @@ from .account import (
     bind_oanda_practice_account,
     read_oanda_practice_account_summary,
 )
+from .exposure_projection import (
+    OandaExposureProjectionError,
+    project_oanda_practice_eur_usd_exposure_state,
+)
 from .orders import (
     OandaPendingOrderNormalizationError,
     OandaPracticePendingOrder,
@@ -60,7 +64,9 @@ __all__ = [
     "OandaPracticeAccountSummarySnapshot",
     "OandaPracticeAccountValidator",
     "bind_oanda_practice_account",
+    "OandaExposureProjectionError",
     "project_oanda_practice_account_state",
+    "project_oanda_practice_eur_usd_exposure_state",
     "read_oanda_practice_account_summary",
     "FetchDiagnostics",
     "FetchResult",
