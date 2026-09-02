@@ -1,5 +1,29 @@
 # Completed
 
+<!-- completion-id: paper-02-strategy-evaluation -->
+## PAPER 02 — Strategy Evaluation — completion record
+
+- **Date/status:** 2026-09-01 — terminal closure approved; T001/T002 BUILD, focused validation,
+  and independent review **PASS** with no unresolved Critical or Important findings.
+- **Commit:** `3798d61` Implement PAPER Strategy evaluation; the feature branch was pushed to
+  GitHub and fast-forward merged into `main`.
+- **Scope:** Added the read-only PAPER current analytical frontier seam for explicit UTC-cutoff,
+  completed native OANDA EUR/USD M15/MID data and eligible warm-up context, plus exact persisted
+  StrategyVersion composition through registry provenance, complete explicit parameters, caller-held
+  Strategy state, explicit FinancialPositionState-to-Strategy-PositionState translation, and the
+  existing `evaluate_strategy(...)`/`StrategyEvaluation` contract. No Risk, execution, pricing,
+  sizing, persistence, reconciliation, runtime, API/UI, broker mutation, activation, or LIVE
+  behavior was added.
+- **Validation:** Combined focused validation **115 passed**; targeted Ruff format/lint, Pyright,
+  and `git diff --check` passed. No full backend, database, frontend, browser, migration, or
+  credentialed external OANDA checks were run.
+- **Review:** `dispatch/workstreams/paper-02-strategy-evaluation/REVIEW.md` — **PASS**; no
+  unresolved Critical or Important findings.
+- **Git/state:** Required PLAN, T001/T002, validation, and review evidence preserved; the feature
+  branch was fast-forward merged into `main`; `dispatch/ACTIVE.md` cleared and `main` pushed to
+  GitHub. The capability remains one-shot and caller-state-held; no durable PAPER resume authority
+  or capital-capable behavior was introduced.
+
 <!-- completion-id: paper-01h-oanda-practice-eur-usd-exposure-state-projection -->
 ## PAPER 01H — OANDA Practice EUR/USD Exposure-State Projection — completion record
 
