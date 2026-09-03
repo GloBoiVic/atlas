@@ -1,5 +1,38 @@
 # Completed
 
+<!-- completion-id: paper-06-runtime-activation -->
+## PAPER 06 — Runtime Activation — completion record
+
+- **Date/status:** 2026-09-03 — terminal closure approved; T001–T008 and the
+  post-cap R004–R006 BUILD, independent VALIDATE, and independent REVIEW chains
+  **PASS** with no unresolved Critical, Important, or Minor product findings.
+- **Commit:** `5927b1c` Implement PAPER runtime activation; the feature branch was
+  pushed to GitHub and fast-forward merged into `main`.
+- **Scope:** Added the bounded durable PAPER runtime activation/orchestration,
+  ownership and STOP controls, deterministic Strategy progression, and the
+  provider-specific startup capability proof. R004 corrected terminal P05 safety
+  classification so `NOT_RUN` alone is not unsafe for definite terminal outcomes;
+  R005 proves the configured OANDA Practice USD account is non-MT4 before
+  `RUNNING`; R006 preserves exact Decimal `risk_per_trade` identity through
+  PostgreSQL with unconstrained `NUMERIC`. Fresh account truth remains distinct
+  from historical `FILLED_PROTECTED` truth, and runtime has no direct broker
+  mutation authority.
+- **Validation:** Full deterministic non-integration/non-external backend suite
+  **1108 passed, 4 skipped, 115 deselected**; dedicated PAPER 06 PostgreSQL
+  suite **17 passed**; focused PAPER 05/OANDA and cross-remediation regressions
+  passed; exact Decimal round-trip/replay/conflict and migration
+  upgrade/downgrade/upgrade passed; Alembic current/check, changed-slice Ruff,
+  focused Pyright, and `git diff --check` passed. The documented repository-wide
+  Pyright baseline remains non-blocking tooling debt. No real OANDA request,
+  credentials, broker mutation, PAPER activation, or LIVE operation occurred.
+- **Review:** R004, R005, and R006 independent review artifacts — **PASS**;
+  no unresolved Critical, Important, or Minor product findings and no R007
+  required or authorized.
+- **Git/state:** `solo/paper-06-runtime-activation` was pushed and fast-forward
+  merged into `main`; `main` was pushed to GitHub; `dispatch/ACTIVE.md` was
+  cleared; all workstream and remediation evidence is preserved. No GIT END
+  capital-capable operation or real broker mutation occurred.
+
 <!-- completion-id: paper-05-persistence-reconciliation -->
 ## PAPER 05 — Persistence + Reconciliation — completion record
 
