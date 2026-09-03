@@ -1,5 +1,38 @@
 # Completed
 
+<!-- completion-id: paper-05-persistence-reconciliation -->
+## PAPER 05 — Persistence + Reconciliation — completion record
+
+- **Date/status:** 2026-09-02 — terminal closure approved; T001–T003 and R001–R004
+  evidence preserved. The final R004 BUILD, independent VALIDATE, and fresh REVIEW
+  chains **PASS** with no unresolved Critical or Important findings. Earlier failed
+  T003/R003 evidence remains immutable and is superseded by the approved R004
+  correction chain.
+- **Commit:** `73c19d8` Correct PAPER reconciliation terminal history conflict; the
+  feature branch was pushed to GitHub and fast-forward merged into `main`.
+- **Scope:** Corrected the provider-neutral reconciliation history rule so an
+  attributable later Fill after durable `REJECTED` or `CANCELLED` history advances
+  execution truth while retaining `ReconciliationStatus.CONFLICT` and the
+  `CONFLICT` finding across exact Order → Transaction and bounded Transaction-range
+  paths. Added deterministic exact/range, Trade/protection, NULL/UNKNOWN, same
+  terminal, and contradictory terminal regressions. No migration/schema, Strategy,
+  Risk, PAPER 04 mutation, runtime, activation, OANDA write, repair, or LIVE behavior
+  changed.
+- **Validation:** R004 matrix **12 passed**; focused PAPER/OANDA suite **107 passed**;
+  broad safe backend **975 passed, 4 skipped, 97 deselected**; changed-slice Ruff,
+  Pyright, and `git diff --check` passed. Dedicated PostgreSQL tests were skipped
+  without `ATLAS_TEST_DATABASE_URL`; stale configured Alembic state and unrelated
+  repository-wide Ruff/Pyright baseline findings remain documented non-blocking
+  environment concerns. No real OANDA request, credential, broker mutation, PAPER
+  activation, runtime operation, or capital-capable action occurred.
+- **Review:** `dispatch/workstreams/paper-05-persistence-reconciliation/remediations/R004-paper-05-terminal-history-conflict/REVIEW.md`
+  — fresh independent **PASS**; no unresolved Critical or Important findings and no
+  R005 warranted or authorized.
+- **Git/state:** `solo/paper-05-persistence-reconciliation` and `main` were pushed to
+  GitHub; the feature branch was fast-forward merged into `main`; `dispatch/ACTIVE.md`
+  was cleared; all workstream evidence is preserved. No real broker mutation or
+  PAPER activation occurred.
+
 <!-- completion-id: paper-04-broker-execution -->
 ## PAPER 04 — Broker Execution — completion record
 

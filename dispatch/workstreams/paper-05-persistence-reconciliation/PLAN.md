@@ -8,11 +8,11 @@
 - **Base:** `main` at `7a3204c41a394172752ab64b8aeab3f8fbcccf5e` (`Close PAPER 04 workstream`)
 - **Base SHA:** `7a3204c41a394172752ab64b8aeab3f8fbcccf5e`
 - **Branch:** `solo/paper-05-persistence-reconciliation`
-- **Phase:** `READY_FOR_USER`
-- **Approval:** explicit developer authorization granted in the current request for exactly one narrow post-cap R004 correction
+- **Phase:** `COMPLETED`
+- **Approval:** terminal closure, merge, and GitHub push explicitly authorized in the current request
 - **Architecture:** `FROZEN` for approval review; `ARCHITECTURE.md` is canonical with this PLAN
 - **Task state:** `T001` `DONE_WITH_CONCERNS`; `R001` `DONE_WITH_CONCERNS` with validation/review `PASS`; `T002` `DONE_WITH_CONCERNS` with validation/review `PASS`; `R002` `DONE` with validation/review `PASS`; `T003` `DONE_WITH_CONCERNS`; validation `FAIL`; `R003` `DONE`; validation `FAIL`; `R004` `DONE`; validation `PASS`; review `PASS`
-- **Next action:** Report R004 as ready for user direction. Do not create R005, merge, or GIT END. If further review is requested, preserve this completed remediation chain and use a new authorized process.
+- **Next action:** workstream closed; preserve all immutable task, validation, review, and remediation evidence; no R005 created.
 - **Concerns:** This crosses durable financial truth, migration/constraint/concurrency behavior, broker authority, restart recovery, and the first durable boundary around capital-capable PAPER execution. Existing Experiment persistence is historical-only and must not be reused as PAPER broker truth. No broker mutation, automatic recovery mutation, runtime activation, PAPER scheduling, closing/reducing exposure, or protective-order repair is authorized by this workstream. The workstream-wide two-remediation-return cap remains exhausted. The developer has authorized exactly one narrow post-cap R004 chain for this approved-scope PRODUCT defect; if R004 VALIDATE or REVIEW finds any Critical or Important PRODUCT defect, stop and report that exact finding without creating R005.
 
 ## 1. Repository-grounded starting point
