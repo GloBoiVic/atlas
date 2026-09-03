@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from types import SimpleNamespace
 from uuid import UUID
 
@@ -11,49 +14,44 @@ from fastapi.testclient import TestClient
 
 from backend.api.local_authority import LocalAuthorityMiddleware
 from backend.api.paper import create_paper_router
+from backend.api.schemas import PaperRuntimeActivationResponse
+from backend.domain import FinancialPositionState, ValidatedParameterPayload
+from backend.runtime import (
+    PaperRuntimeActivation,
+    PaperRuntimeActivationResult,
+    PaperRuntimeLifecycleState,
+    PaperRuntimeOperationalPhase,
+    PaperRuntimeStatus,
+    runtime_parameter_fingerprint,
+)
 from backend.runtime.activation import PaperRuntimeServiceError
 
 ACTIVATION_ID = UUID("11111111-1111-1111-1111-111111111111")
 VERSION_ID = UUID("22222222-2222-2222-2222-222222222222")
 ATTEMPT_ID = UUID("33333333-3333-3333-3333-333333333333")
+REQUESTED_AT = datetime(2026, 9, 3, 8, tzinfo=timezone(timedelta(hours=-4)))
+EXPECTED_REQUESTED_AT = "2026-09-03T12:00:00Z"
 
 
-def _activation_payload() -> dict[str, object]:
-    return {
-        "activation_id": str(ACTIVATION_ID),
-        "strategy_version_id": str(VERSION_ID),
-        "strategy_key": "runtime_fixture",
-        "strategy_version_number": 1,
-        "source_fingerprint": "a" * 64,
-        "implementation_key": "runtime_fixture.v1",
-        "validated_parameter_snapshot": {},
-        "parameter_fingerprint": "b" * 64,
-        "risk_per_trade": "0.0100",
-        "provider": "OANDA",
-        "environment": "PRACTICE",
-        "provider_account_id": "001-002-003-004",
-        "base_currency": "USD",
-        "instrument": "EUR_USD",
-        "state_origin": "FRESH_BOOTSTRAP",
-        "runtime_policy_version": "ATLAS_PAPER_RUNTIME_V1",
-        "poll_interval_seconds": 15,
-        "approval_kind": "EXPLICIT_LOCAL_TRADER",
-        "approval_code": "ACTIVATE_PAPER",
-        "requested_at": "2026-09-03T12:00:00Z",
-        "lifecycle_state": "RUNNING",
-        "state_reason_code": None,
-        "state_detail": None,
-        "state_changed_at": "2026-09-03T12:00:00Z",
-        "operational_phase": "WAITING_FRONTIER",
-        "last_operational_reason_code": None,
-        "last_operational_at": None,
-        "strategy_state": None,
-        "strategy_state_fingerprint": None,
-        "last_frontier_end": None,
-        "last_cycle_id": None,
-        "control_version": 0,
-        "updated_at": "2026-09-03T12:00:00Z",
-    }
+def _activation(
+    lifecycle_state: PaperRuntimeLifecycleState = PaperRuntimeLifecycleState.RUNNING,
+) -> PaperRuntimeActivation:
+    parameters = ValidatedParameterPayload.from_mapping((), {})
+    return PaperRuntimeActivation(
+        activation_id=ACTIVATION_ID,
+        strategy_version_id=VERSION_ID,
+        strategy_key="runtime_fixture",
+        strategy_version_number=1,
+        source_fingerprint="a" * 64,
+        implementation_key="runtime_fixture.v1",
+        validated_parameter_snapshot=parameters,
+        parameter_fingerprint=runtime_parameter_fingerprint(parameters),
+        risk_per_trade=Decimal("0.0100"),
+        provider_account_id="001-002-003-004",
+        requested_at=REQUESTED_AT,
+        lifecycle_state=lifecycle_state,
+        operational_phase=PaperRuntimeOperationalPhase.WAITING_FRONTIER,
+    )
 
 
 class _PaperService:
@@ -61,6 +59,7 @@ class _PaperService:
         self.activation_requests: list[object] = []
         self.stop_requests: list[tuple[UUID, object]] = []
         self.reconcile_ids: list[UUID] = []
+        self.activation = _activation()
 
     def capability(self):
         return SimpleNamespace(
@@ -83,32 +82,29 @@ class _PaperService:
 
     def activate(self, request: object):
         self.activation_requests.append(request)
-        return SimpleNamespace(
-            to_json=lambda: {"activation": _activation_payload(), "replayed": False}
+        return PaperRuntimeActivationResult(
+            activation=self.activation,
+            replayed=False,
         )
 
-    def get_active(self):
-        return SimpleNamespace(activation_id=ACTIVATION_ID)
+    def get_active(self) -> PaperRuntimeActivation | None:
+        return self.activation
 
     def status(self, activation_id: UUID):
-        payload = _activation_payload()
-        payload["activation_id"] = str(activation_id)
-        return SimpleNamespace(
-            to_json=lambda: {
-                "activation": payload,
-                "current_financial_position_state": "LONG",
-                "execution_outcome": "FILLED_PROTECTED",
-                "reconciliation_status": "LIFECYCLE_ADVANCED",
-                "terminal_runtime_state_does_not_prove_flat": True,
-            }
+        return PaperRuntimeStatus(
+            activation=replace(self.activation, activation_id=activation_id),
+            current_financial_position_state=FinancialPositionState.LONG,
+            execution_outcome="FILLED_PROTECTED",
+            reconciliation_status="LIFECYCLE_ADVANCED",
         )
 
     def stop(self, activation_id: UUID, request: object):
         self.stop_requests.append((activation_id, request))
-        payload = _activation_payload()
-        payload["activation_id"] = str(activation_id)
-        payload["lifecycle_state"] = "STOP_REQUESTED"
-        return SimpleNamespace(to_json=lambda: payload)
+        return replace(
+            self.activation,
+            activation_id=activation_id,
+            lifecycle_state=PaperRuntimeLifecycleState.STOP_REQUESTED,
+        )
 
     def reconcile(self, activation_id: UUID):
         self.reconcile_ids.append(activation_id)
@@ -197,17 +193,45 @@ def test_paper_routes_project_all_control_and_status_seams() -> None:
     assert capability.status_code == 200
     assert capability.json()["activationRequired"] is True
     assert activation.status_code == 200
-    assert activation.json()["activation"]["riskPerTrade"] == "0.0100"
+    assert activation.json()["activation"]["requestedAt"] == EXPECTED_REQUESTED_AT
+    assert isinstance(activation.json()["activation"]["riskPerTrade"], str)
+    assert activation.json()["activation"]["riskPerTrade"] == "0.01"
     assert active.status_code == detail.status_code == 200
+    assert active.json()["activation"]["requestedAt"] == EXPECTED_REQUESTED_AT
+    assert detail.json()["activation"]["requestedAt"] == EXPECTED_REQUESTED_AT
+    assert isinstance(active.json()["activation"]["riskPerTrade"], str)
+    assert active.json()["activation"]["riskPerTrade"] == "0.01"
+    assert isinstance(detail.json()["activation"]["riskPerTrade"], str)
+    assert detail.json()["activation"]["riskPerTrade"] == "0.01"
     assert active.json()["currentFinancialPositionState"] == "LONG"
     assert active.json()["terminalRuntimeStateDoesNotProveFlat"] is True
     assert stopped.status_code == 200
+    assert stopped.json()["requestedAt"] == EXPECTED_REQUESTED_AT
+    assert isinstance(stopped.json()["riskPerTrade"], str)
+    assert stopped.json()["riskPerTrade"] == "0.01"
     assert stopped.json()["lifecycleState"] == "STOP_REQUESTED"
     assert reconciled.status_code == 200
     assert reconciled.json()["executionOutcome"] == "UNKNOWN"
     assert len(service.activation_requests) == 1
     assert service.stop_requests[0][0] == ACTIVATION_ID
     assert service.reconcile_ids == [ACTIVATION_ID]
+
+
+def test_real_activation_projection_restores_requested_at_and_decimal_contract() -> (
+    None
+):
+    activation = _activation()
+
+    projection = activation.to_json()
+    assert projection["requested_at"] == EXPECTED_REQUESTED_AT
+    assert projection["risk_per_trade"] == "0.01"
+
+    response = PaperRuntimeActivationResponse.model_validate(projection)
+    serialized = response.model_dump(by_alias=True, mode="json")
+    assert serialized["requestedAt"] == EXPECTED_REQUESTED_AT
+    assert isinstance(serialized["riskPerTrade"], str)
+    assert serialized["riskPerTrade"] == "0.01"
+    assert "requested_at" not in activation.immutable_json()
 
 
 def test_paper_activation_contract_rejects_numbers_and_unknown_fields() -> None:
@@ -287,7 +311,7 @@ def test_paper_active_and_detail_routes_use_safe_not_found_contracts() -> None:
         def get_active(self):
             return None
 
-        def status(self, _activation_id: UUID):
+        def status(self, activation_id: UUID):
             raise PaperRuntimeServiceError(
                 "ACTIVATION_NOT_FOUND", "activation was not found"
             )
