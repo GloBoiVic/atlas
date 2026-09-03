@@ -11,10 +11,10 @@ the domain read services remain the authority for their contents.
 
 from datetime import datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
 
 
 def _camel(value: str) -> str:
@@ -26,6 +26,124 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(
         alias_generator=_camel, populate_by_name=True, extra="forbid"
     )
+
+
+class PaperActivationRequest(StrictModel):
+    """Exact non-secret activation request accepted by the PAPER boundary."""
+
+    activation_request_id: UUID
+    strategy_version_id: UUID
+    parameters: dict[str, Any]
+    risk_per_trade: Decimal
+    confirmation: Literal["ACTIVATE_PAPER"]
+
+    @field_validator("risk_per_trade", mode="before")
+    @classmethod
+    def require_decimal_wire_value(cls, value: object) -> object:
+        # Financial values use strings on the HTTP wire.  Decimal is accepted
+        # for direct typed callers, while JSON numbers are rejected before a
+        # binary float can become activation authority.
+        if type(value) not in (str, Decimal):
+            raise ValueError("riskPerTrade must be a decimal string")
+        return value
+
+    @field_validator("risk_per_trade")
+    @classmethod
+    def validate_risk_per_trade(cls, value: Decimal) -> Decimal:
+        if not value.is_finite() or not 0 < value < 1:
+            raise ValueError(
+                "riskPerTrade must be finite, greater than zero, and less than one"
+            )
+        return value
+
+
+class PaperStopRequest(StrictModel):
+    reason: str = Field(min_length=1, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def validate_stop_reason(cls, value: str) -> str:
+        if any(ord(character) < 32 for character in value):
+            raise ValueError("reason contains control characters")
+        return value
+
+
+class PaperCapabilityResponse(StrictModel):
+    provider: str
+    environment: str
+    base_currency: str
+    instrument: str
+    analytical_resolution: str
+    analytical_price_component: str
+    poll_interval_seconds: int
+    token_configured: bool
+    account_configured: bool
+    configured_account_id: str | None
+    available: bool
+    reason_code: str | None
+    activation_required: bool
+
+
+class PaperRuntimeActivationResponse(StrictModel):
+    activation_id: UUID
+    strategy_version_id: UUID
+    strategy_key: str
+    strategy_version_number: int
+    source_fingerprint: str
+    implementation_key: str
+    validated_parameter_snapshot: dict[str, Any]
+    parameter_fingerprint: str
+    provider: str
+    environment: str
+    provider_account_id: str
+    base_currency: str
+    instrument: str
+    risk_per_trade: Decimal
+    state_origin: str
+    runtime_policy_version: str
+    poll_interval_seconds: int
+    approval_kind: str
+    approval_code: str
+    requested_at: str
+    lifecycle_state: str
+    state_reason_code: str | None
+    state_detail: str | None
+    state_changed_at: str
+    operational_phase: str
+    last_operational_reason_code: str | None
+    last_operational_at: str | None
+    strategy_state: dict[str, Any] | None
+    strategy_state_fingerprint: str | None
+    last_frontier_end: str | None
+    last_cycle_id: UUID | None
+    control_version: int
+    updated_at: str
+
+    @field_serializer("risk_per_trade")
+    def serialize_risk_per_trade(self, value: Decimal) -> str:
+        return str(value)
+
+
+class PaperRuntimeActivationResultResponse(StrictModel):
+    activation: PaperRuntimeActivationResponse
+    replayed: bool
+
+
+class PaperRuntimeStatusResponse(StrictModel):
+    activation: PaperRuntimeActivationResponse
+    current_financial_position_state: str | None
+    execution_outcome: str | None
+    reconciliation_status: str
+    terminal_runtime_state_does_not_prove_flat: bool
+
+
+class PaperRuntimeReconcileResponse(StrictModel):
+    activation_id: UUID
+    attempt_id: UUID | None
+    performed: bool
+    reconciliation_status: str | None
+    execution_outcome: str | None
+    stale: bool
 
 
 class PeriodRequest(StrictModel):
@@ -200,11 +318,19 @@ class PriceAnalysisResponse(StrictModel):
     reference: list[PriceAnalysisFactResponse]
     diagnostics: PriceAnalysisDiagnosticsResponse
     provenance: dict[str, Any] = Field(default_factory=dict)
-    gaps: list[dict[str, Any]] = Field(default_factory=list)
-    evidence: list[dict[str, Any]] = Field(default_factory=list)
-    landmarks: list[PriceAnalysisLandmarkResponse] = Field(default_factory=list)
-    proposal_diagnostics: list[ProposalStatusResponse] = Field(default_factory=list)
-    setup_facts: list[dict[str, Any]] = Field(default_factory=list)
+    gaps: list[dict[str, Any]] = Field(default_factory=lambda: list[dict[str, Any]]())
+    evidence: list[dict[str, Any]] = Field(
+        default_factory=lambda: list[dict[str, Any]]()
+    )
+    landmarks: list[PriceAnalysisLandmarkResponse] = Field(
+        default_factory=lambda: list[PriceAnalysisLandmarkResponse]()
+    )
+    proposal_diagnostics: list[ProposalStatusResponse] = Field(
+        default_factory=lambda: list[ProposalStatusResponse]()
+    )
+    setup_facts: list[dict[str, Any]] = Field(
+        default_factory=lambda: list[dict[str, Any]]()
+    )
     market_requirements: dict[str, Any] = Field(default_factory=dict)
 
 

@@ -37,6 +37,7 @@ from backend.paper import (
 from backend.paper.durable_execution import PaperDurableExecutionApplication
 from backend.persistence.paper_execution_repository import DuplicateMutationClaim
 from backend.risk import RiskConfig
+from backend.runtime import PaperRuntimeOwnerLost
 from backend.tests.paper.test_execution_composition import (
     ACCOUNT_ID,
     ATTEMPT_ID,
@@ -85,6 +86,13 @@ class Repository:
         return self.attempts.get(attempt_id)
 
     def commit_entry_claim(
+        self, session: object, attempt: Any, **kwargs: object
+    ) -> Any:
+        claim = self.persist_entry_claim(session, attempt, **kwargs)
+        session.commit()  # type: ignore[attr-defined]
+        return claim
+
+    def persist_entry_claim(
         self, session: object, attempt: Any, **kwargs: object
     ) -> Any:
         if self.fail_entry_commit:
@@ -483,6 +491,35 @@ def test_durable_barriers_commit_before_each_mutation_and_risk_is_used_once(
     assert events.count("take-profit-claim") == 1
 
 
+def test_runtime_owner_guard_fences_entry_before_broker_mutation() -> None:
+    events: list[str] = []
+    repository = Repository(events)
+    entry = EntryRequester(events)
+    operation = app(
+        repository,
+        events,
+        entry,
+        ProtectionRequester(events),
+        TradeReader(events),
+    )
+    prepared = operation.prepare_entry_claim(
+        receipt(), config=RiskConfig(Decimal("0.01")), attempt_id=ATTEMPT_ID
+    )
+
+    def owner_guard() -> None:
+        raise PaperRuntimeOwnerLost("runtime owner was lost")
+
+    with pytest.raises(PaperRuntimeOwnerLost):
+        operation.submit_claimed_entry(
+            prepared,  # type: ignore[arg-type]
+            entry_claim_id=UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+            mutation_guard=owner_guard,
+        )
+
+    assert entry.calls == 0
+    assert "entry-post" not in events
+
+
 @pytest.mark.parametrize(
     "trade",
     [
@@ -556,6 +593,27 @@ def test_entry_commit_failure_prohibits_entry_post() -> None:
     assert result.code is PaperExecutionRefusalCode.LOCAL_SERIALIZATION_REJECTED
     assert entry.calls == 0
     assert "entry-post" not in events
+
+
+def test_caller_owned_entry_claim_stages_before_provider_mutation() -> None:
+    events: list[str] = []
+    repository = Repository(events)
+    entry = EntryRequester(events)
+    operation = app(
+        repository, events, entry, ProtectionRequester(events), TradeReader(events)
+    )
+    prepared = operation.prepare_entry_claim(
+        receipt(), config=RiskConfig(Decimal("0.01")), attempt_id=ATTEMPT_ID
+    )
+    assert not isinstance(prepared, PaperExecutionRefusal)
+
+    session: Any = Session(events)
+    claim = operation.persist_entry_claim(session, prepared)
+
+    assert claim.claim_id == repository.entry_claim_id
+    assert "entry-claim" in events
+    assert "commit" not in events
+    assert entry.calls == 0
 
 
 class UnknownEntry:

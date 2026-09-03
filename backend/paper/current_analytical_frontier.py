@@ -87,6 +87,86 @@ class CurrentAnalyticalFrontier:
         """Ordered bars suitable for the Strategy's analytical context."""
         return self.bars
 
+    def validate(self) -> None:
+        """Revalidate the immutable runtime handoff without another provider read."""
+        cutoff = _require_utc(self.acquisition_cutoff, "acquisition_cutoff")
+        requested_start = _require_utc(self.requested_start, "requested_start")
+        requested_end = _require_utc(self.requested_end, "requested_end")
+        if requested_start >= requested_end or requested_end != cutoff:
+            raise AnalyticalFrontierDataError("analytical frontier range is invalid")
+        if cutoff.minute % 15 or cutoff.second or cutoff.microsecond:
+            raise AnalyticalFrontierDataError(
+                "analytical frontier cutoff is not M15 aligned"
+            )
+        if type(self.bars) is not tuple or not self.bars:
+            raise AnalyticalFrontierDataError("analytical frontier bars are invalid")
+        if type(self.eligible_windows) is not tuple or not self.eligible_windows:
+            raise AnalyticalFrontierDataError("analytical frontier windows are invalid")
+        if len(self.bars) != len(self.eligible_windows):
+            raise AnalyticalFrontierDataError(
+                "analytical frontier bars and windows disagree"
+            )
+        seen_windows: set[tuple[datetime, datetime]] = set()
+        for window in self.eligible_windows:
+            if type(window) is not tuple or len(window) != 2:
+                raise AnalyticalFrontierDataError(
+                    "analytical frontier window is invalid"
+                )
+            window_start = _require_utc(window[0], "analytical window start")
+            window_end = _require_utc(window[1], "analytical window end")
+            normalized_window = (window_start, window_end)
+            if (
+                window_start < requested_start
+                or window_end > cutoff
+                or window_end - window_start != M15
+                or normalized_window in seen_windows
+            ):
+                raise AnalyticalFrontierDataError(
+                    "analytical frontier window is invalid or duplicated"
+                )
+            seen_windows.add(normalized_window)
+        seen_starts: set[datetime] = set()
+        seen_ends: set[datetime] = set()
+        for bar, window in zip(self.bars, self.eligible_windows, strict=True):
+            if type(bar) is not Bar:
+                raise AnalyticalFrontierDataError(
+                    "analytical frontier contains a non-bar"
+                )
+            if (
+                bar.instrument is not Instrument.EUR_USD
+                or bar.provider is not Provider.OANDA
+                or bar.timeframe is not Timeframe.M15
+                or bar.price_component is not PriceComponent.MID
+                or bar.complete is not True
+                or (bar.start_time, bar.end_time) != window
+            ):
+                raise AnalyticalFrontierDataError("analytical frontier bar is invalid")
+            if bar.start_time in seen_starts or bar.end_time in seen_ends:
+                raise AnalyticalFrontierDataError(
+                    "analytical frontier bars are duplicated"
+                )
+            seen_starts.add(bar.start_time)
+            seen_ends.add(bar.end_time)
+        if tuple(sorted(self.bars, key=lambda item: item.start_time)) != self.bars:
+            raise AnalyticalFrontierDataError(
+                "analytical frontier bars are not ordered"
+            )
+        candidate_start = cutoff - M15
+        if (
+            type(self.current_bar) is not Bar
+            or self.current_bar != self.bars[-1]
+            or self.current_bar.start_time != candidate_start
+            or self.current_bar.end_time != cutoff
+        ):
+            raise AnalyticalFrontierDataError(
+                "analytical frontier candidate is invalid"
+            )
+        expected_previous = self.bars[-2].end_time if len(self.bars) > 1 else None
+        if self.previous_frontier != expected_previous:
+            raise AnalyticalFrontierDataError(
+                "analytical frontier previous bar is invalid"
+            )
+
 
 def _require_utc(value: datetime, name: str) -> datetime:
     if type(value) is not datetime or value.tzinfo is None:
@@ -245,7 +325,7 @@ def load_current_analytical_frontier(
     current_bar = next(bar for bar in bars if bar.start_time == candidate_start)
     current_index = bars.index(current_bar)
     previous_frontier = bars[current_index - 1].end_time if current_index else None
-    return CurrentAnalyticalFrontier(
+    frontier = CurrentAnalyticalFrontier(
         acquisition_cutoff=cutoff,
         requested_start=requested_start,
         requested_end=requested_end,
@@ -254,6 +334,8 @@ def load_current_analytical_frontier(
         eligible_windows=expected_windows,
         previous_frontier=previous_frontier,
     )
+    frontier.validate()
+    return frontier
 
 
 __all__ = [

@@ -7,7 +7,7 @@ make Risk, execution, accounting, persistence-write, or broker decisions.
 """
 
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, cast
 from uuid import UUID
 
@@ -44,6 +44,7 @@ from backend.strategies.contract import StrategyDefinition
 from backend.strategies.registry import StrategyRegistry
 
 from .current_analytical_frontier import (
+    CurrentAnalyticalFrontier,
     NativeM15Source,
     load_current_analytical_frontier,
 )
@@ -64,6 +65,7 @@ def evaluate_current_paper_strategy(
     strategy_registry: StrategyRegistry,
     analytical_source: NativeM15Source,
     market_specification: MarketSpecification,
+    frontier: CurrentAnalyticalFrontier | None = None,
 ) -> StrategyEvaluation:
     """Evaluate one current completed frontier, preserving the PAPER 04 seam."""
     _, _, evaluation = _evaluate_current_paper_strategy(
@@ -77,6 +79,7 @@ def evaluate_current_paper_strategy(
         strategy_registry=strategy_registry,
         analytical_source=analytical_source,
         market_specification=market_specification,
+        frontier=frontier,
     )
     return evaluation
 
@@ -93,6 +96,7 @@ def evaluate_current_paper_strategy_receipt(
     strategy_registry: StrategyRegistry,
     analytical_source: NativeM15Source,
     market_specification: MarketSpecification,
+    frontier: CurrentAnalyticalFrontier | None = None,
 ) -> "PaperStrategyEvaluationReceipt":
     """Return the exact version/parameters alongside their produced decision.
 
@@ -112,6 +116,77 @@ def evaluate_current_paper_strategy_receipt(
         strategy_registry=strategy_registry,
         analytical_source=analytical_source,
         market_specification=market_specification,
+        frontier=frontier,
+    )
+    from .persistence_contracts import PaperStrategyEvaluationReceipt
+
+    return PaperStrategyEvaluationReceipt.from_verified(version, parameters, evaluation)
+
+
+def evaluate_paper_strategy_frontier(
+    session: Session,
+    *,
+    strategy_version_id: UUID,
+    parameter_values: Mapping[str, object],
+    state: StrategyStateEnvelope | None,
+    financial_position_state: FinancialPositionState,
+    now: datetime,
+    frontier: CurrentAnalyticalFrontier,
+    strategy_repository: StrategyRepository,
+    strategy_registry: StrategyRegistry,
+    analytical_source: NativeM15Source,
+    market_specification: MarketSpecification,
+) -> StrategyEvaluation:
+    """Evaluate one already-validated immutable analytical frontier.
+
+    Runtime code reads and reserves a frontier before asking the Strategy to
+    evaluate it.  This seam receives that exact object instead of reading the
+    provider again, so the receipt cannot silently refer to a different bar
+    than the durable runtime cycle.
+    """
+    _, _, evaluation = _evaluate_current_paper_strategy(
+        session,
+        strategy_version_id=strategy_version_id,
+        parameter_values=parameter_values,
+        state=state,
+        financial_position_state=financial_position_state,
+        now=now,
+        strategy_repository=strategy_repository,
+        strategy_registry=strategy_registry,
+        analytical_source=analytical_source,
+        market_specification=market_specification,
+        frontier=frontier,
+    )
+    return evaluation
+
+
+def evaluate_paper_strategy_frontier_receipt(
+    session: Session,
+    *,
+    strategy_version_id: UUID,
+    parameter_values: Mapping[str, object],
+    state: StrategyStateEnvelope | None,
+    financial_position_state: FinancialPositionState,
+    now: datetime,
+    frontier: CurrentAnalyticalFrontier,
+    strategy_repository: StrategyRepository,
+    strategy_registry: StrategyRegistry,
+    analytical_source: NativeM15Source,
+    market_specification: MarketSpecification,
+) -> "PaperStrategyEvaluationReceipt":
+    """Return a verified Strategy receipt for an exact reserved frontier."""
+    version, parameters, evaluation = _evaluate_current_paper_strategy(
+        session,
+        strategy_version_id=strategy_version_id,
+        parameter_values=parameter_values,
+        state=state,
+        financial_position_state=financial_position_state,
+        now=now,
+        strategy_repository=strategy_repository,
+        strategy_registry=strategy_registry,
+        analytical_source=analytical_source,
+        market_specification=market_specification,
+        frontier=frontier,
     )
     from .persistence_contracts import PaperStrategyEvaluationReceipt
 
@@ -193,6 +268,7 @@ def _evaluate_current_paper_strategy(
     strategy_registry: StrategyRegistry,
     analytical_source: NativeM15Source,
     market_specification: MarketSpecification,
+    frontier: CurrentAnalyticalFrontier | None = None,
 ) -> tuple[StrategyVersion, ValidatedParameterPayload, StrategyEvaluation]:
     """Evaluate exactly one current completed analytical frontier.
 
@@ -246,11 +322,26 @@ def _evaluate_current_paper_strategy(
         # A zero-warm-up Strategy still needs one prior eligible frontier to
         # prove that a restored state advances one frontier at a time.
         warm_up_bars = max(warm_up_bars, 1)
-    frontier = load_current_analytical_frontier(
-        analytical_source,
-        now=now,
-        warm_up_m15_bars=warm_up_bars,
-    )
+    if frontier is None:
+        frontier = load_current_analytical_frontier(
+            analytical_source,
+            now=now,
+            warm_up_m15_bars=warm_up_bars,
+        )
+    else:
+        _validate_supplied_frontier(frontier, now=now)
+        if len(frontier.context_bars) < warm_up_bars + 1:
+            raise PaperStrategyEvaluationError(
+                "supplied analytical frontier does not contain required context"
+            )
+        if (
+            state is not None
+            and state.last_evaluated_bar_end is not None
+            and state.last_evaluated_bar_end >= frontier.current_frontier
+        ):
+            raise PaperStrategyEvaluationError(
+                "supplied analytical frontier does not advance Strategy state"
+            )
 
     if state is not None:
         last_frontier = state.last_evaluated_bar_end
@@ -300,6 +391,30 @@ def _evaluate_current_paper_strategy(
     return version, parameters, evaluation
 
 
+def _validate_supplied_frontier(
+    frontier: CurrentAnalyticalFrontier, *, now: datetime
+) -> None:
+    """Guard the explicit handoff from runtime data acquisition to Strategy."""
+    if type(frontier) is not CurrentAnalyticalFrontier:
+        raise PaperStrategyEvaluationError("frontier must be CurrentAnalyticalFrontier")
+    if (
+        type(now) is not datetime
+        or now.tzinfo is None
+        or now.utcoffset() != timedelta(0)
+    ):
+        raise PaperStrategyEvaluationError("evaluation clock must be UTC")
+    try:
+        frontier.validate()
+    except Exception as error:
+        raise PaperStrategyEvaluationError(
+            "supplied analytical frontier is invalid"
+        ) from error
+    if frontier.current_frontier > now.astimezone(UTC):
+        raise PaperStrategyEvaluationError(
+            "supplied analytical frontier is in the future"
+        )
+
+
 def _next_state(evaluation: StrategyEvaluation) -> StrategyStateEnvelope:
     """Narrow the checked entry point's compatibility union for the next call."""
     if type(evaluation.next_state) is not StrategyStateEnvelope:
@@ -313,4 +428,6 @@ __all__ = [
     "PaperStrategyEvaluationError",
     "evaluate_current_paper_strategy",
     "evaluate_current_paper_strategy_receipt",
+    "evaluate_paper_strategy_frontier",
+    "evaluate_paper_strategy_frontier_receipt",
 ]

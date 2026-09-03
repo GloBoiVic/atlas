@@ -9,6 +9,7 @@ not as proof that the provider received a request.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import cast
@@ -17,7 +18,10 @@ from uuid import UUID, uuid4
 from sqlalchemy.orm import Session
 
 from backend.domain import Direction, Instrument, Provider
-from backend.persistence.models import PaperExecutionAttemptModel
+from backend.persistence.models import (
+    PaperExecutionAttemptModel,
+    PaperMutationClaimModel,
+)
 from backend.persistence.paper_execution_repository import (
     DuplicateMutationClaim,
     PaperExecutionRepository,
@@ -46,6 +50,7 @@ from .execution_application import (
     PaperEntryMutation,
     PaperExecutionApplication,
     PaperExecutionMutationBarrierError,
+    PaperExecutionPreparation,
     PaperExecutionReader,
     PaperPricingReader,
     PaperProtectionCompletion,
@@ -77,6 +82,47 @@ class PaperDurableExecutionPersistenceError(RuntimeError):
 
 
 SessionFactory = Callable[[], Session]
+MutationGuard = Callable[[], None]
+
+
+@dataclass(frozen=True, slots=True)
+class PaperDurableExecutionPreparation:
+    """Fresh P05 evidence ready for a caller-owned ENTRY transaction.
+
+    The contained attempt is the exact immutable P05 evidence produced by the
+    fresh account/pricing/Risk preparation.  It is intentionally separate from
+    the durable claim: callers must persist the attempt and claim in their own
+    transaction, commit that transaction, and only then call
+    :meth:`PaperDurableExecutionApplication.submit_claimed_entry`.
+    """
+
+    receipt: PaperStrategyEvaluationReceipt
+    preparation: PaperExecutionPreparation
+    attempt: PaperExecutionAttempt
+
+    def __post_init__(self) -> None:
+        if type(self.receipt) is not PaperStrategyEvaluationReceipt:
+            raise PaperPersistenceContractError("receipt is required")
+        if type(self.preparation) is not PaperExecutionPreparation:
+            raise PaperPersistenceContractError("PAPER preparation is invalid")
+        if type(self.attempt) is not PaperExecutionAttempt:
+            raise PaperPersistenceContractError("PAPER attempt is invalid")
+        if self.attempt.receipt != self.receipt:
+            raise PaperIdentityConflict(
+                "PAPER attempt receipt does not match preparation"
+            )
+        if self.attempt.instruction != self.preparation.instruction:
+            raise PaperIdentityConflict(
+                "PAPER attempt instruction does not match preparation"
+            )
+
+    @property
+    def attempt_id(self) -> UUID:
+        return self.attempt.attempt_id
+
+    @property
+    def entry_request_fingerprint(self) -> str:
+        return self.preparation.entry_request_fingerprint
 
 
 class PaperDurableExecutionApplication:
@@ -111,6 +157,101 @@ class PaperDurableExecutionApplication:
             risk_service=risk_service,
         )
 
+    def prepare_entry_claim(
+        self,
+        receipt: PaperStrategyEvaluationReceipt,
+        *,
+        config: RiskConfig,
+        attempt_id: UUID | None = None,
+    ) -> PaperExecutionRefusal | PaperDurableExecutionPreparation:
+        """Prepare one fresh P05 opening without changing local persistence.
+
+        This method owns the existing P05 preparation/Risk path and returns all
+        evidence needed by a runtime transaction.  It performs no persistence
+        and cannot reach a broker mutation seam.
+        """
+        if type(receipt) is not PaperStrategyEvaluationReceipt:
+            raise PaperPersistenceContractError("receipt is required")
+        selected_attempt_id = (
+            self._attempt_id_factory() if attempt_id is None else attempt_id
+        )
+        if type(selected_attempt_id) is not UUID:
+            raise PaperExecutionContractError("attempt_id must be a UUID")
+
+        preparation = self._application.prepare(
+            receipt.evaluation.decision,
+            config=config,
+            attempt_id=selected_attempt_id,
+        )
+        if isinstance(preparation, PaperExecutionRefusal):
+            return preparation
+
+        try:
+            authority = PaperRiskAuthoritySnapshot.from_evaluation(
+                preparation.risk_evaluation,
+                config=config,
+                account_equity=preparation.account_equity,
+            )
+            attempt = PaperExecutionAttempt(receipt, authority, preparation.instruction)
+            return PaperDurableExecutionPreparation(
+                receipt=receipt,
+                preparation=preparation,
+                attempt=attempt,
+            )
+        except Exception:
+            return PaperExecutionRefusal(
+                selected_attempt_id,
+                PaperExecutionRefusalCode.LOCAL_SERIALIZATION_REJECTED,
+                "DURABLE_EVIDENCE_REJECTED",
+            )
+
+    def persist_entry_claim(
+        self,
+        session: Session,
+        prepared: PaperDurableExecutionPreparation,
+    ) -> PaperMutationClaimModel:
+        """Stage the exact P05 attempt/ENTRY claim in a caller-owned transaction.
+
+        No commit is performed here.  The caller owns the transaction that must
+        also contain runtime cycle/state evidence, and must commit successfully
+        before invoking :meth:`submit_claimed_entry`.
+        """
+        if type(prepared) is not PaperDurableExecutionPreparation:
+            raise PaperPersistenceContractError("prepared PAPER execution is invalid")
+        return self._repository.persist_entry_claim(
+            session,
+            prepared.attempt,
+            provider_endpoint_key="OANDA_ENTRY_POST",
+            normalized_request_fingerprint=prepared.entry_request_fingerprint,
+        )
+
+    def submit_claimed_entry(
+        self,
+        prepared: PaperDurableExecutionPreparation,
+        *,
+        entry_claim_id: UUID,
+        mutation_guard: MutationGuard | None = None,
+        take_profit_claimed_callback: Callable[[UUID], None] | None = None,
+    ) -> PaperExecutionResult:
+        """Run the existing one-shot P05 chain after the ENTRY claim commits.
+
+        The caller is responsible for transaction commit and any runtime owner
+        guard immediately before this call.  This method creates no ENTRY or
+        Take Profit claim itself; it only delegates broker mutation, Fill,
+        protection, observation, and result persistence to the existing P05
+        authority.
+        """
+        if type(prepared) is not PaperDurableExecutionPreparation:
+            raise PaperPersistenceContractError("prepared PAPER execution is invalid")
+        if type(entry_claim_id) is not UUID:
+            raise PaperPersistenceContractError("entry_claim_id must be a UUID")
+        return self._submit_claimed_entry(
+            prepared,
+            entry_claim_id,
+            mutation_guard=mutation_guard,
+            take_profit_claimed_callback=take_profit_claimed_callback,
+        )
+
     def execute(
         self,
         receipt: PaperStrategyEvaluationReceipt,
@@ -132,37 +273,22 @@ class PaperDurableExecutionApplication:
             self._assert_receipt_identity(existing, receipt, config)
             return _result_from_row(existing, receipt)
 
-        preparation = self._application.prepare(
-            receipt.evaluation.decision,
-            config=config,
-            attempt_id=selected_attempt_id,
+        prepared = self.prepare_entry_claim(
+            receipt, config=config, attempt_id=selected_attempt_id
         )
-        if isinstance(preparation, PaperExecutionRefusal):
-            return preparation
+        if isinstance(prepared, PaperExecutionRefusal):
+            return prepared
 
         try:
-            authority = PaperRiskAuthoritySnapshot.from_evaluation(
-                preparation.risk_evaluation,
-                config=config,
-                account_equity=preparation.account_equity,
+            entry_claim_id = self._commit_entry_claim(
+                prepared.attempt, prepared.entry_request_fingerprint
             )
-            attempt = PaperExecutionAttempt(receipt, authority, preparation.instruction)
-            request_fingerprint = preparation.entry_request_fingerprint
-        except Exception:
-            return PaperExecutionRefusal(
-                selected_attempt_id,
-                PaperExecutionRefusalCode.LOCAL_SERIALIZATION_REJECTED,
-                "DURABLE_EVIDENCE_REJECTED",
-            )
-
-        try:
-            entry_claim_id = self._commit_entry_claim(attempt, request_fingerprint)
         except (DuplicateMutationClaim, PaperIdentityConflict):
             existing = self._get_attempt(selected_attempt_id)
             if existing is None:
                 raise
             self._assert_receipt_identity(existing, receipt, config)
-            self._assert_attempt_identity(existing, attempt)
+            self._assert_attempt_identity(existing, prepared.attempt)
             return _result_from_row(existing, receipt)
         except Exception:
             return PaperExecutionRefusal(
@@ -171,6 +297,20 @@ class PaperDurableExecutionApplication:
                 "ENTRY_CLAIM_COMMIT_FAILED",
             )
 
+        return self._submit_claimed_entry(prepared, entry_claim_id)
+
+    def _submit_claimed_entry(
+        self,
+        prepared: PaperDurableExecutionPreparation,
+        entry_claim_id: UUID,
+        *,
+        mutation_guard: MutationGuard | None = None,
+        take_profit_claimed_callback: Callable[[UUID], None] | None = None,
+    ) -> PaperExecutionResult:
+        preparation = prepared.preparation
+        attempt = prepared.attempt
+        if mutation_guard is not None:
+            mutation_guard()
         entry_result = self._application.submit_entry(preparation)
         self._persist_result(
             entry_result,
@@ -194,11 +334,20 @@ class PaperDurableExecutionApplication:
         ) -> None:
             del fill_result
             try:
+                if mutation_guard is not None:
+                    mutation_guard()
                 claim_id = self._commit_take_profit_claim(
-                    selected_attempt_id,
+                    prepared.attempt_id,
                     protection,
                     request_fingerprint,
                 )
+                if take_profit_claimed_callback is not None:
+                    take_profit_claimed_callback(claim_id)
+                # The claim commit and runtime cycle transition are complete;
+                # fence the dependent mutation again immediately before the
+                # protection seam can dispatch its PUT.
+                if mutation_guard is not None:
+                    mutation_guard()
             except Exception as error:
                 raise PaperExecutionMutationBarrierError(
                     "TAKE_PROFIT claim commit failed"
@@ -766,6 +915,7 @@ def _protection_from_row(row: PaperExecutionAttemptModel) -> ProtectionConfirmat
 
 
 __all__ = [
+    "PaperDurableExecutionPreparation",
     "PaperDurableExecutionApplication",
     "PaperDurableExecutionPersistenceError",
     "execute_durable_paper_execution",

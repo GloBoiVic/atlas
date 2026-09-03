@@ -12,6 +12,7 @@ from backend.api.experiments import create_experiment_router
 from backend.api.health import create_health_router
 from backend.api.historical_data import create_historical_data_router
 from backend.api.local_authority import LocalAuthorityMiddleware, PeerAddressResolver
+from backend.api.paper import create_paper_router
 from backend.api.strategies import create_strategy_router
 from backend.config import get_settings
 from backend.domain.market_data import Instrument
@@ -22,15 +23,53 @@ from backend.experiments.lifecycle import (
 )
 from backend.experiments.results import ExperimentResultReadService
 from backend.experiments.runner import ExperimentRunner
+from backend.integrations.oanda import is_valid_oanda_practice_account_id
 from backend.integrations.oanda.capabilities import OANDA_CAPABILITY
+from backend.integrations.oanda.reconciliation import OandaPracticeReconciliationReader
 from backend.integrations.oanda.source import OandaHistoricalBarSource
 from backend.logging import configure_logging
 from backend.market_data.historical_load import HistoricalDataLoadCoordinator
 from backend.market_data.ingestion import MarketDataService
+from backend.paper.reconciliation import PaperReconciliationCoordinator
 from backend.persistence.database import create_database_engine, create_session_factory
 from backend.persistence.experiment_deletion import ExperimentDeletionService
+from backend.persistence.paper_execution_repository import PaperExecutionRepository
 from backend.persistence.strategy_catalog import synchronize_strategy_catalog
+from backend.runtime.activation import PaperRuntimeService
 from backend.strategies.production import create_production_strategy_registry
+
+
+def _safe_validation_errors(exc: RequestValidationError) -> list[dict[str, object]]:
+    """Project validation failures without echoing submitted request values."""
+    projected: list[dict[str, object]] = []
+    for error in exc.errors():
+        location = error.get("loc", ())
+        if not isinstance(location, (tuple, list)):
+            location = ("request",)
+        message = error.get("msg")
+        safe_message = (
+            message
+            if isinstance(message, str)
+            and len(message) <= 200
+            and not any(ord(character) < 32 for character in message)
+            else "Request field is invalid."
+        )
+        error_type = error.get("type")
+        safe_type = (
+            error_type
+            if isinstance(error_type, str)
+            and len(error_type) <= 100
+            and not any(ord(character) < 32 for character in error_type)
+            else "validation_error"
+        )
+        projected.append(
+            {
+                "loc": [str(item) for item in location],
+                "type": safe_type,
+                "msg": safe_message,
+            }
+        )
+    return projected
 
 
 def create_app(
@@ -42,6 +81,7 @@ def create_app(
     session_factory: Callable[[], Any] | None = None,
     lifecycle_diagnostic_sink: LifecycleDiagnosticSink | None = None,
     historical_coordinator: Any | None = None,
+    paper_runtime_service: Any | None = None,
     peer_address_resolver: PeerAddressResolver | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
@@ -66,6 +106,26 @@ def create_app(
             MarketDataService(session_factory, source),
             ExperimentConfigurationService(registry),
             registry,
+        )
+    if paper_runtime_service is None:
+        reconciliation = None
+        account_id = getattr(settings, "oanda_account_id", None)
+        if is_valid_oanda_practice_account_id(account_id):
+            reconciliation = PaperReconciliationCoordinator(
+                repository=PaperExecutionRepository(),
+                session_factory=session_factory,
+                provider=OandaPracticeReconciliationReader(
+                    settings.oanda_api_token,
+                    account_id,
+                    connect_timeout_seconds=settings.oanda_connect_timeout_seconds,
+                    read_timeout_seconds=settings.oanda_read_timeout_seconds,
+                ),
+            )
+        paper_runtime_service = PaperRuntimeService(
+            session_factory=session_factory,
+            settings=settings,
+            registry=registry,
+            reconciliation=reconciliation,
         )
 
     @asynccontextmanager
@@ -99,6 +159,7 @@ def create_app(
     app.state.experiment_results = ExperimentResultReadService()
     app.state.experiment_deletion = ExperimentDeletionService()
     app.state.historical_data_coordinator = historical_coordinator
+    app.state.paper_runtime_service = paper_runtime_service
     app.include_router(create_health_router(engine))
     app.include_router(
         create_strategy_router(session_factory=session_factory, registry=registry)
@@ -125,6 +186,7 @@ def create_app(
             deletion=app.state.experiment_deletion,
         )
     )
+    app.include_router(create_paper_router(service=paper_runtime_service))
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(_: Any, exc: RequestValidationError) -> JSONResponse:
@@ -134,7 +196,7 @@ def create_app(
                 "error": {
                     "code": "VALIDATION_ERROR",
                     "message": "Request validation failed",
-                    "details": {"fields": jsonable_encoder(exc.errors())},
+                    "details": {"fields": _safe_validation_errors(exc)},
                 }
             },
         )

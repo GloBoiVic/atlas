@@ -6,6 +6,7 @@ if TYPE_CHECKING:
     from .durable_execution import (
         PaperDurableExecutionApplication,
         PaperDurableExecutionPersistenceError,
+        PaperDurableExecutionPreparation,
         execute_durable_paper_execution,
     )
     from .reconciliation import (
@@ -97,6 +98,8 @@ from .strategy_evaluation import (
     PaperStrategyEvaluationError,
     evaluate_current_paper_strategy,
     evaluate_current_paper_strategy_receipt,
+    evaluate_paper_strategy_frontier,
+    evaluate_paper_strategy_frontier_receipt,
 )
 
 __all__ = [
@@ -111,6 +114,7 @@ __all__ = [
     "AfterTakeProfitMutation",
     "BeforeTakeProfitMutation",
     "PaperDurableExecutionApplication",
+    "PaperDurableExecutionPreparation",
     "PaperDurableExecutionPersistenceError",
     "PaperExecutionReader",
     "PaperPricingReader",
@@ -143,6 +147,8 @@ __all__ = [
     "correlation_for_attempt",
     "evaluate_current_paper_strategy",
     "evaluate_current_paper_strategy_receipt",
+    "evaluate_paper_strategy_frontier",
+    "evaluate_paper_strategy_frontier_receipt",
     "execute_paper_execution",
     "execute_durable_paper_execution",
     "MAX_ENTRY_RECONCILIATION_TRANSACTIONS",
@@ -187,6 +193,10 @@ def __getattr__(name: str) -> object:
         from .durable_execution import PaperDurableExecutionApplication
 
         return PaperDurableExecutionApplication
+    if name == "PaperDurableExecutionPreparation":
+        from .durable_execution import PaperDurableExecutionPreparation
+
+        return PaperDurableExecutionPreparation
     if name == "PaperDurableExecutionPersistenceError":
         from .durable_execution import PaperDurableExecutionPersistenceError
 

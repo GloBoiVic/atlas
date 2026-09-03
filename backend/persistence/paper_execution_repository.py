@@ -187,6 +187,31 @@ class PaperExecutionRepository:
         normalized_request_fingerprint: str,
     ) -> PaperMutationClaimModel:
         """Commit the attempt and permanent ENTRY barrier before any network call."""
+        claim = self.persist_entry_claim(
+            session,
+            attempt,
+            provider_endpoint_key=provider_endpoint_key,
+            normalized_request_fingerprint=normalized_request_fingerprint,
+        )
+        session.commit()
+        return claim
+
+    def persist_entry_claim(
+        self,
+        session: Session,
+        attempt: PaperExecutionAttempt,
+        *,
+        provider_endpoint_key: str,
+        normalized_request_fingerprint: str,
+    ) -> PaperMutationClaimModel:
+        """Stage the attempt and permanent ENTRY barrier in the caller's transaction.
+
+        This is the caller-owned variant of :meth:`commit_entry_claim`.  It only
+        flushes the immutable attempt and possible-mutation claim; the caller
+        must commit before any broker mutation is allowed.  Keeping this seam at
+        the PAPER 05 repository means runtime code cannot reconstruct or
+        reinterpret attempt/claim persistence contracts.
+        """
         self.create_attempt(session, attempt)
         claim = self.claim_mutation(
             session,
@@ -195,7 +220,6 @@ class PaperExecutionRepository:
             provider_endpoint_key=provider_endpoint_key,
             normalized_request_fingerprint=normalized_request_fingerprint,
         )
-        session.commit()
         return claim
 
     def claim_mutation(

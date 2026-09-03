@@ -54,6 +54,7 @@ from backend.persistence.database import (
 from backend.persistence.models import (
     PaperBrokerObservationModel,
     PaperExecutionAttemptModel,
+    PaperMutationClaimModel,
     StrategyModel,
     StrategyVersionModel,
 )
@@ -244,6 +245,37 @@ def test_claim_is_permanent_and_fill_is_not_erased(paper_database: Engine) -> No
         assert (
             row.execution_outcome
             == PaperExecutionOutcome.FILLED_PROTECTION_INCOMPLETE.value
+        )
+
+
+def test_caller_owned_entry_claim_rollback_leaves_no_paper_authority(
+    paper_database: Engine,
+) -> None:
+    factory = create_session_factory(paper_database)
+    repository = PaperExecutionRepository()
+
+    with factory() as session:
+        with pytest.raises(RuntimeError, match="runtime transaction failed"):
+            with session.begin():
+                _seed_strategy(session)
+                claim = repository.persist_entry_claim(
+                    session,
+                    _attempt(),
+                    provider_endpoint_key="OANDA_ENTRY_POST",
+                    normalized_request_fingerprint="b" * 64,
+                )
+                assert claim.phase == PaperMutationPhase.ENTRY.value
+                raise RuntimeError("runtime transaction failed")
+
+    with factory() as session:
+        assert repository.get_attempt(session, ATTEMPT_ID) is None
+        assert (
+            session.scalar(
+                select(PaperMutationClaimModel).where(
+                    PaperMutationClaimModel.attempt_id == ATTEMPT_ID
+                )
+            )
+            is None
         )
 
 

@@ -38,11 +38,14 @@ from backend.market_data.session_calendar import (
     eligible_m15_windows,
     required_warmup_range,
 )
+from backend.paper.current_analytical_frontier import load_current_analytical_frontier
 from backend.paper.persistence_contracts import PaperStrategyEvaluationReceipt
 from backend.paper.strategy_evaluation import (
     PaperStrategyEvaluationError,
     evaluate_current_paper_strategy,
     evaluate_current_paper_strategy_receipt,
+    evaluate_paper_strategy_frontier,
+    evaluate_paper_strategy_frontier_receipt,
 )
 from backend.strategies.contract import (
     Strategy,
@@ -307,6 +310,70 @@ def test_execution_receipt_binds_evaluation_to_the_verified_version() -> None:
     assert receipt.implementation_key == implementation.definition.implementation_key
     assert receipt.validated_parameter_snapshot.to_json() == {"threshold": 2}
     assert receipt.evaluation.decision.action is Action.NO_ACTION
+
+
+def test_supplied_frontier_is_consumed_without_a_second_market_data_read() -> None:
+    implementation = FixtureStrategy()
+    repository, registry, source = make_dependencies(implementation)
+    frontier = load_current_analytical_frontier(
+        source,
+        now=NOW,
+        warm_up_m15_bars=implementation.definition.required_historical_context_bars,
+    )
+    source.calls.clear()
+
+    result = evaluate_paper_strategy_frontier(
+        SESSION,
+        strategy_version_id=VERSION_ID,
+        parameter_values={"threshold": 2},
+        state=None,
+        financial_position_state=FinancialPositionState.FLAT,
+        now=NOW,
+        frontier=frontier,
+        strategy_repository=repository,  # type: ignore[arg-type]
+        strategy_registry=registry,  # type: ignore[arg-type]
+        analytical_source=source,
+        market_specification=MARKET,
+    )
+
+    assert result.next_state.last_evaluated_bar_end == frontier.current_frontier
+    assert source.calls == []
+
+
+def test_supplied_frontier_receipt_preserves_nonflat_strategy_position() -> None:
+    implementation = FixtureStrategy()
+    repository, registry, source = make_dependencies(implementation)
+    frontier = load_current_analytical_frontier(
+        source,
+        now=NOW,
+        warm_up_m15_bars=implementation.definition.required_historical_context_bars,
+    )
+    source.calls.clear()
+    state = StrategyStateEnvelope(
+        1,
+        frontier.previous_frontier,
+        StrategyStatePayloadDocument.from_mapping("paper_fixture.v1", 1, {}),
+    )
+
+    receipt = evaluate_paper_strategy_frontier_receipt(
+        SESSION,
+        strategy_version_id=VERSION_ID,
+        parameter_values={"threshold": 2},
+        state=state,
+        financial_position_state=FinancialPositionState.LONG,
+        now=NOW,
+        frontier=frontier,
+        strategy_repository=repository,  # type: ignore[arg-type]
+        strategy_registry=registry,  # type: ignore[arg-type]
+        analytical_source=source,
+        market_specification=MARKET,
+    )
+
+    assert (
+        receipt.evaluation.next_state.last_evaluated_bar_end
+        == frontier.current_frontier
+    )
+    assert source.calls == []
 
 
 @pytest.mark.parametrize(

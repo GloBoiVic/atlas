@@ -1,7 +1,7 @@
 # Active Workstream
 
-- **Workstream:** none
-- **Stage:** `IDLE`
+- **Workstream:** `paper-06-runtime-activation`
+- **Stage:** `READY_FOR_USER`
 - **Task:** `NONE`
-- **Role:** `solo-flow`
-- **Approval:** no active workstream
+- **Role:** `SOLO`
+- **Approval:** `POST-CAP REMEDIATION APPROVED`; R004–R006 BUILD/VALIDATE/REVIEW chains pass; merge approval pending; GIT END not authorized

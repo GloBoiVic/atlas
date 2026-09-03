@@ -13,6 +13,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Numeric,
     PrimaryKeyConstraint,
@@ -1113,3 +1114,350 @@ class PaperReconciliationRunModel(Base):
     finding_codes: Mapped[list[str]] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
     diagnostic_summary: Mapped[str] = mapped_column(String(500), nullable=False, server_default=text("''"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+
+
+class PaperRuntimeActivationModel(Base):
+    """Explicit PAPER runtime activation and its guarded projection."""
+
+    __tablename__ = "paper_runtime_activations"
+    __table_args__ = (
+        CheckConstraint("provider = 'OANDA'", name="paper_runtime_provider"),
+        CheckConstraint("environment = 'PRACTICE'", name="paper_runtime_environment"),
+        CheckConstraint("base_currency = 'USD'", name="paper_runtime_base_currency"),
+        CheckConstraint("instrument = 'EUR_USD'", name="paper_runtime_instrument"),
+        CheckConstraint(
+            "strategy_version_number > 0", name="paper_runtime_version_positive"
+        ),
+        CheckConstraint(
+            "source_fingerprint ~ '^[0-9a-f]{64}$'",
+            name="paper_runtime_source_fingerprint",
+        ),
+        CheckConstraint(
+            "parameter_fingerprint ~ '^[0-9a-f]{64}$'",
+            name=conv(
+                "ck_paper_runtime_activations_paper_runtime_parameter_fi_93ad"
+            ),
+        ),
+        CheckConstraint(
+            "risk_per_trade > 0 AND risk_per_trade < 1 "
+            "AND risk_per_trade <> 'NaN'::numeric "
+            "AND risk_per_trade <> 'Infinity'::numeric "
+            "AND risk_per_trade <> '-Infinity'::numeric",
+            name="paper_runtime_risk_positive_finite",
+        ),
+        CheckConstraint(
+            "state_origin = 'FRESH_BOOTSTRAP'", name="paper_runtime_state_origin"
+        ),
+        CheckConstraint(
+            "runtime_policy_version = 'ATLAS_PAPER_RUNTIME_V1'",
+            name="paper_runtime_policy_version",
+        ),
+        CheckConstraint(
+            "poll_interval_seconds = 15", name="paper_runtime_poll_interval"
+        ),
+        CheckConstraint(
+            "approval_kind = 'EXPLICIT_LOCAL_TRADER'",
+            name="paper_runtime_approval_kind",
+        ),
+        CheckConstraint(
+            "approval_code = 'ACTIVATE_PAPER'", name="paper_runtime_approval_code"
+        ),
+        CheckConstraint(
+            "lifecycle_state IN ('REQUESTED', 'STARTING', 'RUNNING', "
+            "'STOP_REQUESTED', 'STOPPED', 'BLOCKED', 'FAILED')",
+            name="paper_runtime_lifecycle_state",
+        ),
+        CheckConstraint(
+            "operational_phase IN ('IDLE', 'STARTING', 'WAITING_FRONTIER', "
+            "'WAITING_DATA', 'WAITING_PROVIDER', 'EVALUATING', 'EXECUTING', "
+            "'RECOVERING', 'STOPPING', 'BLOCKED', 'FAILED')",
+            name="paper_runtime_operational_phase",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(validated_parameter_snapshot) = 'object' AND "
+            "octet_length(validated_parameter_snapshot::text) <= 32768",
+            name=conv(
+                "ck_paper_runtime_activations_paper_runtime_parameters_o_83c5"
+            ),
+        ),
+        CheckConstraint(
+            "strategy_state IS NULL OR (jsonb_typeof(strategy_state) = 'object' "
+            "AND octet_length(strategy_state::text) <= 32768)",
+            name="paper_runtime_state_object_bounded",
+        ),
+        CheckConstraint(
+            "strategy_state_fingerprint IS NULL OR "
+            "strategy_state_fingerprint ~ '^[0-9a-f]{64}$'",
+            name="paper_runtime_state_fingerprint",
+        ),
+        CheckConstraint("control_version >= 0", name="paper_runtime_control_version"),
+        ForeignKeyConstraint(
+            ["strategy_version_id"], ["strategy_versions.id"], ondelete="RESTRICT"
+        ),
+        ForeignKeyConstraint(
+            ["last_cycle_id"],
+            ["paper_runtime_cycles.cycle_id"],
+            ondelete="RESTRICT",
+            use_alter=True,
+            name="fk_paper_runtime_activations_last_cycle",
+        ),
+        Index(
+            "uq_paper_runtime_nonterminal_activation",
+            text("(1)"),
+            unique=True,
+            postgresql_where=text(
+                "lifecycle_state IN ('REQUESTED', 'STARTING', 'RUNNING', 'STOP_REQUESTED')"
+            ),
+        ),
+    )
+
+    activation_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), primary_key=True
+    )
+    strategy_version_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=False
+    )
+    strategy_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    strategy_version_number: Mapped[int] = mapped_column(nullable=False)
+    source_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    implementation_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    validated_parameter_snapshot: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False
+    )
+    parameter_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider: Mapped[str] = mapped_column(String(20), nullable=False)
+    environment: Mapped[str] = mapped_column(String(20), nullable=False)
+    provider_account_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    base_currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    instrument: Mapped[str] = mapped_column(String(20), nullable=False)
+    risk_per_trade: Mapped[Decimal] = mapped_column(Numeric(), nullable=False)
+    state_origin: Mapped[str] = mapped_column(String(32), nullable=False)
+    runtime_policy_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    poll_interval_seconds: Mapped[int] = mapped_column(nullable=False)
+    approval_kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    approval_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    requested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    lifecycle_state: Mapped[str] = mapped_column(String(24), nullable=False)
+    state_reason_code: Mapped[str | None] = mapped_column(String(64))
+    state_detail: Mapped[str | None] = mapped_column(String(500))
+    state_changed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    operational_phase: Mapped[str] = mapped_column(String(32), nullable=False)
+    last_operational_reason_code: Mapped[str | None] = mapped_column(String(64))
+    last_operational_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    strategy_state: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB(none_as_null=True)
+    )
+    strategy_state_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    last_frontier_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_cycle_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=True
+    )
+    control_version: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, server_default=text("0")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+
+
+class PaperRuntimeCycleModel(Base):
+    """One immutable analytical-frontier reservation and evidence projection."""
+
+    __tablename__ = "paper_runtime_cycles"
+    __table_args__ = (
+        CheckConstraint("cycle_sequence > 0", name="paper_runtime_cycle_sequence"),
+        CheckConstraint(
+            "length(evaluation_key) BETWEEN 1 AND 256 AND "
+            "evaluation_key !~ '[[:cntrl:]]'",
+            name="paper_runtime_cycle_evaluation_key",
+        ),
+        CheckConstraint(
+            "parameter_fingerprint ~ '^[0-9a-f]{64}$'",
+            name=conv(
+                "ck_paper_runtime_cycles_paper_runtime_cycle_parameter_f_a733"
+            ),
+        ),
+        CheckConstraint(
+            "account_gate_fingerprint ~ '^[0-9a-f]{64}$'",
+            name="paper_runtime_cycle_account_fingerprint",
+        ),
+        CheckConstraint(
+            "frontier_end > frontier_start",
+            name="paper_runtime_cycle_frontier_interval",
+        ),
+        CheckConstraint(
+            "prior_frontier_end IS NULL OR prior_frontier_end < frontier_end",
+            name="paper_runtime_cycle_prior_frontier",
+        ),
+        CheckConstraint(
+            "financial_position_state IN ('FLAT', 'LONG', 'SHORT')",
+            name="paper_runtime_cycle_position_state",
+        ),
+        CheckConstraint(
+            "account_open_trade_count >= 0 AND account_open_position_count >= 0 "
+            "AND account_pending_order_count >= 0",
+            name="paper_runtime_cycle_account_counts",
+        ),
+        CheckConstraint(
+            "(financial_position_state = 'FLAT' AND account_open_trade_count = 0 "
+            "AND account_open_position_count = 0) OR "
+            "(financial_position_state IN ('LONG', 'SHORT') AND "
+            "(account_open_trade_count > 0 OR account_open_position_count > 0))",
+            name="paper_runtime_cycle_position_counts",
+        ),
+        CheckConstraint(
+            "state_before IS NULL OR (jsonb_typeof(state_before) = 'object' "
+            "AND octet_length(state_before::text) <= 32768)",
+            name="paper_runtime_cycle_state_before",
+        ),
+        CheckConstraint(
+            "state_after IS NULL OR (jsonb_typeof(state_after) = 'object' "
+            "AND octet_length(state_after::text) <= 32768)",
+            name="paper_runtime_cycle_state_after",
+        ),
+        CheckConstraint(
+            "strategy_evaluation_snapshot IS NULL OR "
+            "(jsonb_typeof(strategy_evaluation_snapshot) = 'object' AND "
+            "octet_length(strategy_evaluation_snapshot::text) <= 32768)",
+            name="paper_runtime_cycle_evaluation_bounded",
+        ),
+        CheckConstraint(
+            "decision_snapshot IS NULL OR (jsonb_typeof(decision_snapshot) = 'object' "
+            "AND octet_length(decision_snapshot::text) <= 32768)",
+            name="paper_runtime_cycle_decision_bounded",
+        ),
+        CheckConstraint(
+            "state_before_fingerprint IS NULL OR "
+            "state_before_fingerprint ~ '^[0-9a-f]{64}$'",
+            name=conv(
+                "ck_paper_runtime_cycles_paper_runtime_cycle_state_befor_6a0d"
+            ),
+        ),
+        CheckConstraint(
+            "state_after_fingerprint IS NULL OR "
+            "state_after_fingerprint ~ '^[0-9a-f]{64}$'",
+            name=conv(
+                "ck_paper_runtime_cycles_paper_runtime_cycle_state_after_ed55"
+            ),
+        ),
+        CheckConstraint(
+            "cycle_status IN ('CLAIMED', 'EVALUATING', 'NO_ACTION', 'REFUSED', "
+            "'ENTRY_CLAIMED', 'ENTRY_RESOLVED', 'TAKE_PROFIT_CLAIMED', 'COMPLETE', "
+            "'RECOVERY_REQUIRED', 'BLOCKED')",
+            name="paper_runtime_cycle_status",
+        ),
+        ForeignKeyConstraint(
+            ["activation_id"], ["paper_runtime_activations.activation_id"], ondelete="RESTRICT"
+        ),
+        ForeignKeyConstraint(
+            ["strategy_version_id"], ["strategy_versions.id"], ondelete="RESTRICT"
+        ),
+        ForeignKeyConstraint(
+            ["attempt_id"], ["paper_execution_attempts.attempt_id"], ondelete="RESTRICT"
+        ),
+        UniqueConstraint(
+            "evaluation_key", "frontier_end",
+            name="uq_paper_runtime_cycles_evaluation_frontier",
+        ),
+        UniqueConstraint(
+            "activation_id", "cycle_sequence",
+            name="uq_paper_runtime_cycles_activation_sequence",
+        ),
+        UniqueConstraint(
+            "activation_id", "frontier_end",
+            name="uq_paper_runtime_cycles_activation_frontier",
+        ),
+        Index(
+            "ix_paper_runtime_cycles_activation_status",
+            "activation_id",
+            "cycle_status",
+        ),
+    )
+
+    cycle_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), primary_key=True
+    )
+    activation_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=False
+    )
+    cycle_sequence: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    evaluation_key: Mapped[str] = mapped_column(String(256), nullable=False)
+    strategy_version_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=False
+    )
+    parameter_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    frontier_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    frontier_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    prior_frontier_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    state_before: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB(none_as_null=True)
+    )
+    state_before_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    state_after: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
+    state_after_fingerprint: Mapped[str | None] = mapped_column(String(64))
+    financial_position_state: Mapped[str] = mapped_column(String(10), nullable=False)
+    account_transaction_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    account_observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    account_open_trade_count: Mapped[int] = mapped_column(nullable=False)
+    account_open_position_count: Mapped[int] = mapped_column(nullable=False)
+    account_pending_order_count: Mapped[int] = mapped_column(nullable=False)
+    account_gate_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    strategy_evaluation_snapshot: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB(none_as_null=True)
+    )
+    decision_snapshot: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB(none_as_null=True)
+    )
+    attempt_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=True
+    )
+    cycle_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    cycle_reason_code: Mapped[str | None] = mapped_column(String(64))
+    claimed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    evaluated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+
+
+class PaperRuntimeOwnershipModel(Base):
+    """Singleton durable projection of the advisory-lock owner."""
+
+    __tablename__ = "paper_runtime_ownership"
+    __table_args__ = (
+        CheckConstraint(
+            "slot_key = 'ATLAS_PAPER_RUNTIME'", name="paper_runtime_ownership_slot"
+        ),
+        CheckConstraint(
+            "owner_generation > 0", name="paper_runtime_owner_generation"
+        ),
+        CheckConstraint(
+            "phase IN ('ACQUIRED', 'STARTING', 'RUNNING', 'STOP_REQUESTED', "
+            "'STOPPING', 'STOPPED', 'BLOCKED', 'FAILED')",
+            name="paper_runtime_ownership_phase",
+        ),
+        ForeignKeyConstraint(
+            ["activation_id"],
+            ["paper_runtime_activations.activation_id"],
+            ondelete="RESTRICT",
+        ),
+    )
+
+    slot_key: Mapped[str] = mapped_column(String(32), primary_key=True)
+    owner_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=False
+    )
+    activation_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=True
+    )
+    owner_generation: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    acquired_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    heartbeat_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    phase: Mapped[str] = mapped_column(String(24), nullable=False)
