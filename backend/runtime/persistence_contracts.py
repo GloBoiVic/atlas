@@ -479,6 +479,7 @@ class PaperRuntimeActivation:
         return {
             "activation_id": str(self.activation_id),
             **self.immutable_json(),
+            "requested_at": self.requested_at.isoformat().replace("+00:00", "Z"),
             "lifecycle_state": self.lifecycle_state.value,
             "state_reason_code": self.state_reason_code,
             "state_detail": self.state_detail,
