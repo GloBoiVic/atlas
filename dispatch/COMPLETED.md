@@ -1,5 +1,29 @@
 # Completed
 
+<!-- completion-id: dogfood-01-paper-activation-response-projection -->
+## Dogfood 01 — PAPER Activation Response Projection — completion record
+
+- **Date/status:** 2026-09-03 — T001 BUILD, independent VALIDATE, and independent
+  REVIEW **PASS**; no unresolved Critical or Important findings.
+- **Commit:** `8227f37` Repair PAPER activation response projection; feature branch
+  was pushed to GitHub and merged into `main` as `bc62431`.
+- **Scope:** Restored the existing durable `requested_at` value in the
+  `PaperRuntimeActivation.to_json()` projection and added deterministic real-domain
+  coverage for create, active, detail/status, and stop response paths. Existing
+  Decimal-string `riskPerTrade`, identity, lifecycle, transaction, Risk, execution,
+  reconciliation, runtime, broker, schema, and migration semantics were unchanged.
+- **Validation:** Focused projection checks **2 passed**; reconciled API/runtime
+  suite **60 passed** with one pre-existing Starlette/httpx deprecation warning;
+  changed-slice Ruff, Pyright, and `git diff --check` passed. No runtime start,
+  durable activation mutation, OANDA request, broker mutation, or capital-capable
+  operation occurred.
+- **Review:** Independent review **PASS** with no unresolved Critical or Important
+  findings. Non-blocking tooling notes are preserved in the immutable validation and
+  review artifacts.
+- **Git/state:** Feature branch and `main` were pushed to GitHub; the feature branch
+  was merged into `main`; `dispatch/ACTIVE.md` was cleared; all workstream evidence
+  is preserved.
+
 <!-- completion-id: paper-06-runtime-activation -->
 ## PAPER 06 — Runtime Activation — completion record
 
