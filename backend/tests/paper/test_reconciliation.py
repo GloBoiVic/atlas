@@ -6,6 +6,8 @@ from types import SimpleNamespace
 from typing import Any, cast
 from uuid import UUID
 
+import pytest
+
 from backend.domain import Direction, Instrument
 from backend.paper import (
     BrokerFillFacts,
@@ -104,9 +106,10 @@ class Repository:
             self.row.execution_outcome = run.resulting_execution_outcome.value
         self.row.reconciliation_status = kwargs["reconciliation_status"].value
         self.row.reconciliation_block_code = kwargs.get("reconciliation_block_code")
-        self.row.rejection_code = kwargs.get("rejection_code")
-        self.row.rejection_broker_order_id = kwargs.get("rejection_broker_order_id")
-        self.row.rejection_transaction_id = kwargs.get("rejection_transaction_id")
+        if kwargs.get("rejection_code") is not None:
+            self.row.rejection_code = kwargs["rejection_code"]
+            self.row.rejection_broker_order_id = kwargs.get("rejection_broker_order_id")
+            self.row.rejection_transaction_id = kwargs.get("rejection_transaction_id")
         self.row.projection_version += 1
         current_frontier = self.row.last_applied_transaction_id
         proposed_frontier = run.frontier_applied
@@ -168,6 +171,9 @@ def row(
     target: Decimal | None = None,
     take_profit_claimed: bool = False,
     last_applied_transaction_id: str | None = None,
+    rejection_code: str | None = None,
+    rejection_broker_order_id: str | None = None,
+    rejection_transaction_id: str | None = None,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         attempt_id=ATTEMPT_ID,
@@ -199,6 +205,9 @@ def row(
         execution_outcome=outcome.value if outcome else None,
         reconciliation_status=ReconciliationStatus.NOT_RUN.value,
         reconciliation_block_code=None,
+        rejection_code=rejection_code,
+        rejection_broker_order_id=rejection_broker_order_id,
+        rejection_transaction_id=rejection_transaction_id,
         last_applied_transaction_id=last_applied_transaction_id,
         account_transaction_id="10",
         projection_version=0,
@@ -347,6 +356,59 @@ def protection(*, target: bool = True) -> ProtectionConfirmation:
     )
 
 
+def configure_later_fill(provider: Provider, *, bounded: bool) -> BrokerFillFacts:
+    later_fill = fill()
+    if bounded:
+        provider.reads["order"] = read(
+            PaperObservationReadKind.ORDER_DETAIL,
+            PaperObservationObjectKind.ORDER,
+            PaperReconciliationReadState.NOT_FOUND,
+        )
+        provider.reads["account"] = read(
+            PaperObservationReadKind.ACCOUNT_DETAILS,
+            PaperObservationObjectKind.ACCOUNT,
+            PaperReconciliationReadState.ACCOUNT,
+            frontier="12",
+        )
+        provider.reads["range"] = read(
+            PaperObservationReadKind.TRANSACTION_RANGE,
+            PaperObservationObjectKind.TRANSACTION,
+            PaperReconciliationReadState.RANGE,
+            frontier="12",
+            transactions=(
+                PaperReconciliationTransaction(
+                    PaperReconciliationReadState.FILLED,
+                    provider_transaction_id="12",
+                    provider_order_id=ORDER_ID,
+                    provider_trade_id=TRADE_ID,
+                    fill=later_fill,
+                    attributable=True,
+                ),
+            ),
+        )
+    else:
+        provider.reads["order"] = read(
+            PaperObservationReadKind.ORDER_DETAIL,
+            PaperObservationObjectKind.ORDER,
+            PaperReconciliationReadState.FILLED,
+            transaction_id="12",
+            provider_order_id=ORDER_ID,
+        )
+        provider.reads["transaction"] = read(
+            PaperObservationReadKind.TRANSACTION_DETAIL,
+            PaperObservationObjectKind.TRANSACTION,
+            PaperReconciliationReadState.FILLED,
+            fill=later_fill,
+        )
+    provider.reads["trade"] = read(
+        PaperObservationReadKind.TRADE_DETAIL,
+        PaperObservationObjectKind.TRADE,
+        PaperReconciliationReadState.NOT_FOUND,
+        provider_trade_id=TRADE_ID,
+    )
+    return later_fill
+
+
 def test_unknown_not_found_is_unresolved_and_reads_account_once() -> None:
     repository = Repository(row())
     provider = Provider()
@@ -450,6 +512,211 @@ def test_exact_fill_persists_fill_truth_but_stays_incomplete_without_trade() -> 
     assert outcome is PaperExecutionOutcome.FILLED_PROTECTION_INCOMPLETE
     assert result.reconciliation_status is ReconciliationStatus.UNRESOLVED
     assert repository.row.fill_trade_id == TRADE_ID
+
+
+@pytest.mark.parametrize(
+    "prior_outcome",
+    [PaperExecutionOutcome.REJECTED, PaperExecutionOutcome.CANCELLED],
+)
+@pytest.mark.parametrize("bounded", [False, True], ids=["exact", "range"])
+def test_later_fill_after_terminal_history_is_conflict(
+    prior_outcome: PaperExecutionOutcome, bounded: bool
+) -> None:
+    repository = Repository(
+        row(
+            outcome=prior_outcome,
+            rejection_code=(
+                "PRIOR_REJECTION"
+                if prior_outcome is PaperExecutionOutcome.REJECTED
+                else None
+            ),
+            rejection_broker_order_id=(
+                ORDER_ID if prior_outcome is PaperExecutionOutcome.REJECTED else None
+            ),
+            rejection_transaction_id=(
+                "11" if prior_outcome is PaperExecutionOutcome.REJECTED else None
+            ),
+        )
+    )
+    provider = Provider()
+    later_fill = configure_later_fill(provider, bounded=bounded)
+
+    result = coordinator(repository, provider).reconcile(ATTEMPT_ID)
+
+    assert (
+        result.execution_outcome is PaperExecutionOutcome.FILLED_PROTECTION_INCOMPLETE
+    )
+    assert result.reconciliation_status is ReconciliationStatus.CONFLICT
+    assert result.run.status.value == "CONFLICT"
+    assert PaperReconciliationFindingCode.ENTRY_FILLED in result.run.finding_codes
+    assert PaperReconciliationFindingCode.CONFLICT in result.run.finding_codes
+    assert repository.row.fill_trade_id == later_fill.broker_trade_id
+    assert result.run.prior_execution_outcome is prior_outcome
+    assert repository.row.rejection_code == (
+        "PRIOR_REJECTION" if prior_outcome is PaperExecutionOutcome.REJECTED else None
+    )
+    assert repository.row.rejection_broker_order_id == (
+        ORDER_ID if prior_outcome is PaperExecutionOutcome.REJECTED else None
+    )
+    assert repository.row.rejection_transaction_id == (
+        "11" if prior_outcome is PaperExecutionOutcome.REJECTED else None
+    )
+
+
+def test_later_fill_after_rejection_history_keeps_conflict_through_protection() -> None:
+    repository = Repository(
+        row(
+            outcome=PaperExecutionOutcome.REJECTED,
+            target=Decimal("1.11030"),
+            take_profit_claimed=True,
+            rejection_code="PRIOR_REJECTION",
+            rejection_broker_order_id=ORDER_ID,
+            rejection_transaction_id="11",
+        )
+    )
+    provider = Provider()
+    configure_later_fill(provider, bounded=False)
+    provider.reads["trade"] = read(
+        PaperObservationReadKind.TRADE_DETAIL,
+        PaperObservationObjectKind.TRADE,
+        PaperReconciliationReadState.OPEN,
+        trade_id=TRADE_ID,
+        provider_trade_id=TRADE_ID,
+        client_trade_id=CORRELATION[1],
+        signed_units=Decimal("19230"),
+        price=Decimal("1.10010"),
+        protection=protection(),
+    )
+
+    result = coordinator(repository, provider).reconcile(ATTEMPT_ID)
+
+    assert result.execution_outcome is PaperExecutionOutcome.FILLED_PROTECTED
+    assert result.reconciliation_status is ReconciliationStatus.CONFLICT
+    assert PaperReconciliationFindingCode.CONFLICT in result.run.finding_codes
+    assert (
+        PaperReconciliationFindingCode.PROTECTION_CONFIRMED in result.run.finding_codes
+    )
+    assert (
+        repository.row.execution_outcome == PaperExecutionOutcome.FILLED_PROTECTED.value
+    )
+    assert repository.row.stop_loss_status == ProtectionLegStatus.CONFIRMED.value
+    assert repository.row.take_profit_status == ProtectionLegStatus.CONFIRMED.value
+    assert repository.row.rejection_code == "PRIOR_REJECTION"
+    assert repository.row.rejection_broker_order_id == ORDER_ID
+    assert repository.row.rejection_transaction_id == "11"
+
+
+def test_terminal_history_conflict_survives_trade_read_failure() -> None:
+    repository = Repository(
+        row(
+            outcome=PaperExecutionOutcome.CANCELLED,
+        )
+    )
+    provider = Provider()
+    configure_later_fill(provider, bounded=False)
+    provider.failures.add("trade")
+
+    result = coordinator(repository, provider).reconcile(ATTEMPT_ID)
+
+    assert (
+        result.execution_outcome is PaperExecutionOutcome.FILLED_PROTECTION_INCOMPLETE
+    )
+    assert result.reconciliation_status is ReconciliationStatus.CONFLICT
+    assert result.run.status.value == "CONFLICT"
+    assert PaperReconciliationFindingCode.CONFLICT in result.run.finding_codes
+
+
+@pytest.mark.parametrize(
+    "prior_outcome",
+    [None, PaperExecutionOutcome.UNKNOWN],
+)
+def test_later_fill_without_terminal_history_is_not_conflict(
+    prior_outcome: PaperExecutionOutcome | None,
+) -> None:
+    repository = Repository(row(outcome=prior_outcome))
+    provider = Provider()
+    configure_later_fill(provider, bounded=False)
+
+    result = coordinator(repository, provider).reconcile(ATTEMPT_ID)
+
+    assert (
+        result.execution_outcome is PaperExecutionOutcome.FILLED_PROTECTION_INCOMPLETE
+    )
+    assert result.reconciliation_status is ReconciliationStatus.UNRESOLVED
+    assert PaperReconciliationFindingCode.CONFLICT not in result.run.finding_codes
+
+
+@pytest.mark.parametrize(
+    "terminal_outcome",
+    [PaperExecutionOutcome.REJECTED, PaperExecutionOutcome.CANCELLED],
+)
+def test_same_later_terminal_history_remains_consistent(
+    terminal_outcome: PaperExecutionOutcome,
+) -> None:
+    repository = Repository(row(outcome=terminal_outcome))
+    provider = Provider()
+    provider.reads["order"] = read(
+        PaperObservationReadKind.ORDER_DETAIL,
+        PaperObservationObjectKind.ORDER,
+        PaperReconciliationReadState(terminal_outcome.value),
+        transaction_id="12",
+        provider_order_id=ORDER_ID,
+    )
+    provider.reads["transaction"] = read(
+        PaperObservationReadKind.TRANSACTION_DETAIL,
+        PaperObservationObjectKind.TRANSACTION,
+        PaperReconciliationReadState(terminal_outcome.value),
+        rejection=(
+            BrokerRejection("BROKER_ORDER_REJECTED", ORDER_ID, "12")
+            if terminal_outcome is PaperExecutionOutcome.REJECTED
+            else None
+        ),
+    )
+
+    result = coordinator(repository, provider).reconcile(ATTEMPT_ID)
+
+    assert result.execution_outcome is terminal_outcome
+    assert result.reconciliation_status is ReconciliationStatus.CONSISTENT
+    assert PaperReconciliationFindingCode.CONFLICT not in result.run.finding_codes
+
+
+@pytest.mark.parametrize(
+    ("prior_outcome", "later_outcome"),
+    [
+        (PaperExecutionOutcome.REJECTED, PaperExecutionOutcome.CANCELLED),
+        (PaperExecutionOutcome.CANCELLED, PaperExecutionOutcome.REJECTED),
+    ],
+)
+def test_contradictory_later_terminal_history_fails_closed(
+    prior_outcome: PaperExecutionOutcome, later_outcome: PaperExecutionOutcome
+) -> None:
+    repository = Repository(row(outcome=prior_outcome))
+    provider = Provider()
+    provider.reads["order"] = read(
+        PaperObservationReadKind.ORDER_DETAIL,
+        PaperObservationObjectKind.ORDER,
+        PaperReconciliationReadState(later_outcome.value),
+        transaction_id="12",
+        provider_order_id=ORDER_ID,
+    )
+    provider.reads["transaction"] = read(
+        PaperObservationReadKind.TRANSACTION_DETAIL,
+        PaperObservationObjectKind.TRANSACTION,
+        PaperReconciliationReadState(later_outcome.value),
+        rejection=(
+            BrokerRejection("BROKER_ORDER_REJECTED", ORDER_ID, "12")
+            if later_outcome is PaperExecutionOutcome.REJECTED
+            else None
+        ),
+    )
+
+    result = coordinator(repository, provider).reconcile(ATTEMPT_ID)
+
+    assert result.execution_outcome is prior_outcome
+    assert result.reconciliation_status is ReconciliationStatus.CONFLICT
+    assert result.run.status.value == "CONFLICT"
+    assert PaperReconciliationFindingCode.CONFLICT in result.run.finding_codes
+    assert repository.row.execution_outcome == prior_outcome.value
 
 
 def test_missing_order_uses_one_numeric_bounded_range_for_reject() -> None:

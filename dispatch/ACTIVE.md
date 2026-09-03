@@ -1,7 +1,7 @@
 # Active Workstream
 
 - **Workstream:** `paper-05-persistence-reconciliation`
-- **Stage:** `BLOCKED`
-- **Task:** `R003`
+- **Stage:** `READY_FOR_USER`
+- **Task:** `R004`
 - **Role:** `solo-flow`
-- **Approval:** R003 VALIDATE found an IMPORTANT PRODUCT defect; stop for developer direction; no R004 authorized
+- **Approval:** R004 BUILD, VALIDATE, and REVIEW passed; awaiting user direction; do not merge or GIT END

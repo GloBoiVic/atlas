@@ -409,7 +409,7 @@ class PaperReconciliationCoordinator:
                                     record(PaperReconciliationFindingCode.UNRESOLVED)
                         else:
                             record(PaperReconciliationFindingCode.UNRESOLVED)
-                        if terminal_proven and fill is None:
+                        if terminal_proven and fill is None and not conflict_detected:
                             status = ReconciliationStatus.CONSISTENT
                     if order.state is PaperReconciliationReadState.PENDING:
                         record(PaperReconciliationFindingCode.UNRESOLVED)
@@ -517,11 +517,12 @@ class PaperReconciliationCoordinator:
         elif status is ReconciliationStatus.UNRESOLVED and block_code is None:
             block_code = "RECONCILIATION_UNRESOLVED"
 
-        if budget_exhausted or read_error:
+        if (budget_exhausted or read_error) and not conflict_detected:
             run_status = PaperReconciliationRunStatus.FAILED
             status = ReconciliationStatus.UNRESOLVED
             block_code = "RECONCILIATION_READ_FAILED"
-        elif status is ReconciliationStatus.CONFLICT:
+        elif status is ReconciliationStatus.CONFLICT or conflict_detected:
+            status = ReconciliationStatus.CONFLICT
             run_status = PaperReconciliationRunStatus.CONFLICT
             record(PaperReconciliationFindingCode.CONFLICT)
         elif status is ReconciliationStatus.LIFECYCLE_ADVANCED:
@@ -706,6 +707,20 @@ class PaperReconciliationCoordinator:
                 raise PaperIdentityConflict("account observation has an instrument")
 
     @staticmethod
+    def _terminal_history_conflicts(
+        current: PaperExecutionOutcome | None,
+        observed: PaperExecutionOutcome,
+    ) -> bool:
+        return (
+            current
+            in (
+                PaperExecutionOutcome.REJECTED,
+                PaperExecutionOutcome.CANCELLED,
+            )
+            and observed is not current
+        )
+
+    @staticmethod
     def _consume_entry_terminal(
         read: PaperReconciliationRead,
         *,
@@ -717,6 +732,10 @@ class PaperReconciliationCoordinator:
                 findings.append(PaperReconciliationFindingCode.CONFLICT)
             return None, current, False
         if read.fill is not None:
+            if PaperReconciliationCoordinator._terminal_history_conflicts(
+                current, PaperExecutionOutcome.FILLED_PROTECTION_INCOMPLETE
+            ):
+                findings.append(PaperReconciliationFindingCode.CONFLICT)
             if read.rejection is not None:
                 findings.append(PaperReconciliationFindingCode.CONFLICT)
             findings.append(PaperReconciliationFindingCode.ENTRY_FILLED)
@@ -725,9 +744,19 @@ class PaperReconciliationCoordinator:
             read.state is PaperReconciliationReadState.REJECTED
             and read.rejection is not None
         ):
+            if PaperReconciliationCoordinator._terminal_history_conflicts(
+                current, PaperExecutionOutcome.REJECTED
+            ):
+                findings.append(PaperReconciliationFindingCode.CONFLICT)
+                return None, current, True
             findings.append(PaperReconciliationFindingCode.ENTRY_REJECTED)
             return None, PaperExecutionOutcome.REJECTED, True
         if read.state is PaperReconciliationReadState.CANCELLED:
+            if PaperReconciliationCoordinator._terminal_history_conflicts(
+                current, PaperExecutionOutcome.CANCELLED
+            ):
+                findings.append(PaperReconciliationFindingCode.CONFLICT)
+                return None, current, True
             findings.append(PaperReconciliationFindingCode.ENTRY_CANCELLED)
             return None, PaperExecutionOutcome.CANCELLED, True
         findings.append(PaperReconciliationFindingCode.UNRESOLVED)
@@ -773,6 +802,10 @@ class PaperReconciliationCoordinator:
             or read.state is PaperReconciliationReadState.CONFLICT
             or len(all_terminal) != len(candidates)
         ):
+            if PaperReconciliationCoordinator._terminal_history_conflicts(
+                current, PaperExecutionOutcome.FILLED_PROTECTION_INCOMPLETE
+            ):
+                findings.append(PaperReconciliationFindingCode.CONFLICT)
             findings.append(PaperReconciliationFindingCode.ENTRY_FILLED)
             for item in no_fill_terminals:
                 findings.append(

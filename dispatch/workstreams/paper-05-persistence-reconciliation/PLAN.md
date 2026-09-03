@@ -8,12 +8,12 @@
 - **Base:** `main` at `7a3204c41a394172752ab64b8aeab3f8fbcccf5e` (`Close PAPER 04 workstream`)
 - **Base SHA:** `7a3204c41a394172752ab64b8aeab3f8fbcccf5e`
 - **Branch:** `solo/paper-05-persistence-reconciliation`
-- **Phase:** `BLOCKED`
-- **Approval:** explicit developer implementation approval granted in the current request
+- **Phase:** `READY_FOR_USER`
+- **Approval:** explicit developer authorization granted in the current request for exactly one narrow post-cap R004 correction
 - **Architecture:** `FROZEN` for approval review; `ARCHITECTURE.md` is canonical with this PLAN
-- **Task state:** `T001` `DONE_WITH_CONCERNS`; `R001` `DONE_WITH_CONCERNS` with validation/review `PASS`; `T002` `DONE_WITH_CONCERNS` with validation/review `PASS`; `R002` `DONE` with validation/review `PASS`; `T003` `DONE_WITH_CONCERNS`; validation `FAIL`; `R003` `DONE`; validation `FAIL`; review not started
-- **Next action:** stop for developer direction. Do not create R004, do not continue R003, do not merge, and do not GIT END. Remaining finding: an attributable later Fill after a persisted `REJECTED` or `CANCELLED` outcome advances to a filled outcome without setting reconciliation status `CONFLICT`.
-- **Concerns:** This crosses durable financial truth, migration/constraint/concurrency behavior, broker authority, restart recovery, and the first durable boundary around capital-capable PAPER execution. Existing Experiment persistence is historical-only and must not be reused as PAPER broker truth. No broker mutation, automatic recovery mutation, runtime activation, PAPER scheduling, closing/reducing exposure, or protective-order repair is authorized by this workstream. T003 validation found eight unresolved IMPORTANT PRODUCT blockers and one MINOR PRODUCT RequestID finding. The workstream-wide two-remediation-return cap remains exhausted; the developer has authorized exactly one post-cap R003 chain for these approved-scope defects. If R003 VALIDATE or REVIEW finds any Critical or Important PRODUCT defect, stop without R004.
+- **Task state:** `T001` `DONE_WITH_CONCERNS`; `R001` `DONE_WITH_CONCERNS` with validation/review `PASS`; `T002` `DONE_WITH_CONCERNS` with validation/review `PASS`; `R002` `DONE` with validation/review `PASS`; `T003` `DONE_WITH_CONCERNS`; validation `FAIL`; `R003` `DONE`; validation `FAIL`; `R004` `DONE`; validation `PASS`; review `PASS`
+- **Next action:** Report R004 as ready for user direction. Do not create R005, merge, or GIT END. If further review is requested, preserve this completed remediation chain and use a new authorized process.
+- **Concerns:** This crosses durable financial truth, migration/constraint/concurrency behavior, broker authority, restart recovery, and the first durable boundary around capital-capable PAPER execution. Existing Experiment persistence is historical-only and must not be reused as PAPER broker truth. No broker mutation, automatic recovery mutation, runtime activation, PAPER scheduling, closing/reducing exposure, or protective-order repair is authorized by this workstream. The workstream-wide two-remediation-return cap remains exhausted. The developer has authorized exactly one narrow post-cap R004 chain for this approved-scope PRODUCT defect; if R004 VALIDATE or REVIEW finds any Critical or Important PRODUCT defect, stop and report that exact finding without creating R005.
 
 ## 1. Repository-grounded starting point
 
@@ -372,26 +372,17 @@ The final acceptance matrix must prove at minimum that:
 14. PostgreSQL upgrade/downgrade/upgrade, append-only guards, mutation-claim uniqueness, immutable attempt evidence, Fill non-erasure, outcome guards, reconciliation concurrency/staleness behavior, deterministic OANDA fixtures, focused tests, and broad safe regressions provide evidence appropriate to this Critical slice.
 15. All validation uses deterministic fakes, normalized fixtures, and `httpx.MockTransport`; no real OANDA Practice mutation, PAPER activation, LIVE operation, or capital-capable credential use is permitted.
 
-## 6. Approval state
+## 6. Approval and remediation state
 
-This remains a pre-approval Critical workstream.
+Architecture reconciliation remains complete and `ARCHITECTURE.md` remains frozen.
 
-Architecture reconciliation is complete.
+The existing PAPER 05 branch is the execution source of truth. The workstream-wide
+remediation-return cap is exhausted, but the developer has explicitly authorized
+exactly one narrow post-cap R004 correction for the approved-scope PRODUCT finding
+in the immutable R003 `VALIDATION.md` receipt. This authorization does not reopen
+the PLAN or ARCHITECTURE and does not authorize R005.
 
-No implementation tasks exist.
-
-No feature branch has been created.
-
-No implementation or broker action is authorized.
-
-The workstream remains at:
-
-```text
-DEVELOPER_APPROVAL
-```
-
-until the developer explicitly approves the current PLAN and ARCHITECTURE.
-
-Developer feedback must be reconciled into these artifacts before approval.
-
-Feedback alone is not implementation approval.
+R004 must preserve the existing persistence transition contract permitting
+`REJECTED`/`CANCELLED` to advance to a filled outcome when later broker-authoritative
+Fill proof exists. It adds only the missing historical contradiction status/finding
+and its deterministic regression coverage.
