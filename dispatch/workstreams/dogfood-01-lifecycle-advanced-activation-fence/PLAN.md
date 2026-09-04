@@ -4,15 +4,15 @@
 
 - **Workstream:** `dogfood-01-lifecycle-advanced-activation-fence`
 - **Classification:** `Critical`
-- **Status:** `READY_FOR_USER`
-- **Phase:** `READY_FOR_USER`
+- **Status:** `CLOSED`
+- **Phase:** `GIT_END`
 - **Base:** `main` at `bc53f70d0afdcbbc728d54d48df5370da0f2238e` (`Close Dogfood 01 Trade identity workstream`)
 - **Base SHA:** `bc53f70d0afdcbbc728d54d48df5370da0f2238e`
 - **Branch:** `solo/dogfood-01-lifecycle-advanced-activation-fence`
 - **Architecture:** `FROZEN`; `ARCHITECTURE.md` is reconciled and approval-ready
 - **Task state:** T001 `DONE_WITH_CONCERNS`; original validation `PASS`; original review `FAIL`; R001 `DONE_WITH_CONCERNS` with validation `PASS` and review `FAIL`; R002 `DONE_WITH_CONCERNS` with validation `PASS` and review `PASS`; remediation-return cap satisfied
-- **Next action:** explicit developer merge approval; do not merge before approval
-- **Approval:** implementation explicitly approved by the developer; GIT START completed from `main` at the recorded base SHA; R001 and R002 were approved-scope defect remediations; merge approval is pending; no activation, runtime start, credential use, or broker mutation authorized
+- **Next action:** none; GIT END completed
+- **Approval:** implementation and merge explicitly approved by the developer; GIT START completed from `main` at the recorded base SHA; R001 and R002 were approved-scope defect remediations; no activation, runtime start, credential use, or broker mutation authorized
 
 ## Outcome
 

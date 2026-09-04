@@ -1,5 +1,31 @@
 # Completed
 
+<!-- completion-id: dogfood-01-lifecycle-advanced-activation-fence -->
+## Dogfood 01 — Lifecycle-Advanced Activation Fence — completion record
+
+- **Date/status:** 2026-09-04 — terminal closure; T001 BUILD, independent VALIDATE and
+  REVIEW, and R001/R002 remediation BUILD/VALIDATE/REVIEW chains **PASS** with no unresolved
+  Critical or Important product findings.
+- **Commit:** `4d21682` Implement lifecycle advanced activation fence; the feature branch was
+  fast-forward merged into `main` and pushed to GitHub.
+- **Scope:** Added the semantic new-session history classifier for lifecycle-ended incomplete
+  Fills only when complete coherent durable Fill and applied `LIFECYCLE_ADVANCED` evidence is
+  present. Preserved strict same-attempt recovery, provider-free activation POST, fresh startup
+  capability/account/flatness gates, P05/Risk/claim/mutation barriers, and historical truth.
+  No schema/migration or provider-neutral reconciliation semantics changed; no Dogfood 02 or
+  broker-capable operation occurred.
+- **Validation:** Focused suite **185 passed**; safe backend suite **1182 passed, 4 skipped,
+  115 deselected**; changed-slice Ruff/Pyright, Alembic, and diff checks passed. R001 and R002
+  independently closed the contradictory durable-evidence findings. PostgreSQL integration was
+  unavailable because no dedicated test URL was configured; unrelated repository-wide tooling
+  baseline findings remain documented as LOW limitations.
+- **Review:** Final R002 independent review **PASS**; earlier failed review artifacts remain
+  immutable evidence, with no unresolved Critical or Important findings.
+- **Git/state:** `solo/dogfood-01-lifecycle-advanced-activation-fence` was pushed and
+  fast-forward merged into `main`; `dispatch/ACTIVE.md` was cleared; all workstream and
+  remediation evidence is preserved. No credentials, runtime start, activation, historical
+  repair, or provider/broker mutation occurred.
+
 <!-- completion-id: dogfood-01-paper-activation-response-projection -->
 ## Dogfood 01 — PAPER Activation Response Projection — completion record
 
