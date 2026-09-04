@@ -24,7 +24,7 @@ from .orders import (
 )
 from .positions import (
     OandaPracticeOpenPositionInventory,
-    normalize_oanda_practice_open_position_inventory,
+    normalize_oanda_practice_account_position_inventory,
 )
 from .primitives import OandaPrimitiveError, parse_transaction_id
 from .request import OandaObservationRequester, validate_token
@@ -342,7 +342,7 @@ def _normalize_execution_account(
             {"trades": account.get("trades"), "lastTransactionID": frontier},
             identity,
         )
-        positions = normalize_oanda_practice_open_position_inventory(
+        positions = normalize_oanda_practice_account_position_inventory(
             {"positions": account.get("positions"), "lastTransactionID": frontier},
             identity,
         )

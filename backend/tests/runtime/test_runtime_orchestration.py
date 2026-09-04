@@ -30,7 +30,11 @@ from backend.domain import (
     Timeframe,
     ValidatedParameterPayload,
 )
-from backend.integrations.oanda import OandaPracticeAccountPropertiesReader
+from backend.integrations.oanda import (
+    OandaPracticeAccountPropertiesReader,
+    OandaPracticeExecutionAccountSnapshot,
+    normalize_oanda_practice_execution_account_snapshot,
+)
 from backend.paper.current_analytical_frontier import CurrentAnalyticalFrontier
 from backend.paper.execution import PaperExecutionOutcome
 from backend.paper.persistence_contracts import PaperStrategyEvaluationReceipt
@@ -190,6 +194,67 @@ def _startup_runtime(
     return runtime
 
 
+def _normalized_startup_account_snapshot(
+    *, exposed: bool
+) -> OandaPracticeExecutionAccountSnapshot:
+    position: dict[str, object] = {
+        "instrument": "EUR_USD",
+        "long": {"units": "100" if exposed else "0"},
+        "short": {"units": "0"},
+    }
+    if exposed:
+        position.update(
+            {
+                "unrealizedPL": "0.00",
+                "long": {
+                    "units": "100",
+                    "averagePrice": "1.1000",
+                    "unrealizedPL": "0.00",
+                },
+                "short": {
+                    "units": "0",
+                    "unrealizedPL": "0.00",
+                },
+            }
+        )
+    account: dict[str, object] = {
+        "id": ACCOUNT_ID,
+        "currency": "USD",
+        "alias": "Runtime fixture",
+        "balance": "100000.00",
+        "NAV": "100000.00",
+        "unrealizedPL": "0.00",
+        "marginUsed": "0.00",
+        "marginAvailable": "100000.00",
+        "openTradeCount": 1 if exposed else 0,
+        "openPositionCount": 1 if exposed else 0,
+        "pendingOrderCount": 0,
+        "trades": (
+            [
+                {
+                    "id": "10",
+                    "instrument": "EUR_USD",
+                    "openTime": "2026-09-02T12:00:00.000000000Z",
+                    "price": "1.1000",
+                    "currentUnits": "100",
+                    "state": "OPEN",
+                    "unrealizedPL": "0.00",
+                }
+            ]
+            if exposed
+            else []
+        ),
+        "positions": [position],
+        "orders": [],
+        "guaranteedStopLossOrderMode": "DISABLED",
+        "hedgingEnabled": True,
+        "lastTransactionID": "42",
+    }
+    return normalize_oanda_practice_execution_account_snapshot(
+        {"account": account, "lastTransactionID": "42"}, ACCOUNT_ID
+    )
+
+
 class _StopEvent:
     def __init__(self) -> None:
         self.waited: list[float] = []
@@ -243,6 +308,35 @@ def test_startup_proves_non_mt4_capability_before_running() -> None:
     assert result.reason_code is None
     assert runtime.running is True
     assert events == ["capability", "account"]
+
+
+@pytest.mark.parametrize(
+    ("exposed", "expected_outcome", "expected_reason"),
+    [
+        (False, PaperRuntimeTickOutcome.STARTING, None),
+        (True, PaperRuntimeTickOutcome.BLOCKED, "BOOTSTRAP_REQUIRES_FLAT"),
+    ],
+)
+def test_startup_uses_derived_account_position_projection_for_flat_gate(
+    exposed: bool,
+    expected_outcome: PaperRuntimeTickOutcome,
+    expected_reason: str | None,
+) -> None:
+    class CapabilityReader:
+        def read(self) -> object:
+            return object()
+
+    runtime = _startup_runtime(CapabilityReader(), events=[])
+    snapshot = _normalized_startup_account_snapshot(exposed=exposed)
+    runtime._read_observation = lambda *_args: (  # type: ignore[method-assign]
+        PaperRuntimeAccountObservation.from_oanda_snapshot(snapshot, observed_at=NOW)
+    )
+
+    result = runtime.startup()
+
+    assert result.outcome is expected_outcome
+    assert result.reason_code == expected_reason
+    assert runtime.running is (not exposed)
 
 
 @pytest.mark.parametrize(

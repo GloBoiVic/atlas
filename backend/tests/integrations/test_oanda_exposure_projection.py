@@ -1,7 +1,7 @@
 from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Any, Literal
 
 import pytest
 
@@ -15,6 +15,7 @@ from backend.integrations.oanda import (
     OandaPracticeOpenTrade,
     OandaPracticeOpenTradeInventory,
     OandaPracticePositionSide,
+    normalize_oanda_practice_account_position_inventory,
     project_oanda_practice_eur_usd_exposure_state,
 )
 
@@ -95,6 +96,23 @@ def observations(
     )
 
 
+def account_position_payload(long_units: str, short_units: str) -> dict[str, Any]:
+    return {
+        "instrument": "EUR_USD",
+        "unrealizedPL": "0",
+        "long": {
+            "units": long_units,
+            "averagePrice": "1.1000",
+            "unrealizedPL": "0",
+        },
+        "short": {
+            "units": short_units,
+            "averagePrice": "1.1000",
+            "unrealizedPL": "0",
+        },
+    }
+
+
 def test_matching_empty_inventories_project_flat() -> None:
     trades, positions = observations()
 
@@ -166,13 +184,40 @@ def test_opposing_trades_are_not_netted() -> None:
 
 
 def test_dual_sided_position_is_not_netted() -> None:
+    derived = normalize_oanda_practice_account_position_inventory(
+        {
+            "positions": [account_position_payload("100", "-40")],
+            "lastTransactionID": "10",
+        },
+        account_identity(),
+    )
     trades, positions = observations(
-        trades=(trade("100"),),
-        positions=(position("100", "-40"),),
+        trades=(trade("100"),), positions=derived.positions
     )
 
     with pytest.raises(OandaExposureProjectionError):
         project_oanda_practice_eur_usd_exposure_state(trades, positions)
+
+
+def test_projection_receives_no_exposure_from_historical_account_position() -> None:
+    derived = normalize_oanda_practice_account_position_inventory(
+        {
+            "positions": [
+                {
+                    "instrument": "EUR_USD",
+                    "long": {"units": "0"},
+                    "short": {"units": "-0"},
+                }
+            ],
+            "lastTransactionID": "10",
+        },
+        account_identity(),
+    )
+    trades, positions = observations(positions=derived.positions)
+
+    assert project_oanda_practice_eur_usd_exposure_state(trades, positions) == (
+        FinancialPositionState.FLAT
+    )
 
 
 @pytest.mark.parametrize(

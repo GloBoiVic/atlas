@@ -26,11 +26,16 @@ from backend.integrations.oanda import (
     OandaPracticeAccountSummarySnapshot,
     OandaPracticeEntryMutation,
     OandaPracticeEurUsdPricingObservation,
+    OandaPracticeExecutionAccountNormalizationError,
     OandaPracticeExecutionAccountSnapshot,
     OandaPracticeExecutionInstrument,
+    OandaPracticeOpenPosition,
     OandaPracticeOpenPositionInventory,
+    OandaPracticeOpenTrade,
     OandaPracticeOpenTradeInventory,
+    OandaPracticePendingOrder,
     OandaPracticePendingOrderInventory,
+    OandaPracticePositionSide,
     OandaPracticePriceBucket,
     OandaPracticeProtectionCompletion,
 )
@@ -73,6 +78,17 @@ class ValueReader:
     def read(self) -> object:
         self.events.append(self.name)
         return self.value
+
+
+class RaisingReader:
+    def __init__(self, error: Exception, events: list[str], name: str) -> None:
+        self.error = error
+        self.events = events
+        self.name = name
+
+    def read(self) -> object:
+        self.events.append(self.name)
+        raise self.error
 
 
 class EntryRequester:
@@ -127,7 +143,33 @@ def decision(direction: Direction = Direction.LONG) -> StrategyDecision:
     )
 
 
-def account_snapshot() -> OandaPracticeExecutionAccountSnapshot:
+def account_snapshot(
+    *, exposed: bool = False, pending: bool = False, dual_sided: bool = False
+) -> OandaPracticeExecutionAccountSnapshot:
+    position = OandaPracticeOpenPosition(
+        provider_instrument="EUR_USD",
+        unrealized_pl=Decimal("0"),
+        long=OandaPracticePositionSide(
+            units=Decimal("100"),
+            average_price=Decimal("1.1000"),
+            unrealized_pl=Decimal("0"),
+        ),
+        short=OandaPracticePositionSide(
+            units=Decimal("-40") if dual_sided else Decimal("0"),
+            average_price=Decimal("1.1000") if dual_sided else None,
+            unrealized_pl=Decimal("0"),
+        ),
+    )
+    trade = OandaPracticeOpenTrade(
+        provider_trade_id="10",
+        provider_instrument="EUR_USD",
+        open_time=DECISION_TIME,
+        open_price=Decimal("1.1000"),
+        current_units=Decimal("100"),
+        state="OPEN",
+        unrealized_pl=Decimal("0"),
+    )
+    order = OandaPracticePendingOrder("10", "LIMIT", "PENDING")
     summary = OandaPracticeAccountSummarySnapshot(
         identity=IDENTITY,
         balance=Decimal("10000"),
@@ -135,16 +177,22 @@ def account_snapshot() -> OandaPracticeExecutionAccountSnapshot:
         unrealized_pl=Decimal("0"),
         margin_used=Decimal("0"),
         margin_available=Decimal("10000"),
-        open_trade_count=0,
-        open_position_count=0,
-        pending_order_count=0,
+        open_trade_count=1 if exposed else 0,
+        open_position_count=1 if exposed else 0,
+        pending_order_count=1 if pending else 0,
         last_transaction_id="42",
     )
     return OandaPracticeExecutionAccountSnapshot(
         summary=summary,
-        trades=OandaPracticeOpenTradeInventory(IDENTITY, (), "42"),
-        positions=OandaPracticeOpenPositionInventory(IDENTITY, (), "42"),
-        pending_orders=OandaPracticePendingOrderInventory(IDENTITY, (), "42"),
+        trades=OandaPracticeOpenTradeInventory(
+            IDENTITY, (trade,) if exposed else (), "42"
+        ),
+        positions=OandaPracticeOpenPositionInventory(
+            IDENTITY, (position,) if exposed else (), "42"
+        ),
+        pending_orders=OandaPracticePendingOrderInventory(
+            IDENTITY, (order,) if pending else (), "42"
+        ),
         guaranteed_stop_loss_order_mode="DISABLED",
         hedging_enabled=True,
         last_transaction_id="42",
@@ -305,6 +353,8 @@ def _target_payload() -> dict[str, Any]:
 def _operation(
     entry_response: Mapping[str, Any],
     *,
+    snapshot: OandaPracticeExecutionAccountSnapshot | None = None,
+    execution_account_reader: Any | None = None,
     trade_values: list[Mapping[str, Any] | None] | None = None,
     target_response: Mapping[str, Any] | None = None,
     events: list[str] | None = None,
@@ -321,9 +371,8 @@ def _operation(
             ordered_events,
             "properties",
         ),
-        execution_account_reader=ValueReader(
-            account_snapshot(), ordered_events, "account"
-        ),
+        execution_account_reader=execution_account_reader
+        or ValueReader(snapshot or account_snapshot(), ordered_events, "account"),
         execution_instrument_reader=ValueReader(
             INSTRUMENT, ordered_events, "instrument"
         ),
@@ -341,6 +390,67 @@ def _operation(
         trade_reader,
         ordered_events,
     )
+
+
+def test_public_composition_blocks_derived_exposure_before_entry_mutation() -> None:
+    result, entry, protection, _, events = _operation(
+        _entry_payload(), snapshot=account_snapshot(exposed=True)
+    )
+
+    assert isinstance(result, PaperExecutionRefusal)
+    assert result.code is PaperExecutionRefusalCode.ENTRY_STATE_BLOCKED
+    assert result.detail_code == "ENTRY_STATE_NOT_FLAT"
+    assert entry.calls == 0
+    assert protection.calls == 0
+    assert events == ["properties", "account"]
+
+
+def test_public_composition_blocks_dual_sided_exposure_before_entry_mutation() -> None:
+    result, entry, protection, _, events = _operation(
+        _entry_payload(), snapshot=account_snapshot(exposed=True, dual_sided=True)
+    )
+
+    assert isinstance(result, PaperExecutionRefusal)
+    assert result.code is PaperExecutionRefusalCode.ENTRY_STATE_BLOCKED
+    assert result.detail_code == "ENTRY_STATE_NOT_FLAT"
+    assert entry.calls == 0
+    assert protection.calls == 0
+    assert events == ["properties", "account"]
+
+
+def test_public_composition_blocks_pending_orders_before_entry_mutation() -> None:
+    result, entry, protection, _, events = _operation(
+        _entry_payload(), snapshot=account_snapshot(pending=True)
+    )
+
+    assert isinstance(result, PaperExecutionRefusal)
+    assert result.code is PaperExecutionRefusalCode.ENTRY_STATE_BLOCKED
+    assert result.detail_code == "ENTRY_STATE_NOT_FLAT"
+    assert entry.calls == 0
+    assert protection.calls == 0
+    assert events == ["properties", "account"]
+
+
+def test_public_composition_blocks_count_contradiction_before_entry_mutation() -> None:
+    events: list[str] = []
+    result, entry, protection, _, observed_events = _operation(
+        _entry_payload(),
+        execution_account_reader=RaisingReader(
+            OandaPracticeExecutionAccountNormalizationError(
+                "contradictory inventory counts"
+            ),
+            events,
+            "account",
+        ),
+        events=events,
+    )
+
+    assert isinstance(result, PaperExecutionRefusal)
+    assert result.code is PaperExecutionRefusalCode.ACCOUNT_UNSUPPORTED
+    assert result.detail_code == "ACCOUNT_CAPABILITY_UNSUPPORTED"
+    assert entry.calls == 0
+    assert protection.calls == 0
+    assert observed_events == events == ["properties", "account"]
 
 
 def test_public_composition_returns_filled_protected_from_fresh_current_facts() -> None:

@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import FrozenInstanceError, fields
 from decimal import Decimal
 from typing import Any
@@ -17,6 +18,7 @@ from backend.integrations.oanda import (
     OandaPracticeOpenPositionReader,
     OandaPracticePositionSide,
     OandaRequestError,
+    normalize_oanda_practice_account_position_inventory,
     read_oanda_practice_open_position_inventory,
 )
 
@@ -119,6 +121,167 @@ def position_payload(
     positions: list[dict[str, Any]], last_transaction_id: str = "99"
 ) -> dict[str, Any]:
     return {"positions": positions, "lastTransactionID": last_transaction_id}
+
+
+def test_account_details_historical_zero_positions_are_projected_out() -> None:
+    first = provider_position(
+        "EUR_USD",
+        long_units="0",
+        short_units="0",
+        long_include_average_price=False,
+        short_include_average_price=False,
+        unrealized_pl="not-required",
+        long_unrealized_pl="not-required",
+        short_unrealized_pl="not-required",
+    )
+    second = provider_position(
+        "USD_CAD",
+        long_units="-0",
+        short_units="0",
+        long_include_average_price=False,
+        short_include_average_price=False,
+        unrealized_pl="not-required",
+        long_unrealized_pl="not-required",
+        short_unrealized_pl="not-required",
+    )
+    payload = position_payload([first, second], last_transaction_id="17")
+    before = deepcopy(payload)
+
+    inventory = normalize_oanda_practice_account_position_inventory(
+        payload, account_identity()
+    )
+
+    assert inventory.positions == ()
+    assert inventory.last_transaction_id == "17"
+    assert payload == before
+
+
+@pytest.mark.parametrize(
+    ("long_units", "short_units", "expected_long", "expected_short"),
+    [
+        ("100", "0", Decimal("100"), Decimal("0")),
+        ("0", "-100", Decimal("0"), Decimal("-100")),
+        ("100", "-40", Decimal("100"), Decimal("-40")),
+    ],
+)
+def test_account_details_retains_nonzero_positions_and_both_sides(
+    long_units: str,
+    short_units: str,
+    expected_long: Decimal,
+    expected_short: Decimal,
+) -> None:
+    payload_position = provider_position(
+        long_units=long_units,
+        short_units=short_units,
+        long_include_average_price=long_units != "0",
+        short_include_average_price=short_units != "0",
+    )
+
+    inventory = normalize_oanda_practice_account_position_inventory(
+        position_payload([payload_position]), account_identity()
+    )
+
+    assert len(inventory.positions) == 1
+    position = inventory.positions[0]
+    assert position.long.units == expected_long
+    assert position.short.units == expected_short
+
+
+@pytest.mark.parametrize(
+    ("side", "value"),
+    [
+        ("long", None),
+        ("long", "not-a-decimal"),
+        ("long", "NaN"),
+        ("long", "Infinity"),
+        ("short", None),
+        ("short", "not-a-decimal"),
+        ("short", "NaN"),
+        ("short", "Infinity"),
+        ("long", 1),
+        ("short", 1),
+    ],
+)
+def test_account_details_units_are_validated_before_closed_classification(
+    side: str, value: Any
+) -> None:
+    payload_position = provider_position(
+        long_units="0",
+        short_units="0",
+        long_include_average_price=False,
+        short_include_average_price=False,
+        unrealized_pl="not-required",
+        long_unrealized_pl="not-required",
+        short_unrealized_pl="not-required",
+    )
+    payload_position[side]["units"] = value
+
+    with pytest.raises(OandaOpenPositionNormalizationError):
+        normalize_oanda_practice_account_position_inventory(
+            position_payload([payload_position]), account_identity()
+        )
+
+
+@pytest.mark.parametrize(("side", "value"), [("long", "-1"), ("short", "1")])
+def test_account_details_invalid_position_signs_fail_closed(
+    side: str, value: str
+) -> None:
+    payload_position = provider_position(
+        long_units="0",
+        short_units="0",
+        long_include_average_price=False,
+        short_include_average_price=False,
+    )
+    payload_position[side]["units"] = value
+
+    with pytest.raises(OandaOpenPositionNormalizationError):
+        normalize_oanda_practice_account_position_inventory(
+            position_payload([payload_position]), account_identity()
+        )
+
+
+def test_account_details_duplicate_detection_includes_excluded_positions() -> None:
+    duplicate_zero = provider_position(
+        long_units="0",
+        short_units="0",
+        long_include_average_price=False,
+        short_include_average_price=False,
+    )
+    with pytest.raises(
+        OandaOpenPositionNormalizationError, match="duplicate instruments"
+    ):
+        normalize_oanda_practice_account_position_inventory(
+            position_payload([duplicate_zero, dict(duplicate_zero)]),
+            account_identity(),
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("unrealizedPL", None),
+        ("unrealizedPL", "NaN"),
+        ("long.unrealizedPL", None),
+        ("short.unrealizedPL", "Infinity"),
+        ("long.averagePrice", None),
+    ],
+)
+def test_account_details_open_positions_keep_existing_invariants(
+    field: str, value: Any
+) -> None:
+    payload_position = provider_position(
+        long_units="1", short_units="0", short_include_average_price=False
+    )
+    if "." in field:
+        side, side_field = field.split(".")
+        payload_position[side][side_field] = value
+    else:
+        payload_position[field] = value
+
+    with pytest.raises(OandaOpenPositionNormalizationError):
+        normalize_oanda_practice_account_position_inventory(
+            position_payload([payload_position]), account_identity()
+        )
 
 
 def test_settings_helper_reads_open_positions_after_account_validation() -> None:

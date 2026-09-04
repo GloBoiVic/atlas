@@ -81,6 +81,7 @@ from .positions import (
     OandaPracticeOpenPositionInventory,
     OandaPracticeOpenPositionReader,
     OandaPracticePositionSide,
+    normalize_oanda_practice_account_position_inventory,
     normalize_oanda_practice_open_position_inventory,
     read_oanda_practice_open_position_inventory,
 )
@@ -161,6 +162,7 @@ __all__ = [
     "OandaPracticeOpenPositionInventory",
     "OandaPracticeOpenPositionReader",
     "OandaPracticePositionSide",
+    "normalize_oanda_practice_account_position_inventory",
     "read_oanda_practice_open_position_inventory",
     "OandaPricingBucketEvidence",
     "OandaPricingProjectionError",

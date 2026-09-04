@@ -82,7 +82,9 @@ def order_fill() -> dict[str, Any]:
     }
 
 
-def account_details() -> dict[str, Any]:
+def account_details(
+    *, positions: list[dict[str, Any]] | None = None, position_count: int = 0
+) -> dict[str, Any]:
     return {
         "account": {
             "id": ACCOUNT_ID,
@@ -94,16 +96,32 @@ def account_details() -> dict[str, Any]:
             "marginUsed": "0.00",
             "marginAvailable": "100000.00",
             "openTradeCount": 0,
-            "openPositionCount": 0,
+            "openPositionCount": position_count,
             "pendingOrderCount": 0,
             "trades": [],
-            "positions": [],
+            "positions": positions or [],
             "orders": [],
             "guaranteedStopLossOrderMode": "DISABLED",
             "hedgingEnabled": True,
             "lastTransactionID": "12",
         },
         "lastTransactionID": "12",
+    }
+
+
+def account_position(
+    *, long_units: str = "0", short_units: str = "0", minimal: bool = False
+) -> dict[str, Any]:
+    long_side: dict[str, Any] = {"units": long_units}
+    short_side: dict[str, Any] = {"units": short_units}
+    if not minimal:
+        long_side.update({"averagePrice": "1.1000", "unrealizedPL": "0.00"})
+        short_side.update({"averagePrice": "1.1000", "unrealizedPL": "0.00"})
+    return {
+        "instrument": "EUR_USD",
+        "long": long_side,
+        "short": short_side,
+        **({"unrealizedPL": "0.00"} if not minimal else {}),
     }
 
 
@@ -230,6 +248,42 @@ def test_oanda_reader_normalizes_trade_protection_and_account_frontier() -> None
     assert account.frontier == "12"
     assert account.unexpected_exposure is False
     assert [request.method for request in requests] == ["GET", "GET"]
+
+
+def test_oanda_reader_excludes_historical_position_from_exposure() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json=account_details(
+                positions=[account_position(minimal=True)], position_count=0
+            ),
+        )
+
+    result = reader(handler).read_account(context())
+
+    assert result.unexpected_exposure is False
+    assert result.observation.normalized_facts["open_positions"] == []
+    assert len(requests) == 1
+    assert requests[0].method == "GET"
+    assert requests[0].url.path == f"/v3/accounts/{ACCOUNT_ID}"
+
+
+def test_oanda_reader_retains_genuine_derived_position_as_exposure() -> None:
+    result = reader(
+        static_response(
+            account_details(
+                positions=[account_position(long_units="100")], position_count=1
+            )
+        )
+    ).read_account(context())
+
+    assert result.unexpected_exposure is True
+    assert result.observation.normalized_facts["open_positions"] == [
+        {"instrument": "EUR_USD", "long": "100", "short": "0"}
+    ]
 
 
 def test_oanda_reader_accepts_explicit_matching_trade_account() -> None:

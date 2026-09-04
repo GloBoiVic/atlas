@@ -262,8 +262,92 @@ def normalize_oanda_practice_open_position_inventory(
     )
 
 
+def normalize_oanda_practice_account_position_inventory(
+    payload: Mapping[str, Any], identity: OandaPracticeAccountIdentity
+) -> OandaPracticeOpenPositionInventory:
+    """Project lifetime Account Details Positions into current open Positions.
+
+    This is intentionally separate from the strict ``/openPositions`` normalizer:
+    Account Details can retain zero/zero historical Position representations.
+    """
+    if type(identity) is not OandaPracticeAccountIdentity:
+        raise OandaOpenPositionNormalizationError(
+            "OANDA Account Details Position inventory has an invalid identity"
+        )
+    positions_value = payload.get("positions")
+    if not isinstance(positions_value, list):
+        raise OandaOpenPositionNormalizationError(
+            "OANDA Account Details response has invalid positions"
+        )
+    raw_positions = cast(list[Any], positions_value)
+    if any(not isinstance(item, dict) for item in raw_positions):
+        raise OandaOpenPositionNormalizationError(
+            "OANDA Account Details response has invalid positions"
+        )
+
+    normalized: list[OandaPracticeOpenPosition] = []
+    seen_instruments: set[str] = set()
+    for item in raw_positions:
+        position_item = cast(dict[str, Any], item)
+        instrument = _instrument(position_item.get("instrument"))
+        if instrument in seen_instruments:
+            raise OandaOpenPositionNormalizationError(
+                "OANDA Account Details Position inventory contains duplicate "
+                "instruments"
+            )
+        seen_instruments.add(instrument)
+
+        long_value = position_item.get("long")
+        short_value = position_item.get("short")
+        if not isinstance(long_value, dict):
+            raise OandaOpenPositionNormalizationError(
+                "OANDA Account Details Position has invalid long side"
+            )
+        if not isinstance(short_value, dict):
+            raise OandaOpenPositionNormalizationError(
+                "OANDA Account Details Position has invalid short side"
+            )
+        long_item = cast(dict[str, Any], long_value)
+        short_item = cast(dict[str, Any], short_value)
+
+        # Parse and sign-check both exposure facts before deciding that a
+        # lifetime Position is closed.  A malformed unit must never be hidden
+        # by the other side being zero.
+        long_units = _decimal(long_item.get("units"), "long.units")
+        short_units = _decimal(short_item.get("units"), "short.units")
+        if long_units < 0:
+            raise OandaOpenPositionNormalizationError(
+                "OANDA Account Details Position has negative long units"
+            )
+        if short_units > 0:
+            raise OandaOpenPositionNormalizationError(
+                "OANDA Account Details Position has positive short units"
+            )
+        if long_units == 0 and short_units == 0:
+            continue
+
+        normalized.append(
+            _normalize_position(
+                position_item,
+                instrument,
+                long_units=long_units,
+                short_units=short_units,
+            )
+        )
+
+    return OandaPracticeOpenPositionInventory(
+        identity=identity,
+        positions=tuple(normalized),
+        last_transaction_id=_transaction_id(payload.get("lastTransactionID")),
+    )
+
+
 def _normalize_position(
-    item: Mapping[str, Any], instrument: str
+    item: Mapping[str, Any],
+    instrument: str,
+    *,
+    long_units: Decimal | None = None,
+    short_units: Decimal | None = None,
 ) -> OandaPracticeOpenPosition:
     long_value = item.get("long")
     short_value = item.get("short")
@@ -278,13 +362,19 @@ def _normalize_position(
     return OandaPracticeOpenPosition(
         provider_instrument=instrument,
         unrealized_pl=_decimal(item.get("unrealizedPL"), "unrealizedPL"),
-        long=_normalize_side(cast(Mapping[str, Any], long_value), side="long"),
-        short=_normalize_side(cast(Mapping[str, Any], short_value), side="short"),
+        long=_normalize_side(
+            cast(Mapping[str, Any], long_value), side="long", units=long_units
+        ),
+        short=_normalize_side(
+            cast(Mapping[str, Any], short_value), side="short", units=short_units
+        ),
     )
 
 
-def _normalize_side(item: Mapping[str, Any], *, side: str) -> OandaPracticePositionSide:
-    units = _decimal(item.get("units"), "units")
+def _normalize_side(
+    item: Mapping[str, Any], *, side: str, units: Decimal | None = None
+) -> OandaPracticePositionSide:
+    units = units if units is not None else _decimal(item.get("units"), "units")
     if side == "long" and units < 0:
         raise OandaOpenPositionNormalizationError(
             "OANDA open Position has negative long units"
@@ -336,6 +426,7 @@ __all__ = [
     "OandaPracticeOpenPositionInventory",
     "OandaPracticeOpenPositionReader",
     "OandaPracticePositionSide",
+    "normalize_oanda_practice_account_position_inventory",
     "normalize_oanda_practice_open_position_inventory",
     "read_oanda_practice_open_position_inventory",
 ]
