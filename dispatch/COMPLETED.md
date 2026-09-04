@@ -556,3 +556,27 @@ review artifact in `dispatch/`. Prior dispatch artifacts remain untouched in `di
 - **Validation:** PostgreSQL migration cycle **2 passed**; PostgreSQL integration **37 passed**; non-integration **294 passed, 1 skipped, 39 deselected**; focused diagnostics/metrics **27 passed**; Experiments **84 passed**; migration revision, compileall, Alembic heads, and diff checks passed.
 - **Review:** `dispatch/workstreams/foundation-freeze-02-experiment-correctness/REVIEW.md` — PASS; no unresolved Important or Critical findings.
 - **Git state:** Merged from `solo/foundation-freeze-02-experiment-correctness` at `0f04b30`; workstream closed. Pre-existing untracked `.codegraph/` and `frontend/.env.local` were untouched.
+
+<!-- completion-id: dogfood-01-protection-trade-identity -->
+## Dogfood 01 — Protection Trade Identity — completion record
+
+- **Date/status:** 2026-09-03 — T001 BUILD and root VALIDATION completed; the original
+  review finding I-001 was resolved by the R001 BUILD/VALIDATION/REVIEW chain. Final review
+  **PASS** with no unresolved Critical or Important findings.
+- **Commit:** `03092e6` Repair OANDA Trade identity readback; the feature branch was pushed
+  to GitHub and fast-forward merged into `main`.
+- **Scope:** Repaired account-scoped OANDA execution/protection and uncertain-entry Trade
+  readback proof without fabricating provider `accountID`, and corrected accountless Trade
+  attribution in OANDA reconciliation. Explicitly supplied null or mismatching account
+  identity remains fail-closed. Strategy, Risk, persistence/schema, provider-neutral
+  reconciliation coordinator, runtime authority, mutation barriers, retry semantics, and
+  historical Dogfood 01 evidence were unchanged.
+- **Validation:** Final remediation evidence records targeted explicit-null regressions
+  **3 passed**, focused execution/protection/uncertain-entry/reconciliation/durable/runtime
+  checks **196 passed**, safe backend suite **1121 passed, 4 skipped**, and changed-slice
+  Ruff format/lint, Pyright, and `git diff --check` passed. Four pre-existing warnings and
+  inherited frozen-architecture metadata are documented as non-blocking.
+- **Git/state:** `solo/dogfood-01-protection-trade-identity` and `main` were pushed to
+  GitHub; the feature branch was fast-forward merged into `main`; `dispatch/ACTIVE.md` was
+  cleared; all workstream and remediation evidence is preserved. No credentialed OANDA
+  mutation, PAPER runtime start, activation, retry, or historical repair occurred.
