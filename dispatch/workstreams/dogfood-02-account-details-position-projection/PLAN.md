@@ -4,20 +4,20 @@
 
 - **Workstream:** `dogfood-02-account-details-position-projection`
 - **Classification:** `Critical`
-- **Status:** `READY_FOR_USER`
-- **Phase:** `READY_FOR_USER`
+- **Status:** `CLOSED`
+- **Phase:** `GIT_END`
 - **Base:** `main` at `b75930f2276f93938e250ea8498ad8affb4f97c5` (`Close lifecycle advanced activation fence`)
 - **Base SHA:** `b75930f2276f93938e250ea8498ad8affb4f97c5`
 - **Branch:** `solo/dogfood-02-account-details-position-projection`
 - **Architecture:** `FROZEN`; `ARCHITECTURE.md` is reconciled and approval-ready
-- **Task state:** `T001` `DONE`
-- **Next action:** wait for explicit developer merge approval; do not perform GIT END yet
-- **Approval:** developer explicitly approved implementation of the frozen `PLAN.md` and `ARCHITECTURE.md` on 2026-09-04; implementation is authorized only through this workstream's BUILD task
+- **Task state:** `T001` `DONE`; original validation `PASS`; original review `PASS`
+- **Next action:** none; GIT END completed
+- **Approval:** developer explicitly approved implementation and merge of the frozen `PLAN.md` and `ARCHITECTURE.md` on 2026-09-04; GIT START and GIT END completed; no activation, runtime, credential, or broker mutation authorized
 
 The ARCHITECT worker independently inspected the current seams, tests, domain/runtime
 consumers, and official OANDA documentation. Solo verified the resulting artifact and
-reconciled its material decisions into this plan. This workstream remains stopped at the
-Critical developer approval gate.
+reconciled its material decisions into this plan. BUILD, independent VALIDATE, and
+independent REVIEW passed before the approved GIT END.
 
 ## Outcome
 

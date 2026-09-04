@@ -1,5 +1,26 @@
 # Completed
 
+<!-- completion-id: dogfood-02-account-details-position-projection -->
+## Dogfood 02 — Account Details Position Projection — completion record
+
+- **Date/status:** 2026-09-04 — terminal closure; T001 BUILD, independent VALIDATE, and
+  independent REVIEW **PASS** with no unresolved Critical or Important findings.
+- **Commit:** `bd3ea7b` Repair OANDA Account Details Position projection; the feature branch
+  was pushed to GitHub and fast-forward merged into `main`.
+- **Scope:** Added a pure Account Details-specific projection of OANDA lifetime Position
+  representations, excluding validated zero/zero historical records while retaining genuine
+  exposure and existing fail-closed invariants. Preserved strict `/openPositions` semantics,
+  derived count authority, one Account Details frontier, Trade/Order meaning, exposure,
+  runtime, P05, reconciliation, Strategy/Risk/execution, and persistence/schema boundaries.
+- **Validation:** Focused and affected suites passed; safe backend suite **1221 passed, 4
+  skipped, 115 deselected**; changed-slice Ruff/Pyright and `git diff --check` passed. No
+  credentials, OANDA calls, provider mutation, activation, runtime start, or manual repair
+  occurred.
+- **Review:** Independent review **PASS**; no unresolved Critical or Important findings.
+- **Git/state:** `solo/dogfood-02-account-details-position-projection` was pushed and
+  fast-forward merged into `main`; `dispatch/ACTIVE.md` was cleared; all workstream and
+  validation/review evidence is preserved.
+
 <!-- completion-id: dogfood-01-lifecycle-advanced-activation-fence -->
 ## Dogfood 01 — Lifecycle-Advanced Activation Fence — completion record
 
