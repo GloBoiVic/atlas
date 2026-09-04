@@ -19,6 +19,7 @@ from backend.integrations.oanda.mutation_request import (
     OandaMutationTransportError,
     OandaPracticeMutationRequester,
 )
+from backend.integrations.oanda.source import OandaConfigurationError
 from backend.paper.execution import PaperExecutionOutcome
 from backend.tests.paper.test_execution_contracts import instruction
 
@@ -109,7 +110,10 @@ class FakeReadback:
         responses: list[Mapping[str, Any] | None],
         transactions: list[Mapping[str, Any] | None] | None = None,
         trades: list[Mapping[str, Any] | None] | None = None,
+        *,
+        account_id: str = ACCOUNT_ID,
     ) -> None:
+        self.account_id = account_id
         self.responses = responses
         self.transactions = transactions or []
         self.trades = trades or []
@@ -291,9 +295,44 @@ def test_create_only_uses_one_bounded_original_correlation_readback() -> None:
     assert readback.order_calls == [instruction().correlation.client_order_id]
 
 
-def test_uncertain_create_only_fill_readback_uses_one_original_correlation_path() -> (
-    None
-):
+@pytest.mark.parametrize(
+    "raw_account_id", [None, ACCOUNT_ID], ids=["accountless", "matching-account"]
+)
+def test_uncertain_create_only_fill_readback_uses_one_original_correlation_path(
+    raw_account_id: str | None,
+) -> None:
+    order = {
+        **_create_transaction(),
+        "state": "FILLED",
+        "fillingTransactionID": "1002",
+    }
+    trade = {
+        "id": "7001",
+        "instrument": "EUR_USD",
+        "state": "OPEN",
+        "currentUnits": "19230",
+        "price": "1.10010",
+        "clientExtensions": {"id": instruction().correlation.client_trade_id},
+    }
+    if raw_account_id is not None:
+        trade["accountID"] = raw_account_id
+    readback = FakeReadback(
+        [order],
+        transactions=[_fill_transaction()],
+        trades=[trade],
+    )
+
+    result = OandaPracticeEntryMutation(_static_requester(_response_payload())).submit(
+        instruction(), INSTRUMENT, readback=readback
+    )
+
+    assert result.outcome is PaperExecutionOutcome.FILLED_PROTECTION_INCOMPLETE
+    assert readback.order_calls == [instruction().correlation.client_order_id]
+    assert readback.transaction_calls == ["1002"]
+    assert readback.trade_calls == ["7001"]
+
+
+def test_uncertain_fill_readback_wrong_account_cannot_become_a_fill() -> None:
     order = {
         **_create_transaction(),
         "state": "FILLED",
@@ -312,15 +351,47 @@ def test_uncertain_create_only_fill_readback_uses_one_original_correlation_path(
         [order],
         transactions=[_fill_transaction()],
         trades=[trade],
+        account_id="001-011-5838423-002",
     )
 
     result = OandaPracticeEntryMutation(_static_requester(_response_payload())).submit(
         instruction(), INSTRUMENT, readback=readback
     )
 
-    assert result.outcome is PaperExecutionOutcome.FILLED_PROTECTION_INCOMPLETE
-    assert readback.order_calls == [instruction().correlation.client_order_id]
-    assert readback.transaction_calls == ["1002"]
+    assert result.outcome is PaperExecutionOutcome.UNKNOWN
+    assert result.uncertainty is not None
+    assert result.uncertainty.detail_code == "ENTRY_READBACK_CONTRADICTORY"
+    assert readback.trade_calls == ["7001"]
+
+
+def test_uncertain_fill_readback_explicit_null_account_cannot_become_a_fill() -> None:
+    order = {
+        **_create_transaction(),
+        "state": "FILLED",
+        "fillingTransactionID": "1002",
+    }
+    trade = {
+        "id": "7001",
+        "instrument": "EUR_USD",
+        "state": "OPEN",
+        "currentUnits": "19230",
+        "price": "1.10010",
+        "clientExtensions": {"id": instruction().correlation.client_trade_id},
+        "accountID": None,
+    }
+    readback = FakeReadback(
+        [order],
+        transactions=[_fill_transaction()],
+        trades=[trade],
+    )
+
+    result = OandaPracticeEntryMutation(_static_requester(_response_payload())).submit(
+        instruction(), INSTRUMENT, readback=readback
+    )
+
+    assert result.outcome is PaperExecutionOutcome.UNKNOWN
+    assert result.uncertainty is not None
+    assert result.uncertainty.detail_code == "ENTRY_READBACK_CONTRADICTORY"
     assert readback.trade_calls == ["7001"]
 
 
@@ -401,6 +472,41 @@ def test_readback_reader_is_get_only_and_uses_original_client_correlation() -> N
     assert len(requests) == 1
     assert requests[0].method == "GET"
     assert requests[0].url.path.endswith("/orders/@atlas-p04-o-original")
+
+
+def test_reader_exposes_account_scope_and_preserves_trade_shape() -> None:
+    requests: list[httpx.Request] = []
+    trade = {
+        "id": "7001",
+        "instrument": "EUR_USD",
+        "state": "OPEN",
+        "initialUnits": "19230",
+        "currentUnits": "19230",
+        "price": "1.10010",
+        "clientExtensions": {"id": instruction().correlation.client_trade_id},
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"trade": trade})
+
+    reader = OandaPracticeEntryReadbackReader(
+        SecretStr(TEST_TOKEN), ACCOUNT_ID, transport=httpx.MockTransport(handler)
+    )
+
+    result = reader.read_trade("7001")
+
+    assert reader.account_id == ACCOUNT_ID
+    assert result == trade
+    assert result is not None
+    assert "accountID" not in result
+    assert requests[0].method == "GET"
+    assert requests[0].url.path == f"/v3/accounts/{ACCOUNT_ID}/trades/7001"
+
+
+def test_readback_reader_rejects_invalid_configured_account_id() -> None:
+    with pytest.raises(OandaConfigurationError):
+        OandaPracticeEntryReadbackReader(SecretStr(TEST_TOKEN), "not-an-account")
 
 
 def test_observation_requester_has_no_mutation_method() -> None:

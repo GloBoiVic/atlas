@@ -43,11 +43,11 @@ def _trade(
     fill_price: str = "1.10010",
     stop: Mapping[str, Any] | None = None,
     target: Mapping[str, Any] | None = None,
+    raw_account_id: str | None = None,
 ) -> dict[str, Any]:
     value = instruction()
     trade: dict[str, Any] = {
         "id": "7001",
-        "accountID": ACCOUNT_ID,
         "instrument": "EUR_USD",
         "state": "OPEN",
         "initialUnits": "19230",
@@ -55,6 +55,8 @@ def _trade(
         "price": fill_price,
         "clientExtensions": {"id": value.correlation.client_trade_id},
     }
+    if raw_account_id is not None:
+        trade["accountID"] = raw_account_id
     if stop is not None:
         trade["stopLossOrder"] = dict(stop)
     if target is not None:
@@ -90,7 +92,13 @@ def _target(*, state: str = "PENDING", price: str = "1.10877") -> dict[str, Any]
 
 
 class FakeTradeReader:
-    def __init__(self, trades: list[Mapping[str, Any] | None]) -> None:
+    def __init__(
+        self,
+        trades: list[Mapping[str, Any] | None],
+        *,
+        account_id: str = ACCOUNT_ID,
+    ) -> None:
+        self.account_id = account_id
         self.trades = trades
         self.trade_calls: list[str] = []
 
@@ -177,7 +185,12 @@ def _target_transaction(*, price: str = "1.10877") -> dict[str, Any]:
     }
 
 
-def test_actual_fill_target_is_confirmed_with_one_take_profit_put_only() -> None:
+@pytest.mark.parametrize(
+    "raw_account_id", [None, ACCOUNT_ID], ids=["accountless", "matching-account"]
+)
+def test_actual_fill_target_is_confirmed_with_one_take_profit_put_only(
+    raw_account_id: str | None,
+) -> None:
     requests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -188,8 +201,8 @@ def test_actual_fill_target_is_confirmed_with_one_take_profit_put_only() -> None
             headers={"RequestID": "target-request"},
         )
 
-    initial = _trade(stop=_stop())
-    final = _trade(stop=_stop(), target=_target())
+    initial = _trade(stop=_stop(), raw_account_id=raw_account_id)
+    final = _trade(stop=_stop(), target=_target(), raw_account_id=raw_account_id)
     reader = FakeTradeReader([initial, final])
     requester = OandaPracticeMutationRequester(
         SecretStr("unit-credential"), transport=httpx.MockTransport(handler)
@@ -227,6 +240,72 @@ def test_actual_fill_target_is_confirmed_with_one_take_profit_put_only() -> None
         == requests[0].content
     )
     assert reader.trade_calls == ["7001", "7001"]
+
+
+def test_wrong_readback_account_fails_closed_with_matching_trade_account() -> None:
+    requests: list[httpx.Request] = []
+    requester = OandaPracticeMutationRequester(
+        SecretStr("unit-credential"),
+        transport=httpx.MockTransport(
+            lambda request: requests.append(request) or httpx.Response(200, json={})
+        ),
+    )
+    reader = FakeTradeReader(
+        [_trade(stop=_stop(), raw_account_id=ACCOUNT_ID)],
+        account_id="001-011-5838423-002",
+    )
+
+    result = OandaPracticeProtectionCompletion(requester, reader).complete(
+        _entry_result(), INSTRUMENT
+    )
+
+    assert result.outcome is PaperExecutionOutcome.FILLED_PROTECTION_INCOMPLETE
+    assert result.protection.stop_loss_status is ProtectionLegStatus.UNKNOWN
+    assert result.protection.take_profit_status is ProtectionLegStatus.NOT_ATTEMPTED
+    assert requests == []
+
+
+def test_mismatching_supplied_trade_account_fails_closed_without_target_put() -> None:
+    requests: list[httpx.Request] = []
+    requester = OandaPracticeMutationRequester(
+        SecretStr("unit-credential"),
+        transport=httpx.MockTransport(
+            lambda request: requests.append(request) or httpx.Response(200, json={})
+        ),
+    )
+    reader = FakeTradeReader(
+        [_trade(stop=_stop(), raw_account_id="001-011-5838423-002")]
+    )
+
+    result = OandaPracticeProtectionCompletion(requester, reader).complete(
+        _entry_result(), INSTRUMENT
+    )
+
+    assert result.outcome is PaperExecutionOutcome.FILLED_PROTECTION_INCOMPLETE
+    assert result.protection.stop_loss_status is ProtectionLegStatus.UNKNOWN
+    assert requests == []
+
+
+def test_explicit_null_trade_account_fails_closed_without_target_put() -> None:
+    requests: list[httpx.Request] = []
+    requester = OandaPracticeMutationRequester(
+        SecretStr("unit-credential"),
+        transport=httpx.MockTransport(
+            lambda request: requests.append(request) or httpx.Response(200, json={})
+        ),
+    )
+    trade = _trade(stop=_stop())
+    trade["accountID"] = None
+    reader = FakeTradeReader([trade])
+
+    result = OandaPracticeProtectionCompletion(requester, reader).complete(
+        _entry_result(), INSTRUMENT
+    )
+
+    assert result.outcome is PaperExecutionOutcome.FILLED_PROTECTION_INCOMPLETE
+    assert result.protection.stop_loss_status is ProtectionLegStatus.UNKNOWN
+    assert result.protection.take_profit_status is ProtectionLegStatus.NOT_ATTEMPTED
+    assert requests == []
 
 
 def test_better_fill_resolves_target_from_actual_fill_not_risk_target() -> None:

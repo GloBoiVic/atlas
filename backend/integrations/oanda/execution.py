@@ -17,6 +17,7 @@ from pydantic import SecretStr
 
 from backend.domain import Direction, Instrument, Provider
 
+from .account import is_valid_oanda_practice_account_id
 from .execution_instrument import OandaPracticeExecutionInstrument
 from .mutation_request import (
     OandaMutationResponse,
@@ -25,6 +26,7 @@ from .mutation_request import (
 from .primitives import OandaPrimitiveError, parse_decimal, parse_transaction_id
 from .request import OandaObservationRequester
 from .source import (
+    OandaConfigurationError,
     OandaError,
     OandaNormalizationError,
     OandaRequestError,
@@ -192,6 +194,9 @@ class OandaPracticeEntryReadbackError(OandaNormalizationError):
 class OandaEntryReadbackReader(Protocol):
     """Public seam for the finite uncertain-entry readback sequence."""
 
+    @property
+    def account_id(self) -> str: ...
+
     def read_order_by_client_id(
         self, client_order_id: str
     ) -> Mapping[str, Any] | None: ...
@@ -203,6 +208,9 @@ class OandaEntryReadbackReader(Protocol):
 
 class OandaProtectionReadbackReader(Protocol):
     """Public seam for the two bounded Trade-detail reads in protection."""
+
+    @property
+    def account_id(self) -> str: ...
 
     def read_trade(self, trade_id: str) -> Mapping[str, Any] | None: ...
 
@@ -236,6 +244,11 @@ class OandaPracticeEntryReadbackReader:
         connect_timeout_seconds: float = 5.0,
         read_timeout_seconds: float = 20.0,
     ) -> None:
+        if not is_valid_oanda_practice_account_id(account_id):
+            raise OandaConfigurationError(
+                "OANDA Practice account ID is required and must be a four-part "
+                "AccountID"
+            )
         self._account_id = account_id
         self._requester = OandaObservationRequester(
             token,
@@ -244,6 +257,11 @@ class OandaPracticeEntryReadbackReader:
             connect_timeout_seconds=connect_timeout_seconds,
             read_timeout_seconds=read_timeout_seconds,
         )
+
+    @property
+    def account_id(self) -> str:
+        """The validated account that scopes every readback request."""
+        return self._account_id
 
     def read_order_by_client_id(self, client_order_id: str) -> Mapping[str, Any] | None:
         path = _READBACK_ORDER_PATH.format(
@@ -493,7 +511,10 @@ class OandaPracticeEntryMutation:
             return None
         trade = readback.read_trade(result.fill.broker_trade_id)
         if trade is None or not _matches_readback_trade(
-            trade, instruction, result.fill
+            trade,
+            instruction,
+            result.fill,
+            account_id=readback.account_id,
         ):
             return None
         return result
@@ -1134,6 +1155,8 @@ def _matches_readback_trade(
     trade_value: Mapping[str, Any],
     instruction: PaperExecutionInstruction,
     fill: BrokerFillFacts,
+    *,
+    account_id: str | None,
 ) -> bool:
     candidate = trade_value.get("trade")
     trade: Mapping[str, Any] = trade_value
@@ -1147,7 +1170,8 @@ def _matches_readback_trade(
     )
     return (
         _positive_id(trade.get("id")) == fill.broker_trade_id
-        and trade.get("accountID") == instruction.account.account_id
+        and account_id == instruction.account.account_id
+        and ("accountID" not in trade or trade["accountID"] == account_id)
         and trade.get("instrument") == "EUR_USD"
         and trade.get("state") == "OPEN"
         and _decimal_value(trade.get("currentUnits")) == fill.signed_units
@@ -1368,6 +1392,7 @@ class OandaPracticeProtectionCompletion:
             return result
 
         try:
+            readback_account_id = self._readback.account_id
             trade_value = self._readback.read_trade(fill.broker_trade_id)
         except Exception:
             result = _protection_incomplete(
@@ -1383,7 +1408,12 @@ class OandaPracticeProtectionCompletion:
             return result
 
         trade = _trade_detail(trade_value)
-        if trade is None or not _matches_protection_trade(trade, instruction, fill):
+        if trade is None or not _matches_protection_trade(
+            trade,
+            instruction,
+            fill,
+            account_id=readback_account_id,
+        ):
             result = _protection_incomplete(
                 entry_result,
                 stop_loss_status=ProtectionLegStatus.UNKNOWN,
@@ -1531,12 +1561,17 @@ class OandaPracticeProtectionCompletion:
             after_take_profit(mutation_result)
 
         try:
+            final_account_id = self._readback.account_id
             final_value = self._readback.read_trade(fill.broker_trade_id)
         except Exception:
+            final_account_id = None
             final_value = None
         final_trade = _trade_detail(final_value)
         if final_trade is None or not _matches_protection_trade(
-            final_trade, instruction, fill
+            final_trade,
+            instruction,
+            fill,
+            account_id=final_account_id,
         ):
             result = _protection_incomplete(
                 entry_result,
@@ -1745,6 +1780,8 @@ def _matches_protection_trade(
     trade: Mapping[str, Any],
     instruction: PaperExecutionInstruction,
     fill: BrokerFillFacts,
+    *,
+    account_id: str | None,
 ) -> bool:
     client_extensions = trade.get("clientExtensions")
     if not isinstance(client_extensions, Mapping):
@@ -1752,7 +1789,8 @@ def _matches_protection_trade(
     client_extension_map = cast(Mapping[str, Any], client_extensions)
     return (
         _positive_id(trade.get("id")) == fill.broker_trade_id
-        and trade.get("accountID") == instruction.account.account_id
+        and account_id == instruction.account.account_id
+        and ("accountID" not in trade or trade["accountID"] == account_id)
         and trade.get("instrument") == "EUR_USD"
         and trade.get("state") == "OPEN"
         and _decimal_value(trade.get("initialUnits")) == fill.signed_units

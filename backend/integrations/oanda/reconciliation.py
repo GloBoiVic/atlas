@@ -584,7 +584,7 @@ class OandaPracticeReconciliationReader(PaperReconciliationProvider):
                 context.provider_trade_id is None
                 or trade_id == context.provider_trade_id
             )
-            and account_id == context.provider_account_id
+            and ("accountID" not in trade or account_id == context.provider_account_id)
             and instrument == context.instrument
             and client_trade_id == context.client_trade_id
             and (

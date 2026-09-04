@@ -111,7 +111,6 @@ def trade_detail() -> dict[str, Any]:
     return {
         "trade": {
             "id": "7001",
-            "accountID": ACCOUNT_ID,
             "instrument": "EUR_USD",
             "clientExtensions": {"id": CLIENT_TRADE_ID},
             "state": "OPEN",
@@ -231,6 +230,18 @@ def test_oanda_reader_normalizes_trade_protection_and_account_frontier() -> None
     assert account.frontier == "12"
     assert account.unexpected_exposure is False
     assert [request.method for request in requests] == ["GET", "GET"]
+
+
+def test_oanda_reader_accepts_explicit_matching_trade_account() -> None:
+    trade = trade_detail()["trade"]
+    trade["accountID"] = ACCOUNT_ID
+
+    result = reader(static_response({"trade": trade})).read_trade(
+        known_fill_context(), "7001"
+    )
+
+    assert result.state is PaperReconciliationReadState.OPEN
+    assert result.attributable is True
 
 
 def test_oanda_order_not_found_is_normalized_without_mutation() -> None:
@@ -381,4 +392,28 @@ def test_oanda_reader_rejects_returned_trade_id_mismatch() -> None:
         known_fill_context(), "7001"
     )
 
+    assert result.attributable is False
+
+
+def test_oanda_reader_rejects_explicit_mismatching_trade_account() -> None:
+    trade = trade_detail()["trade"]
+    trade["accountID"] = "001-011-5838423-002"
+
+    result = reader(static_response({"trade": trade})).read_trade(
+        known_fill_context(), "7001"
+    )
+
+    assert result.state is PaperReconciliationReadState.OPEN
+    assert result.attributable is False
+
+
+def test_oanda_reader_rejects_explicit_null_trade_account() -> None:
+    trade = trade_detail()["trade"]
+    trade["accountID"] = None
+
+    result = reader(static_response({"trade": trade})).read_trade(
+        known_fill_context(), "7001"
+    )
+
+    assert result.state is PaperReconciliationReadState.OPEN
     assert result.attributable is False

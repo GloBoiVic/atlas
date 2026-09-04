@@ -287,6 +287,7 @@ class ProtectionRequester:
 
 class TradeReader:
     def __init__(self, events: list[str]) -> None:
+        self.account_id = ACCOUNT_ID
         self.events = events
         self.calls = 0
 
@@ -302,6 +303,7 @@ class TradeReader:
 
 class StaticTradeReader:
     def __init__(self, events: list[str], trade: Mapping[str, Any] | None) -> None:
+        self.account_id = ACCOUNT_ID
         self.events = events
         self.calls = 0
         self.trade = trade
@@ -352,7 +354,6 @@ def _trade(
 ) -> dict[str, Any]:
     trade: dict[str, Any] = {
         "id": "7001",
-        "accountID": ACCOUNT_ID,
         "instrument": "EUR_USD",
         "state": "OPEN",
         "initialUnits": "19230",
