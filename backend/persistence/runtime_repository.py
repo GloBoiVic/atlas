@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any, cast
 from uuid import UUID
 
@@ -24,6 +25,7 @@ from backend.domain import (
     StrategyStateEnvelope,
     ValidatedParameterPayload,
 )
+from backend.paper.reconciliation import MAX_RECONCILIATION_READS
 from backend.runtime.persistence_contracts import (
     PaperRuntimeActivation,
     PaperRuntimeCycle,
@@ -41,6 +43,7 @@ from backend.runtime.persistence_contracts import (
 
 from .models import (
     PaperExecutionAttemptModel,
+    PaperReconciliationRunModel,
     PaperRuntimeActivationModel,
     PaperRuntimeCycleModel,
     PaperRuntimeOwnershipModel,
@@ -99,6 +102,37 @@ _SAFE_RECONCILIATION_STATUSES = frozenset(
         "LIFECYCLE_ADVANCED",
     }
 )
+_RECONCILIATION_FINDING_CODES = frozenset(
+    {
+        "ENTRY_FILLED",
+        "ENTRY_REJECTED",
+        "ENTRY_CANCELLED",
+        "PROTECTION_CONFIRMED",
+        "PROTECTION_INCOMPLETE",
+        "ENTRY_READBACK_NOT_FOUND",
+        "TRANSACTION_RANGE_TRUNCATED",
+        "UNRESOLVED",
+        "CONFLICT",
+        "UNATTRIBUTED_EXPOSURE",
+        "TRADE_LIFECYCLE_ADVANCED",
+        "PROTECTION_DRIFT",
+        "STALE_RECONCILIATION",
+    }
+)
+_CONTRADICTORY_LIFECYCLE_FINDINGS = frozenset(
+    {
+        "ENTRY_REJECTED",
+        "ENTRY_CANCELLED",
+        "PROTECTION_CONFIRMED",
+        "PROTECTION_INCOMPLETE",
+        "TRANSACTION_RANGE_TRUNCATED",
+        "UNRESOLVED",
+        "CONFLICT",
+        "UNATTRIBUTED_EXPOSURE",
+        "PROTECTION_DRIFT",
+        "STALE_RECONCILIATION",
+    }
+)
 
 
 def is_unsafe_paper_attempt(
@@ -119,6 +153,157 @@ def is_unsafe_paper_attempt(
     return execution_outcome not in _DEFINITE_TERMINAL_EXECUTION_OUTCOMES or (
         reconciliation_status not in _SAFE_RECONCILIATION_STATUSES
     )
+
+
+def _is_complete_lifecycle_fill(attempt: object, reconciliation_run: object) -> bool:
+    """Prove the existing durable Fill and applied lifecycle evidence agree."""
+    attempt_id = getattr(attempt, "attempt_id", None)
+    reconciliation_run_id = getattr(attempt, "last_reconciliation_run_id", None)
+    if type(attempt_id) is not UUID or type(reconciliation_run_id) is not UUID:
+        return False
+    if reconciliation_run_id != getattr(reconciliation_run, "run_id", None):
+        return False
+    if getattr(reconciliation_run, "attempt_id", None) != attempt_id:
+        return False
+    if getattr(reconciliation_run, "status", None) != "LIFECYCLE_ADVANCED":
+        return False
+    run_sequence = getattr(reconciliation_run, "run_sequence", None)
+    if type(run_sequence) is not int or run_sequence <= 0:
+        return False
+    if getattr(reconciliation_run, "prior_execution_outcome", None) != (
+        "FILLED_PROTECTION_INCOMPLETE"
+    ) or getattr(reconciliation_run, "resulting_execution_outcome", None) != (
+        "FILLED_PROTECTION_INCOMPLETE"
+    ):
+        return False
+
+    read_count = getattr(reconciliation_run, "read_count", None)
+    read_budget = getattr(reconciliation_run, "read_budget", None)
+    if (
+        type(read_count) is not int
+        or read_count <= 0
+        or type(read_budget) is not int
+        or read_budget <= 0
+        or read_budget > MAX_RECONCILIATION_READS
+        or read_count > read_budget
+    ):
+        return False
+    non_atomic_read_set = getattr(reconciliation_run, "non_atomic_read_set", None)
+    if type(non_atomic_read_set) is not bool or non_atomic_read_set != (read_count > 1):
+        return False
+    finding_codes_value = getattr(reconciliation_run, "finding_codes", None)
+    if type(finding_codes_value) is not list or not finding_codes_value:
+        return False
+    finding_codes = cast(list[object], finding_codes_value)
+    if any(
+        type(code) is not str or code not in _RECONCILIATION_FINDING_CODES
+        for code in finding_codes
+    ):
+        return False
+    finding_code_strings = cast(list[str], finding_codes)
+    if (
+        len(set(finding_code_strings)) != len(finding_codes)
+        or "TRADE_LIFECYCLE_ADVANCED" not in finding_code_strings
+        or _CONTRADICTORY_LIFECYCLE_FINDINGS.intersection(finding_code_strings)
+    ):
+        return False
+    diagnostic_summary = getattr(reconciliation_run, "diagnostic_summary", None)
+    if type(diagnostic_summary) is not str or diagnostic_summary:
+        return False
+
+    projection_version = getattr(attempt, "projection_version", None)
+    observed_version = getattr(reconciliation_run, "projection_version_observed", None)
+    applied_version = getattr(reconciliation_run, "projection_version_applied", None)
+    if (
+        type(projection_version) is not int
+        or projection_version <= 0
+        or type(observed_version) is not int
+        or observed_version < 0
+        or type(applied_version) is not int
+        or applied_version <= 0
+        or observed_version + 1 != applied_version
+        or applied_version != projection_version
+    ):
+        return False
+
+    last_reconciled_at = getattr(attempt, "last_reconciled_at", None)
+    completed_at = getattr(reconciliation_run, "completed_at", None)
+    if (
+        type(last_reconciled_at) is not datetime
+        or last_reconciled_at.tzinfo is None
+        or last_reconciled_at.utcoffset() is None
+        or type(completed_at) is not datetime
+        or completed_at.tzinfo is None
+        or completed_at.utcoffset() is None
+        or last_reconciled_at.astimezone(UTC) != completed_at.astimezone(UTC)
+        or getattr(attempt, "reconciliation_block_code", None) is not None
+    ):
+        return False
+
+    for field in (
+        "fill_broker_order_id",
+        "fill_transaction_id",
+        "fill_trade_id",
+    ):
+        value = getattr(attempt, field, None)
+        if type(value) is not str or not value:
+            return False
+    signed_units = getattr(attempt, "fill_signed_units", None)
+    fill_price = getattr(attempt, "fill_price", None)
+    actual_initial_risk = getattr(attempt, "fill_actual_initial_risk", None)
+    if (
+        type(signed_units) is not Decimal
+        or not signed_units.is_finite()
+        or signed_units == 0
+        or type(fill_price) is not Decimal
+        or not fill_price.is_finite()
+        or fill_price <= 0
+        or type(actual_initial_risk) is not Decimal
+        or not actual_initial_risk.is_finite()
+        or actual_initial_risk < 0
+    ):
+        return False
+    executed_at = getattr(attempt, "fill_executed_at", None)
+    return (
+        type(executed_at) is datetime
+        and executed_at.tzinfo is not None
+        and executed_at.utcoffset() is not None
+    )
+
+
+def is_new_session_safe_attempt(
+    attempt: object, reconciliation_run: object | None
+) -> bool:
+    """Classify whether one historical attempt permits a fresh session.
+
+    This is deliberately separate from :func:`is_unsafe_paper_attempt`, whose
+    stricter meaning is required for same-attempt claim recovery.
+    """
+    if (
+        getattr(attempt, "provider", None) != "OANDA"
+        or getattr(attempt, "environment", None) != "PRACTICE"
+        or getattr(attempt, "base_currency", None) != "USD"
+        or getattr(attempt, "instrument", None) != "EUR_USD"
+    ):
+        return False
+    execution_outcome = getattr(attempt, "execution_outcome", None)
+    reconciliation_status = getattr(attempt, "reconciliation_status", None)
+    if not isinstance(execution_outcome, str) or not isinstance(
+        reconciliation_status, str
+    ):
+        return False
+    if (
+        execution_outcome in _DEFINITE_TERMINAL_EXECUTION_OUTCOMES
+        and reconciliation_status in _SAFE_RECONCILIATION_STATUSES
+    ):
+        return True
+    if (
+        execution_outcome != "FILLED_PROTECTION_INCOMPLETE"
+        or reconciliation_status != "LIFECYCLE_ADVANCED"
+        or reconciliation_run is None
+    ):
+        return False
+    return _is_complete_lifecycle_fill(attempt, reconciliation_run)
 
 
 _ACTIVATION_TRANSITIONS: dict[
@@ -615,6 +800,35 @@ class PaperRuntimeRepository:
             .limit(1)
         )
         return row is not None
+
+    def has_new_session_blocker(self, session: Session, account_id: str) -> bool:
+        """Return whether account history blocks a separately approved session.
+
+        The linked run is joined through the attempt's existing last-applied
+        reconciliation pointer.  No historical row is changed and no provider
+        read is performed by this local classifier.
+        """
+        if type(account_id) is not str or not account_id:
+            return True
+        statement = (
+            select(PaperExecutionAttemptModel, PaperReconciliationRunModel)
+            .outerjoin(
+                PaperReconciliationRunModel,
+                (
+                    PaperReconciliationRunModel.run_id
+                    == PaperExecutionAttemptModel.last_reconciliation_run_id
+                )
+                & (
+                    PaperReconciliationRunModel.attempt_id
+                    == PaperExecutionAttemptModel.attempt_id
+                ),
+            )
+            .where(PaperExecutionAttemptModel.provider_account_id == account_id)
+        )
+        for attempt, reconciliation_run in session.execute(statement).all():
+            if not is_new_session_safe_attempt(attempt, reconciliation_run):
+                return True
+        return False
 
     def get_cycle(
         self, session: Session, cycle_id: UUID, *, for_update: bool = False

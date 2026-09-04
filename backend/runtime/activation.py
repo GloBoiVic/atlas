@@ -489,7 +489,7 @@ class PaperRuntimeService:
                 existing = self._repository.get_activation(
                     session, request.activation_request_id
                 )
-                if existing is None and self._unsafe_attempt_exists(
+                if existing is None and self._new_session_history_blocker_exists(
                     session, cast(str, _configured_account_id(self._settings))
                 ):
                     raise PaperRuntimeServiceError(
@@ -796,6 +796,12 @@ class PaperRuntimeService:
     def _unsafe_attempt_exists(self, session: Session, account_id: str) -> bool:
         """Use the repository's single durable-attempt safety predicate."""
         return self._repository.has_unsafe_attempt(session, account_id)
+
+    def _new_session_history_blocker_exists(
+        self, session: Session, account_id: str
+    ) -> bool:
+        """Use the separate account-wide fresh-session history classifier."""
+        return self._repository.has_new_session_blocker(session, account_id)
 
     @staticmethod
     def _attempt_is_outstanding(row: PaperExecutionAttemptModel) -> bool:

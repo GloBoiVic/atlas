@@ -530,6 +530,11 @@ class _AttemptSafetyRepository(_TickRepository):
             self.execution_outcome, self.reconciliation_status
         )
 
+    def has_new_session_blocker(self, _session: object, _account_id: str) -> bool:
+        return self.attempt_present and is_unsafe_paper_attempt(
+            self.execution_outcome, self.reconciliation_status
+        )
+
     def record_outcome(self, outcome: PaperExecutionOutcome) -> None:
         self.attempt_present = True
         self.execution_outcome = outcome.value
@@ -692,6 +697,26 @@ def test_terminal_not_run_outcome_reaches_fresh_account_observation(
     )
 
     assert observation.financial_position_state is FinancialPositionState.LONG
+    assert reader.read_calls == 1
+
+
+def test_fresh_account_read_uses_new_session_history_rule() -> None:
+    class FreshHistoryRepository(_AttemptSafetyRepository):
+        def has_unsafe_attempt(self, _session: object, _account_id: str) -> bool:
+            raise AssertionError("fresh account authority must not use strict recovery")
+
+        def has_new_session_blocker(self, _session: object, _account_id: str) -> bool:
+            return False
+
+    repository = FreshHistoryRepository()
+    reader = _SequenceAccountReader([_tick_observation()])
+    runtime = object.__new__(PaperRuntimeOrchestrator)
+    runtime._repository = repository
+    runtime._account_reader = reader
+
+    observation = runtime._read_observation(_TickSession(), _tick_activation())
+
+    assert observation.financial_position_state is FinancialPositionState.FLAT
     assert reader.read_calls == 1
 
 

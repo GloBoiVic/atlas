@@ -1131,7 +1131,9 @@ class PaperRuntimeOrchestrator:
     def _read_observation(
         self, session: Session, activation: PaperRuntimeActivation
     ) -> PaperRuntimeAccountObservation:
-        if self._repository.has_unsafe_attempt(session, activation.provider_account_id):
+        if self._repository.has_new_session_blocker(
+            session, activation.provider_account_id
+        ):
             raise PaperRuntimeStateAuthorityError(
                 "unsafe PAPER attempt prevents current account authority"
             )
