@@ -115,7 +115,7 @@ describe('Experiment setup workstation stages', () => {
     expect(
       screen.getByText(/native M15 MID and sparse M1 BID\/ASK/),
     ).toBeInTheDocument();
-    expect(screen.getByText('EUR/USD', { exact: true })).toBeInTheDocument();
+    expect(screen.getByText('EURUSD', { exact: true })).toBeInTheDocument();
     expect(screen.getByText('M15 MID', { exact: true })).toBeInTheDocument();
   });
 

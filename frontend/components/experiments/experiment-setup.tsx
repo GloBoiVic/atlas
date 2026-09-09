@@ -16,6 +16,7 @@ import { toast } from 'sonner';
 import { AppShell } from '../app-shell';
 import { Button } from '../ui/button';
 import { Select } from '../ui/select';
+import { formatInstrumentDisplay } from '../../lib/instrument';
 import { UtcDateTimePicker } from '../utc-date-time-picker';
 import {
   ApiError,
@@ -536,7 +537,12 @@ export function ExperimentForm() {
       : capability?.available === false
         ? 'unavailable'
         : 'awaiting data';
-  const proofLine = `Proof: ${text(proofSource.provider, 'provider unavailable')} ${text(proofSource.instrument, 'instrument unavailable')} · ${analysisLabel} + ${executionLabel} → immutable snapshot ${proofFingerprint === 'awaiting data' ? proofFingerprint : proofFingerprint.slice(0, 8)} · load ${proofStatus}`;
+  const proofLine = `Proof: ${text(proofSource.provider, 'provider unavailable')} ${(() => {
+    const raw = text(proofSource.instrument, 'instrument unavailable');
+    return raw === 'instrument unavailable'
+      ? raw
+      : formatInstrumentDisplay(raw);
+  })()} · ${analysisLabel} + ${executionLabel} → immutable snapshot ${proofFingerprint === 'awaiting data' ? proofFingerprint : proofFingerprint.slice(0, 8)} · load ${proofStatus}`;
   return (
     <AppShell>
       <section
@@ -621,10 +627,16 @@ export function ExperimentForm() {
               <div>
                 <p className="text-xs text-atlas-foreground-muted">Market</p>
                 <p className="font-medium">
-                  {text(
-                    marketRequirements.instrument,
-                    'Unavailable from this StrategyVersion response',
-                  )}
+                  {(() => {
+                    const raw = text(
+                      marketRequirements.instrument,
+                      'Unavailable from this StrategyVersion response',
+                    );
+                    return raw ===
+                      'Unavailable from this StrategyVersion response'
+                      ? raw
+                      : formatInstrumentDisplay(raw);
+                  })()}
                 </p>
               </div>
               <div>

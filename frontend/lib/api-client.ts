@@ -142,6 +142,10 @@ export const atlasApi = {
     request<components['schemas']['PaperCapabilityResponse']>(
       '/api/v1/paper/capability',
     ),
+  paperBrokerState: () =>
+    request<components['schemas']['PaperBrokerStateResponse']>(
+      '/api/v1/paper/broker-state',
+    ),
   activePaperStatus: () =>
     request<components['schemas']['PaperRuntimeStatusResponse']>(
       '/api/v1/paper/activations/active',

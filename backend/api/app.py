@@ -186,7 +186,18 @@ def create_app(
             deletion=app.state.experiment_deletion,
         )
     )
-    app.include_router(create_paper_router(service=paper_runtime_service))
+    from backend.integrations.oanda.trades import (
+        read_oanda_practice_open_trade_inventory,
+    )
+
+    app.include_router(
+        create_paper_router(
+            service=paper_runtime_service,
+            broker_state_reader=lambda: read_oanda_practice_open_trade_inventory(
+                settings  # type: ignore[arg-type]
+            ),
+        )
+    )
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(_: Any, exc: RequestValidationError) -> JSONResponse:

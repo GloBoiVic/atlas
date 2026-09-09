@@ -519,6 +519,23 @@ class ComparisonWarningResponse(StrictModel):
     paths: list[str]
 
 
+class PaperBrokerTradeResponse(StrictModel):
+    trade_id: str
+    instrument: str
+    open_time: str
+    open_price: str
+    current_units: str
+    state: str
+    unrealized_pl: str
+
+
+class PaperBrokerStateResponse(StrictModel):
+    provider: str
+    environment: str
+    account_currency: str
+    open_trades: list[PaperBrokerTradeResponse]
+
+
 class ComparisonDifferenceResponse(StrictModel):
     path: str
     values: dict[str, Any]

@@ -60,6 +60,7 @@ import {
   percentLabel,
 } from './shared';
 
+import { formatInstrumentDisplay } from '../../lib/instrument';
 import { MetricSummary as MetricCard } from './metric-summary';
 import { EquityChart as Chart } from './equity-charts';
 import { PriceChart } from './price-chart';
@@ -104,8 +105,13 @@ function StateDisclosure({ data }: { data: Json }) {
         <div>
           <dt className="text-atlas-foreground-muted">Market requirement</dt>
           <dd className="font-medium">
-            {text(market.instrument, 'Instrument unavailable')} · {analysis} ·
-            pip {text(market.pipSize, '—')}
+            {(() => {
+              const raw = text(market.instrument, 'Instrument unavailable');
+              return raw === 'Instrument unavailable'
+                ? raw
+                : formatInstrumentDisplay(raw);
+            })()}{' '}
+            · {analysis} · pip {text(market.pipSize, '—')}
           </dd>
         </div>
         <div>

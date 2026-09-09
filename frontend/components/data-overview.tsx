@@ -2,6 +2,7 @@
 
 import { useCallback } from 'react';
 import { atlasApi } from '../lib/api-client';
+import { formatInstrumentDisplay } from '../lib/instrument';
 import { formatInstant } from '../lib/time';
 import { useDisplayTimeZone } from '../app/providers';
 import type { components } from '../lib/api.generated';
@@ -87,7 +88,10 @@ export function HistoricalCapabilitySection({
         <div className="space-y-4">
           <dl className="grid gap-x-6 gap-y-4 sm:grid-cols-2">
             <Fact label="Provider" value={state.data.provider} />
-            <Fact label="Instrument" value={state.data.instrument} />
+            <Fact
+              label="Instrument"
+              value={formatInstrumentDisplay(state.data.instrument)}
+            />
             <Fact
               label="Availability"
               value={state.data.available ? 'Available' : 'Unavailable'}

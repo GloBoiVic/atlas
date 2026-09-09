@@ -21,6 +21,7 @@ from .schemas import (
     PaperActivationRequest as PaperActivationHttpRequest,
 )
 from .schemas import (
+    PaperBrokerStateResponse,
     PaperCapabilityResponse,
     PaperRuntimeActivationResponse,
     PaperRuntimeActivationResultResponse,
@@ -112,7 +113,9 @@ def _invoke[Result](operation: Callable[[], Result]) -> Result:
         ) from error
 
 
-def create_paper_router(*, service: Any) -> APIRouter:
+def create_paper_router(
+    *, service: Any, broker_state_reader: Callable[[], Any] | None = None
+) -> APIRouter:
     """Create the local PAPER control/status surface over one service."""
     router = APIRouter(prefix="/api/v1/paper", tags=["paper"])
 
@@ -169,6 +172,76 @@ def create_paper_router(*, service: Any) -> APIRouter:
     )
     def reconcile(activation_id: UUID) -> dict[str, object]:
         return _invoke(lambda: service.reconcile(activation_id)).to_json()
+
+    @router.get("/broker-state", response_model=PaperBrokerStateResponse)
+    def broker_state() -> dict[str, object]:
+        if broker_state_reader is None:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": {
+                        "code": "PAPER_BROKER_STATE_UNAVAILABLE",
+                        "message": "Current broker state is unavailable.",
+                        "details": {},
+                    }
+                },
+            )
+        try:
+            inventory = broker_state_reader()
+        except Exception as error:  # noqa: BLE001
+            # Known OANDA observation failures map to unavailable.
+            from backend.integrations.oanda.source import OandaError
+
+            if isinstance(error, OandaError):
+                logger.warning(
+                    "PAPER broker state unavailable: %s", type(error).__name__
+                )
+                raise HTTPException(
+                    status_code=503,
+                    detail={
+                        "error": {
+                            "code": "PAPER_BROKER_STATE_UNAVAILABLE",
+                            "message": "Current broker state is unavailable.",
+                            "details": {},
+                        }
+                    },
+                ) from error
+            logger.error("PAPER broker state internal error: %s", type(error).__name__)
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "error": {
+                        "code": "PAPER_BROKER_STATE_INTERNAL_ERROR",
+                        "message": "Current broker state could not be read.",
+                        "details": {},
+                    }
+                },
+            ) from error
+        open_trades: list[dict[str, object]] = []
+        for trade in inventory.trades:
+            open_time_value = trade.open_time.isoformat().replace("+00:00", "Z")
+            open_trades.append(
+                {
+                    "trade_id": trade.provider_trade_id,
+                    "instrument": trade.provider_instrument,
+                    "open_time": open_time_value,
+                    "open_price": str(trade.open_price),
+                    "current_units": str(trade.current_units),
+                    "state": trade.state,
+                    "unrealized_pl": str(trade.unrealized_pl),
+                }
+            )
+        provider_value = (
+            inventory.identity.provider.value
+            if hasattr(inventory.identity.provider, "value")
+            else str(inventory.identity.provider)
+        )
+        return {
+            "provider": provider_value,
+            "environment": str(inventory.identity.environment),
+            "account_currency": str(inventory.identity.base_currency),
+            "open_trades": open_trades,
+        }
 
     return router
 

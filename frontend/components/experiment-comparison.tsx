@@ -9,6 +9,7 @@ import { atlasApi } from '../lib/api-client';
 import type { components } from '../lib/api.generated';
 import { dateLabel, object, text } from './experiments/shared';
 import { formatMetric } from '../lib/experiment-formatters';
+import { formatInstrumentDisplay } from '../lib/instrument';
 
 type Result = components['schemas']['ExperimentComparisonResponse'];
 type ComparisonExperiment = Result['experiments'][number];
@@ -75,8 +76,10 @@ const valueForFact = (value: unknown, path: string) => {
   if (value === null || value === undefined || value === '') return '—';
   if (path === 'strategyVersionId') return 'StrategyVersion differs';
   if (path === 'datasetSnapshot') return 'DatasetSnapshot provenance differs';
-  if (path === 'instrument')
-    return text(object(value).code, 'Instrument differs');
+  if (path === 'instrument') {
+    const raw = text(object(value).code, 'Instrument differs');
+    return raw === 'Instrument differs' ? raw : formatInstrumentDisplay(raw);
+  }
   if (path === 'tradingPeriod') {
     const period = object(value);
     return `${dateLabel(period.start, 'UTC')} → ${dateLabel(period.end, 'UTC')}`;
@@ -124,7 +127,15 @@ function IdentityCard({ experiment }: { experiment: ComparisonExperiment }) {
         <div>
           <dt className="text-xs text-atlas-foreground-muted">Instrument</dt>
           <dd>
-            {text(object(experiment.instrument).code, 'Instrument unavailable')}
+            {(() => {
+              const raw = text(
+                object(experiment.instrument).code,
+                'Instrument unavailable',
+              );
+              return raw === 'Instrument unavailable'
+                ? raw
+                : formatInstrumentDisplay(raw);
+            })()}
           </dd>
         </div>
         <div>

@@ -13,6 +13,7 @@ import {
 } from '../../lib/api-client';
 import { useDisplayTimeZone } from '../../app/providers';
 import { formatCurrency, formatPercent } from '../../lib/experiment-formatters';
+import { formatInstrumentDisplay } from '../../lib/instrument';
 import type { Json } from './shared';
 import {
   object,
@@ -490,7 +491,8 @@ export function ExperimentStatusPage() {
                     Market
                   </dt>
                   <dd>
-                    {facts.instrument} · {facts.provider}
+                    {formatInstrumentDisplay(facts.instrument)} ·{' '}
+                    {facts.provider}
                   </dd>
                 </div>
                 <div>
