@@ -1344,6 +1344,7 @@ def _range_lineage_matches(
 
 def _unwrap_transaction(payload: Mapping[str, Any]) -> Mapping[str, Any]:
     for key in (
+        "transaction",
         "orderCreateTransaction",
         "orderFillTransaction",
         "orderCancelTransaction",

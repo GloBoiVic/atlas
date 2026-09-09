@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 import httpx
@@ -213,6 +213,15 @@ def close_transaction(
     if reason is not None:
         transaction["reason"] = reason
     return {"orderFillTransaction": transaction}
+
+
+def documented_transaction_response(
+    transaction: dict[str, Any], *, last_transaction_id: str
+) -> dict[str, Any]:
+    return {
+        "transaction": transaction,
+        "lastTransactionID": last_transaction_id,
+    }
 
 
 def reader(handler: Any) -> OandaPracticeReconciliationReader:
@@ -431,6 +440,40 @@ def test_oanda_reader_maps_exact_close_reason_and_uses_trade_reduce_price(
     assert result.observation.normalized_schema_version == PAPER_BROKER_FACTS_SCHEMA_V2
     assert requests[0].method == "GET"
     assert requests[0].url.path == f"/v3/accounts/{ACCOUNT_ID}/transactions/43"
+
+
+def test_oanda_reader_unwraps_transaction_envelope_for_read_transaction() -> None:
+    result = reader(
+        static_response(
+            documented_transaction_response(order_fill(), last_transaction_id="12")
+        )
+    ).read_transaction(known_fill_context(), "12")
+
+    assert result.state is PaperReconciliationReadState.FILLED
+    assert result.attributable is True
+    assert result.fill is not None
+    assert result.fill.broker_fill_transaction_id == "12"
+    assert result.fill.broker_trade_id == "7001"
+    assert result.observation.provider_transaction_id == "12"
+
+
+def test_oanda_reader_unwraps_transaction_envelope_for_stop_loss_close() -> None:
+    response = close_transaction(reason="STOP_LOSS_ORDER")
+    transaction = cast(dict[str, Any], response["orderFillTransaction"])
+
+    result = reader(
+        static_response(
+            documented_transaction_response(transaction, last_transaction_id="43")
+        )
+    ).read_trade_close_transaction(known_fill_context(), "43", "7001")
+
+    assert result.state is PaperReconciliationReadState.CLOSED
+    assert result.attributable is True
+    assert result.trade_close_transaction is not None
+    assert result.trade_close_transaction.transaction_id == "43"
+    assert result.trade_close_transaction.close_price == Decimal("1.11035")
+    assert result.trade_close_transaction.provider_reason == "STOP_LOSS_ORDER"
+    assert result.trade_close_transaction.exit_cause is PaperTradeExitCause.STOP_LOSS
 
 
 def test_oanda_reader_keeps_exact_close_with_missing_reason_unresolved() -> None:
