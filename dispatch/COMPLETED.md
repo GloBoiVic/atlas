@@ -1,5 +1,30 @@
 # Completed
 
+<!-- completion-id: dogfood-02-protected-trade-lifecycle-closure -->
+## Dogfood 02 - Protected Trade Lifecycle Closure
+
+- **Date/status:** 2026-09-09 - terminal closure; T001/T002 BUILD, R001 remediation,
+  R002 remediation, independent validation, and independent review completed. The
+  immutable root validation and R001 review failures were resolved through the bounded
+  R002 chain with no unresolved Critical or Important findings.
+- **Commit:** `9a00ff2` Implement protected trade lifecycle closure; merge commit `016144c`
+  merged the feature branch into `main`.
+- **Scope:** Added the approved explicit GET-only reconciliation seam for a healthy
+  `FILLED_PROTECTED` PAPER Trade after runtime termination, preserving append-only closure
+  evidence, surfacing contradictory closure economics as `CONFLICT`, retaining unresolved
+  attribution explicitly, and preserving existing lifecycle, Risk, execution, mutation,
+  runtime, persistence, and schema boundaries. No new capital authority was introduced.
+- **Validation:** Focused checks passed with 207 tests; safe backend suite passed with 1,272
+  tests; dedicated PostgreSQL integration passed with 114 tests after provisioning the
+  existing local `atlas_test` database; Alembic, changed-surface Ruff/Pyright, generated
+  client freshness, frontend checks, and diff checks passed. Existing repository-wide
+  static-analysis debt and frontend warnings remain documented.
+- **Review:** R002 independent REVIEW **PASS** with no unresolved Critical or Important
+  findings. No credentials, runtime start, activation creation, real Dogfood reconciliation,
+  Risk evaluation, or broker mutation occurred.
+- **Git/state:** Feature branch and `main` are ready to push to GitHub; the workstream is
+  closed and `dispatch/ACTIVE.md` is cleared.
+
 <!-- completion-id: ui-02-trader-shell-overview-product-cleanup -->
 ## UI 02 - Trader Shell and Overview Product Cleanup
 
