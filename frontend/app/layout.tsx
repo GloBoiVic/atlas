@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
   display: 'swap',
 });
 
-export const metadata = { title: 'Atlas · Experiments' };
+export const metadata = { title: 'Atlas · Overview' };
 
 export default function RootLayout({
   children,

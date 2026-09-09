@@ -5,7 +5,6 @@ import { usePathname } from 'next/navigation';
 import {
   Activity,
   BarChart3,
-  BookOpen,
   Database,
   Layers3,
   Settings2,
@@ -15,13 +14,17 @@ import { DISPLAY_TIME_ZONES } from '../lib/time';
 import { useDisplayTimeZone } from '../app/providers';
 
 const navigation = [
-  { label: 'Dashboard', href: '#', icon: Activity, disabled: true },
+  { label: 'Overview', href: '/', icon: Activity },
   { label: 'Strategies', href: '/strategies', icon: Layers3 },
   { label: 'Experiments', href: '/experiments', icon: BarChart3 },
-  { label: 'Deployments', href: '#', icon: Activity, disabled: true },
-  { label: 'Journal', href: '#', icon: BookOpen, disabled: true },
-  { label: 'Data', href: '#', icon: Database, disabled: true },
+  { label: 'PAPER', href: '/paper', icon: Activity },
+  { label: 'Data', href: '/data', icon: Database },
+  { label: 'LIVE', href: '#', icon: Activity, disabled: true },
 ];
+
+function isNavigationActive(pathname: string, href: string) {
+  return href === '/' ? pathname === '/' : pathname.startsWith(href);
+}
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -29,44 +32,45 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen bg-atlas-background text-atlas-foreground">
       <header className="border-b border-atlas-border bg-atlas-surface">
-        <div className="mx-auto flex min-h-16 max-w-[1440px] items-center justify-between gap-6 px-6 lg:px-10">
-          <div className="flex min-w-0 items-center gap-8">
-            <Link
-              href="/experiments"
-              className="shrink-0 text-lg font-semibold tracking-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-atlas-focus-ring focus-visible:ring-offset-4"
-            >
-              Atlas
-            </Link>
-            <nav
-              aria-label="Primary"
-              className="flex items-center gap-1 overflow-x-auto"
-            >
-              {navigation.map(({ label, href, icon: Icon, disabled }) =>
-                disabled ? (
-                  <span
-                    key={label}
-                    aria-disabled="true"
-                    className="nav-link nav-link-disabled"
-                    title={`${label} is planned for a later Atlas phase`}
-                  >
-                    <Icon aria-hidden className="size-4" />
-                    {label}
-                    <span className="sr-only"> — future capability</span>
-                  </span>
-                ) : (
-                  <Link
-                    key={label}
-                    href={href}
-                    className={`nav-link ${pathname.startsWith(href) ? 'nav-link-active' : ''}`}
-                  >
-                    <Icon aria-hidden className="size-4" />
-                    {label}
-                  </Link>
-                ),
-              )}
-            </nav>
-          </div>
-          <div className="flex shrink-0 items-center gap-4 text-sm">
+        <div className="mx-auto flex min-h-16 max-w-[1440px] flex-wrap items-center justify-between gap-x-3 gap-y-2 px-6 py-2 sm:flex-nowrap sm:gap-6 sm:py-0 lg:px-10">
+          <Link
+            href="/"
+            className="order-1 shrink-0 text-lg font-semibold tracking-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-atlas-focus-ring focus-visible:ring-offset-4"
+          >
+            Atlas
+          </Link>
+          <nav
+            aria-label="Primary"
+            className="order-3 flex min-w-0 flex-1 basis-full contain-paint items-center gap-1 overflow-x-auto sm:order-2 sm:basis-auto"
+          >
+            {navigation.map(({ label, href, icon: Icon, disabled }) =>
+              disabled ? (
+                <span
+                  key={label}
+                  aria-disabled="true"
+                  className="nav-link nav-link-disabled shrink-0 whitespace-nowrap"
+                  title={`${label} is planned for a later Atlas phase`}
+                >
+                  <Icon aria-hidden className="size-4" />
+                  {label}
+                  <span className="sr-only"> — future capability</span>
+                </span>
+              ) : (
+                <Link
+                  key={label}
+                  href={href}
+                  aria-current={
+                    isNavigationActive(pathname, href) ? 'page' : undefined
+                  }
+                  className={`nav-link shrink-0 whitespace-nowrap ${isNavigationActive(pathname, href) ? 'nav-link-active' : ''}`}
+                >
+                  <Icon aria-hidden className="size-4" />
+                  {label}
+                </Link>
+              ),
+            )}
+          </nav>
+          <div className="order-2 flex shrink-0 items-center gap-4 text-sm sm:order-3">
             <ApiStatus />
             <label
               className="flex items-center gap-2 text-xs text-atlas-foreground-muted"
@@ -94,13 +98,25 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             Historical research
           </span>
           <span className="text-atlas-foreground-muted">
-            Experiments are available now
+            Strategies are authored and versioned
           </span>
           <span className="text-atlas-foreground-disabled" aria-hidden>
             /
           </span>
           <span className="text-atlas-foreground-disabled">
-            PAPER and LIVE are future-only
+            Experiments are deterministic historical research
+          </span>
+          <span className="text-atlas-foreground-disabled" aria-hidden>
+            /
+          </span>
+          <span className="text-atlas-foreground-disabled">
+            PAPER status is observable, not controllable here
+          </span>
+          <span className="text-atlas-foreground-disabled" aria-hidden>
+            /
+          </span>
+          <span className="text-atlas-foreground-disabled">
+            LIVE is a future capability
           </span>
         </div>
       </div>

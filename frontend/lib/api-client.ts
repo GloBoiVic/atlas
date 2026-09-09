@@ -138,6 +138,22 @@ export const atlasApi = {
     request<components['schemas']['StrategyCatalogResponse']>(
       '/api/v1/strategies',
     ),
+  paperCapability: () =>
+    request<components['schemas']['PaperCapabilityResponse']>(
+      '/api/v1/paper/capability',
+    ),
+  activePaperStatus: () =>
+    request<components['schemas']['PaperRuntimeStatusResponse']>(
+      '/api/v1/paper/activations/active',
+    ).catch((error) => {
+      // No active activation is the expected current-state empty result.
+      if (
+        error instanceof ApiError &&
+        error.code === 'PAPER_ACTIVATION_NOT_ACTIVE'
+      )
+        return null;
+      throw error;
+    }),
   getStrategy: (strategyKey: string) =>
     request<components['schemas']['StrategyDetailResponse']>(
       `/api/v1/strategies/${encodeURIComponent(strategyKey)}`,
@@ -194,19 +210,21 @@ export const atlasApi = {
   getTrade: (id: string, sequence: number) =>
     request<TradeDetailPayload>(`/api/v1/experiments/${id}/trades/${sequence}`),
   historicalCapability: () =>
-    request<unknown>('/api/v1/historical-data/capability'),
-  activeHistoricalLoad: () =>
-    request<unknown>('/api/v1/historical-data/load-requests/active').catch(
-      (error) => {
-        // An absent active request is the expected empty state on first load.
-        if (
-          error instanceof ApiError &&
-          error.code === 'HISTORICAL_LOAD_NOT_ACTIVE'
-        )
-          return null;
-        throw error;
-      },
+    request<components['schemas']['HistoricalDataCapabilityResponse']>(
+      '/api/v1/historical-data/capability',
     ),
+  activeHistoricalLoad: () =>
+    request<components['schemas']['HistoricalDataLoadStatusResponse']>(
+      '/api/v1/historical-data/load-requests/active',
+    ).catch((error) => {
+      // An absent active request is the expected empty state on first load.
+      if (
+        error instanceof ApiError &&
+        error.code === 'HISTORICAL_LOAD_NOT_ACTIVE'
+      )
+        return null;
+      throw error;
+    }),
   createHistoricalLoad: (
     body: components['schemas']['HistoricalDataLoadRequest'],
   ) =>
