@@ -7,14 +7,14 @@ an HTTP request was sent.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import cast
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -29,10 +29,13 @@ from backend.paper.execution import (
     ProtectionLegStatus,
 )
 from backend.paper.persistence_contracts import (
+    PAPER_BROKER_FACTS_SCHEMA_V2,
     PaperBrokerObservation,
     PaperExecutionAttempt,
     PaperMutationClaim,
     PaperMutationPhase,
+    PaperObservationObjectKind,
+    PaperObservationReadKind,
     PaperPersistenceContractError,
     PaperReconciliationFindingCode,
     PaperReconciliationRun,
@@ -427,6 +430,86 @@ class PaperExecutionRepository:
         session.add(row)
         session.flush()
         return row
+
+    def has_conflicting_closure_observations(
+        self,
+        session: Session,
+        attempt_id: UUID,
+        observations: Sequence[PaperBrokerObservation],
+    ) -> bool:
+        """Detect changed closure economics or identity before appending evidence."""
+        if type(attempt_id) is not UUID:
+            raise PaperPersistenceContractError("attempt_id must be a UUID")
+        for observation in observations:
+            if type(observation) is not PaperBrokerObservation:
+                raise PaperPersistenceContractError("observation has an invalid type")
+        if self.get_attempt(session, attempt_id, for_update=True) is None:
+            raise PaperAttemptNotFound(str(attempt_id))
+        candidates = tuple(
+            signature
+            for observation in observations
+            if type(observation) is PaperBrokerObservation
+            for signature in (
+                _closure_observation_signature(
+                    observation.read_kind.value,
+                    observation.object_kind.value,
+                    observation.provider_trade_id,
+                    observation.provider_transaction_id,
+                    observation.normalized_facts,
+                ),
+            )
+            if signature is not None
+        )
+        if not candidates:
+            return False
+
+        statement = select(
+            PaperBrokerObservationModel.read_kind,
+            PaperBrokerObservationModel.object_kind,
+            PaperBrokerObservationModel.provider_trade_id,
+            PaperBrokerObservationModel.provider_transaction_id,
+            PaperBrokerObservationModel.normalized_facts,
+        ).where(
+            PaperBrokerObservationModel.attempt_id == attempt_id,
+            PaperBrokerObservationModel.normalized_schema_version
+            == PAPER_BROKER_FACTS_SCHEMA_V2,
+            or_(
+                and_(
+                    PaperBrokerObservationModel.read_kind
+                    == PaperObservationReadKind.TRADE_DETAIL.value,
+                    PaperBrokerObservationModel.object_kind
+                    == PaperObservationObjectKind.TRADE.value,
+                ),
+                and_(
+                    PaperBrokerObservationModel.read_kind
+                    == PaperObservationReadKind.TRANSACTION_DETAIL.value,
+                    PaperBrokerObservationModel.object_kind
+                    == PaperObservationObjectKind.TRANSACTION.value,
+                ),
+            ),
+        )
+        existing_by_kind: dict[str, list[tuple[object, ...]]] = {}
+        for read_kind, object_kind, trade_id, transaction_id, facts in session.execute(
+            statement
+        ).all():
+            signature = _closure_observation_signature(
+                read_kind,
+                object_kind,
+                trade_id,
+                transaction_id,
+                cast(Mapping[str, object], facts),
+            )
+            if signature is not None:
+                existing_by_kind.setdefault(cast(str, signature[0]), []).append(
+                    signature
+                )
+        return any(
+            any(
+                existing != candidate
+                for existing in existing_by_kind.get(cast(str, candidate[0]), [])
+            )
+            for candidate in candidates
+        )
 
     def record_fill(
         self, session: Session, attempt_id: UUID, fill: BrokerFillFacts
@@ -1224,6 +1307,51 @@ def _max_transaction_id(current: str | None, proposed: str | None) -> str | None
     if proposed is None:
         return current
     return proposed if int(proposed) >= int(current) else current
+
+
+def _closure_observation_signature(
+    read_kind: str,
+    object_kind: str,
+    provider_trade_id: str | None,
+    provider_transaction_id: str | None,
+    facts: Mapping[str, object],
+) -> tuple[object, ...] | None:
+    """Return only the immutable closure identity and economic facts."""
+    if (
+        read_kind == PaperObservationReadKind.TRADE_DETAIL.value
+        and object_kind == PaperObservationObjectKind.TRADE.value
+    ):
+        if "close_time" not in facts:
+            return None
+        return (
+            "TRADE",
+            provider_trade_id,
+            facts.get("trade_id"),
+            facts.get("close_time"),
+            facts.get("average_close_price"),
+            facts.get("realized_pl"),
+            facts.get("financing"),
+            facts.get("dividend_adjustment"),
+            facts.get("closing_transaction_ids"),
+        )
+    if (
+        read_kind == PaperObservationReadKind.TRANSACTION_DETAIL.value
+        and object_kind == PaperObservationObjectKind.TRANSACTION.value
+    ):
+        if "closed_trade_id" not in facts:
+            return None
+        return (
+            "TRANSACTION",
+            provider_transaction_id,
+            provider_trade_id,
+            facts.get("transaction_id"),
+            facts.get("closed_trade_id"),
+            facts.get("closed_units"),
+            facts.get("close_price"),
+            facts.get("close_realized_pl"),
+            facts.get("close_financing"),
+        )
+    return None
 
 
 __all__ = [

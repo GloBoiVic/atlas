@@ -21,9 +21,15 @@ from backend.paper.execution import (
     ProtectionLegStatus,
 )
 from backend.paper.persistence_contracts import (
+    MAX_PROVIDER_TRANSACTION_ID_LENGTH,
+    PAPER_BROKER_FACTS_SCHEMA_V1,
+    PAPER_BROKER_FACTS_SCHEMA_V2,
     PaperBrokerObservation,
     PaperObservationObjectKind,
     PaperObservationReadKind,
+    PaperTradeCloseTransaction,
+    PaperTradeClosure,
+    PaperTradeExitCause,
 )
 from backend.paper.reconciliation import (
     PaperReconciliationContext,
@@ -203,6 +209,52 @@ class OandaPracticeReconciliationReader(PaperReconciliationProvider):
             response.request_id,
             PaperObservationReadKind.TRANSACTION_DETAIL,
             expected_transaction_id=normalized_id,
+        )
+
+    def read_trade_close_transaction(
+        self,
+        context: PaperReconciliationContext,
+        transaction_id: str,
+        trade_id: str,
+    ) -> PaperReconciliationRead:
+        """Read one exact closing OrderFill without reusing entry-fill semantics."""
+        self._validate_context(context)
+        normalized_transaction_id = _positive_transaction_id(transaction_id)
+        normalized_trade_id = _positive_id(trade_id)
+        if normalized_transaction_id is None or normalized_trade_id is None:
+            raise OandaReconciliationNormalizationError(
+                "closing transaction or Trade ID is invalid"
+            )
+        if (
+            context.provider_trade_id is not None
+            and context.provider_trade_id != normalized_trade_id
+        ):
+            raise OandaReconciliationNormalizationError(
+                "closing Trade ID does not match reconciliation context"
+            )
+        path = _TRANSACTION_PATH.format(
+            account_id=quote(self._account_id, safe="-"),
+            transaction_id=quote(normalized_transaction_id, safe="-"),
+        )
+        response = self._get(path, "reconciliation closing transaction")
+        if response is None or response.payload is None:
+            return self._not_found(
+                context,
+                PaperObservationReadKind.TRANSACTION_DETAIL,
+                PaperObservationObjectKind.TRANSACTION,
+                provider_transaction_id=normalized_transaction_id,
+                provider_trade_id=normalized_trade_id,
+                request_id=response.request_id if response is not None else None,
+                normalized_schema_version=PAPER_BROKER_FACTS_SCHEMA_V2,
+            )
+        payload = _object(response.payload, "reconciliation closing transaction")
+        transaction = _unwrap_transaction(payload)
+        return self._trade_close_transaction_read(
+            context,
+            transaction,
+            response.request_id,
+            expected_transaction_id=normalized_transaction_id,
+            expected_trade_id=normalized_trade_id,
         )
 
     def read_trade(
@@ -573,7 +625,7 @@ class OandaPracticeReconciliationReader(PaperReconciliationProvider):
         state_value = trade.get("state")
         units = _decimal_or_none(
             trade.get("initialUnits")
-            if state_value == "CLOSED" and trade.get("initialUnits") is not None
+            if state_value == "CLOSED"
             else trade.get("currentUnits")
         )
         price = _decimal_or_none(trade.get("price"))
@@ -625,7 +677,12 @@ class OandaPracticeReconciliationReader(PaperReconciliationProvider):
                 context.actual_target_price if context.take_profit_claimed else None
             ),
         )
-        facts = _trade_facts(trade, stop[1], target[1])
+        closure = (
+            _closed_trade_closure(trade, trade_id)
+            if state_value == "CLOSED" and attributable
+            else None
+        )
+        facts = _trade_facts(trade, stop[1], target[1], closure=closure)
         observation = self._observation(
             context,
             PaperObservationReadKind.TRADE_DETAIL,
@@ -638,6 +695,9 @@ class OandaPracticeReconciliationReader(PaperReconciliationProvider):
             request_id=request_id,
             last_transaction_id=_optional_positive_id(trade, "lastTransactionID"),
             provider_observed_at=_timestamp_or_none(trade.get("openTime")),
+            normalized_schema_version=(
+                PAPER_BROKER_FACTS_SCHEMA_V2 if closure is not None else None
+            ),
         )
         return PaperReconciliationRead(
             observation=observation,
@@ -646,6 +706,94 @@ class OandaPracticeReconciliationReader(PaperReconciliationProvider):
             protection=protection,
             attributable=attributable,
             protection_drift=stop_drift or target_drift,
+            trade_closure=closure,
+        )
+
+    def _trade_close_transaction_read(
+        self,
+        context: PaperReconciliationContext,
+        transaction: Mapping[str, Any],
+        request_id: str | None,
+        *,
+        expected_transaction_id: str,
+        expected_trade_id: str,
+    ) -> PaperReconciliationRead:
+        transaction_id = _positive_transaction_id(transaction.get("id"))
+        if transaction_id is None:
+            raise OandaReconciliationNormalizationError(
+                "closing transaction ID is invalid"
+            )
+        provider_reason = transaction.get("reason")
+        facts = _transaction_facts(transaction)
+        facts.update(
+            {
+                "provider_reason": (
+                    provider_reason
+                    if isinstance(provider_reason, str) and provider_reason
+                    else None
+                ),
+                "closed_trade_id": None,
+                "closed_units": None,
+                "close_price": None,
+                "close_realized_pl": None,
+                "close_financing": None,
+                "exit_cause": PaperTradeExitCause.UNRESOLVED.value,
+            }
+        )
+        observation = self._observation(
+            context,
+            PaperObservationReadKind.TRANSACTION_DETAIL,
+            PaperObservationObjectKind.TRANSACTION,
+            facts,
+            provider_transaction_id=transaction_id,
+            request_id=request_id,
+            batch_id=_positive_id(transaction.get("batchID")),
+            related_transaction_ids=_related_ids(
+                transaction.get("relatedTransactionIDs")
+            ),
+            last_transaction_id=_optional_positive_id(transaction, "lastTransactionID"),
+            provider_observed_at=_timestamp_or_none(transaction.get("time")),
+            normalized_schema_version=PAPER_BROKER_FACTS_SCHEMA_V2,
+        )
+        if transaction_id != expected_transaction_id:
+            return PaperReconciliationRead(
+                observation=observation,
+                state=PaperReconciliationReadState.CONFLICT,
+                attributable=False,
+            )
+        close_transaction = _close_transaction_from_oanda(
+            transaction,
+            expected_trade_id,
+            account_id=context.provider_account_id,
+            instrument=context.instrument,
+        )
+        if close_transaction is None:
+            return PaperReconciliationRead(
+                observation=observation,
+                state=PaperReconciliationReadState.CONFLICT,
+                attributable=False,
+            )
+        facts.update(
+            {
+                "closed_trade_id": close_transaction.trade_id,
+                "closed_units": str(close_transaction.closed_units),
+                "close_price": str(close_transaction.close_price),
+                "close_realized_pl": str(close_transaction.realized_pl),
+                "close_financing": str(close_transaction.financing),
+                "exit_cause": close_transaction.exit_cause.value,
+            }
+        )
+        observation = replace(
+            observation,
+            normalized_facts=facts,
+            provider_trade_id=close_transaction.trade_id,
+        )
+        return PaperReconciliationRead(
+            observation=observation,
+            state=PaperReconciliationReadState.CLOSED,
+            trade_id=expected_trade_id,
+            attributable=True,
+            trade_close_transaction=close_transaction,
         )
 
     def _leg(
@@ -853,6 +1001,7 @@ class OandaPracticeReconciliationReader(PaperReconciliationProvider):
         related_transaction_ids: tuple[str, ...] = (),
         last_transaction_id: str | None = None,
         provider_observed_at: datetime | None = None,
+        normalized_schema_version: str | None = None,
     ) -> PaperBrokerObservation:
         return PaperBrokerObservation(
             attempt_id=context.attempt_id,
@@ -878,6 +1027,11 @@ class OandaPracticeReconciliationReader(PaperReconciliationProvider):
             last_transaction_id=last_transaction_id,
             provider_observed_at=provider_observed_at,
             atlas_observed_at=self._now(),
+            normalized_schema_version=(
+                normalized_schema_version
+                if normalized_schema_version is not None
+                else PAPER_BROKER_FACTS_SCHEMA_V1
+            ),
         )
 
     def _not_found(
@@ -889,6 +1043,7 @@ class OandaPracticeReconciliationReader(PaperReconciliationProvider):
         provider_transaction_id: str | None = None,
         provider_trade_id: str | None = None,
         request_id: str | None = None,
+        normalized_schema_version: str | None = None,
     ) -> PaperReconciliationRead:
         observation = self._observation(
             context,
@@ -898,6 +1053,7 @@ class OandaPracticeReconciliationReader(PaperReconciliationProvider):
             provider_transaction_id=provider_transaction_id,
             provider_trade_id=provider_trade_id,
             request_id=request_id,
+            normalized_schema_version=normalized_schema_version,
         )
         return PaperReconciliationRead(
             observation=observation,
@@ -961,6 +1117,15 @@ def _positive_id(value: object) -> str | None:
     except OandaPrimitiveError:
         return None
     return parsed if int(parsed) > 0 else None
+
+
+def _positive_transaction_id(value: object) -> str | None:
+    parsed = _positive_id(value)
+    return (
+        parsed
+        if parsed is not None and len(parsed) <= MAX_PROVIDER_TRANSACTION_ID_LENGTH
+        else None
+    )
 
 
 def _positive_or_zero_id(value: object) -> str | None:
@@ -1237,12 +1402,162 @@ def _transaction_facts(transaction: Mapping[str, Any]) -> dict[str, object]:
     }
 
 
+def _required_decimal(value: object, name: str, *, positive: bool = False) -> Decimal:
+    parsed = _decimal_or_none(value)
+    if parsed is None or (positive and parsed <= 0):
+        raise OandaReconciliationNormalizationError(f"{name} is invalid")
+    return parsed
+
+
+def _required_timestamp(value: object, name: str) -> datetime:
+    parsed = _timestamp_or_none(value)
+    if parsed is None:
+        raise OandaReconciliationNormalizationError(f"{name} is invalid")
+    return parsed
+
+
+def _closing_transaction_ids(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        raise OandaReconciliationNormalizationError("closingTransactionIDs are invalid")
+    values = cast(list[object], value)
+    if not (0 < len(values) <= _MAX_RANGE_ITEMS):
+        raise OandaReconciliationNormalizationError("closingTransactionIDs are invalid")
+    result: list[str] = []
+    for item in values:
+        transaction_id = _positive_id(item)
+        if transaction_id is None or transaction_id in result:
+            raise OandaReconciliationNormalizationError(
+                "closingTransactionIDs contain an invalid or duplicate ID"
+            )
+        result.append(transaction_id)
+    return tuple(result)
+
+
+def _closed_trade_closure(
+    trade: Mapping[str, Any], trade_id: str | None
+) -> PaperTradeClosure:
+    if trade_id is None:
+        raise OandaReconciliationNormalizationError("closed Trade ID is invalid")
+    closing_transaction_ids = _closing_transaction_ids(
+        trade.get("closingTransactionIDs")
+    )
+    return PaperTradeClosure(
+        trade_id=trade_id,
+        closed_at=_required_timestamp(trade.get("closeTime"), "closeTime"),
+        average_close_price=_required_decimal(
+            trade.get("averageClosePrice"), "averageClosePrice", positive=True
+        ),
+        realized_pl=_required_decimal(trade.get("realizedPL"), "realizedPL"),
+        financing=_required_decimal(trade.get("financing"), "financing"),
+        dividend_adjustment=_required_decimal(
+            trade.get("dividendAdjustment"), "dividendAdjustment"
+        ),
+        closing_transaction_ids=closing_transaction_ids,
+        exit_cause=(
+            PaperTradeExitCause.MULTIPLE
+            if len(closing_transaction_ids) > 1
+            else PaperTradeExitCause.UNRESOLVED
+        ),
+    )
+
+
+def _oanda_exit_cause(reason: object) -> PaperTradeExitCause:
+    if not isinstance(reason, str) or not reason:
+        return PaperTradeExitCause.UNRESOLVED
+    if reason == "TAKE_PROFIT_ORDER":
+        return PaperTradeExitCause.TAKE_PROFIT
+    if reason in {
+        "STOP_LOSS_ORDER",
+        "GUARANTEED_STOP_LOSS_ORDER",
+        "TRAILING_STOP_LOSS_ORDER",
+    }:
+        return PaperTradeExitCause.STOP_LOSS
+    if reason == "MARKET_ORDER_TRADE_CLOSE":
+        return PaperTradeExitCause.MARKET_CLOSE
+    if reason == "MARKET_ORDER_MARGIN_CLOSEOUT":
+        return PaperTradeExitCause.MARGIN_CLOSEOUT
+    return PaperTradeExitCause.OTHER
+
+
+def _close_reductions(
+    transaction: Mapping[str, Any], expected_trade_id: str
+) -> list[Mapping[str, Any]]:
+    reductions: list[Mapping[str, Any]] = []
+    if "tradeReduced" in transaction:
+        reduced = _object_or_none(transaction.get("tradeReduced"))
+        if reduced is None:
+            raise OandaReconciliationNormalizationError("tradeReduced is invalid")
+        reductions.append(reduced)
+    if "tradesClosed" in transaction:
+        closed = transaction.get("tradesClosed")
+        if not isinstance(closed, list):
+            raise OandaReconciliationNormalizationError("tradesClosed is invalid")
+        values = cast(list[object], closed)
+        if len(values) > _MAX_RANGE_ITEMS:
+            raise OandaReconciliationNormalizationError("tradesClosed is invalid")
+        for value in values:
+            item = _object_or_none(value)
+            if item is None:
+                raise OandaReconciliationNormalizationError(
+                    "tradesClosed contains an invalid reduction"
+                )
+            reductions.append(item)
+    return [
+        reduction
+        for reduction in reductions
+        if _positive_id(reduction.get("tradeID")) == expected_trade_id
+    ]
+
+
+def _close_transaction_from_oanda(
+    transaction: Mapping[str, Any],
+    expected_trade_id: str,
+    *,
+    account_id: str,
+    instrument: str,
+) -> PaperTradeCloseTransaction | None:
+    if (
+        transaction.get("type") != "ORDER_FILL"
+        or transaction.get("accountID") != account_id
+        or transaction.get("instrument") != instrument
+    ):
+        return None
+    reductions = _close_reductions(transaction, expected_trade_id)
+    if len(reductions) != 1:
+        return None
+    reduction = reductions[0]
+    reduction_trade_id = _positive_id(reduction.get("tradeID"))
+    reason = transaction.get("reason")
+    normalized_reason = reason if isinstance(reason, str) and reason else None
+    if (
+        reduction_trade_id is None
+        or _positive_transaction_id(transaction.get("id")) is None
+    ):
+        return None
+    transaction_id = _positive_transaction_id(transaction.get("id"))
+    assert transaction_id is not None
+    return PaperTradeCloseTransaction(
+        transaction_id=transaction_id,
+        trade_id=reduction_trade_id,
+        closed_units=_required_decimal(reduction.get("units"), "closed units"),
+        close_price=_required_decimal(
+            reduction.get("price"), "TradeReduce price", positive=True
+        ),
+        realized_pl=_required_decimal(reduction.get("realizedPL"), "close realizedPL"),
+        financing=_required_decimal(reduction.get("financing"), "close financing"),
+        provider_reason=normalized_reason,
+        exit_cause=_oanda_exit_cause(normalized_reason),
+    )
+
+
 def _trade_facts(
     trade: Mapping[str, Any],
     stop: BrokerProtectionOrder | None,
     target: BrokerProtectionOrder | None,
+    *,
+    closure: PaperTradeClosure | None = None,
 ) -> dict[str, object]:
-    return {
+    facts: dict[str, object] = {
         "account_id": trade.get("accountID")
         if isinstance(trade.get("accountID"), str)
         else None,
@@ -1259,6 +1574,19 @@ def _trade_facts(
         "stop_loss": _protection_fact(stop),
         "take_profit": _protection_fact(target),
     }
+    if closure is not None:
+        facts.update(
+            {
+                "close_time": closure.closed_at.isoformat().replace("+00:00", "Z"),
+                "average_close_price": str(closure.average_close_price),
+                "realized_pl": str(closure.realized_pl),
+                "financing": str(closure.financing),
+                "dividend_adjustment": str(closure.dividend_adjustment),
+                "closing_transaction_ids": list(closure.closing_transaction_ids),
+                "exit_cause": closure.exit_cause.value,
+            }
+        )
+    return facts
 
 
 def _protection_fact(order: BrokerProtectionOrder | None) -> dict[str, object] | None:

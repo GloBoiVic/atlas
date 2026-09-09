@@ -266,6 +266,7 @@ def test_reconcile_result_is_bounded_and_reports_read_only_evidence():
         "reconciliation_status": "UNRESOLVED",
         "execution_outcome": "UNKNOWN",
         "stale": True,
+        "trade_closure": None,
     }
 
 
@@ -634,6 +635,94 @@ def test_service_refuses_active_reconcile_and_delegates_terminal_attempt(monkeyp
     assert result.reconciliation_status == "UNRESOLVED"
     assert result.execution_outcome == "UNKNOWN"
     coordinator.reconcile.assert_called_once_with(attempt_id, read_budget=4)
+
+
+@pytest.mark.parametrize(
+    ("execution_outcome", "reconciliation_status", "complete_fill", "eligible"),
+    [
+        ("FILLED_PROTECTED", "NOT_RUN", True, True),
+        ("FILLED_PROTECTED", "CONSISTENT", True, True),
+        ("FILLED_PROTECTED", "LIFECYCLE_ADVANCED", True, False),
+        ("FILLED_PROTECTED", "NOT_RUN", False, False),
+        ("FILLED_PROTECTED", "UNRESOLVED", True, False),
+        ("FILLED_PROTECTION_INCOMPLETE", "NOT_RUN", True, False),
+        ("REJECTED", "NOT_RUN", True, False),
+    ],
+)
+def test_manual_reconciliation_eligibility_is_narrow_and_fill_bound(
+    execution_outcome, reconciliation_status, complete_fill, eligible
+):
+    attempt = _history_attempt(
+        execution_outcome,
+        reconciliation_status,
+        complete_fill=complete_fill,
+    )
+
+    assert (
+        PaperRuntimeService._attempt_is_manual_reconciliation_eligible(attempt)
+        is eligible
+    )
+
+
+def test_service_reconciles_healthy_protected_attempt_without_using_unsafe_predicate(
+    monkeypatch,
+):
+    attempt = _history_attempt(
+        "FILLED_PROTECTED",
+        "NOT_RUN",
+        complete_fill=True,
+    )
+    activation_row = SimpleNamespace(
+        lifecycle_state=PaperRuntimeLifecycleState.STOPPED.value,
+        domain=_activation(lifecycle_state=PaperRuntimeLifecycleState.STOPPED),
+    )
+    repository = SimpleNamespace(
+        get_activation=lambda *_args, **_kwargs: activation_row,
+    )
+    coordinator = Mock()
+    coordinator.reconcile.return_value = SimpleNamespace(
+        reconciliation_status=ReconciliationStatus.CONSISTENT,
+        execution_outcome=PaperExecutionOutcome.FILLED_PROTECTED,
+        stale=False,
+    )
+    service = _service(repository, reconciliation=coordinator)
+    monkeypatch.setattr(service, "_latest_attempt", lambda *_args: attempt)
+    monkeypatch.setattr(
+        "backend.runtime.activation.is_unsafe_paper_attempt",
+        lambda *_args: pytest.fail("healthy lifecycle used recovery safety predicate"),
+    )
+
+    result = service.reconcile(ACTIVATION_ID)
+
+    assert result.performed is True
+    assert result.reconciliation_status == "CONSISTENT"
+    assert result.execution_outcome == "FILLED_PROTECTED"
+    coordinator.reconcile.assert_called_once_with(attempt.attempt_id)
+
+
+def test_service_does_not_repeat_lifecycle_complete_reconciliation(monkeypatch):
+    attempt = _history_attempt(
+        "FILLED_PROTECTED",
+        "LIFECYCLE_ADVANCED",
+        complete_fill=True,
+    )
+    activation_row = SimpleNamespace(
+        lifecycle_state=PaperRuntimeLifecycleState.STOPPED.value,
+        domain=_activation(lifecycle_state=PaperRuntimeLifecycleState.STOPPED),
+    )
+    repository = SimpleNamespace(
+        get_activation=lambda *_args, **_kwargs: activation_row,
+    )
+    coordinator = Mock()
+    service = _service(repository, reconciliation=coordinator)
+    monkeypatch.setattr(service, "_latest_attempt", lambda *_args: attempt)
+
+    result = service.reconcile(ACTIVATION_ID)
+
+    assert result.performed is False
+    assert result.reconciliation_status == "LIFECYCLE_ADVANCED"
+    assert result.execution_outcome == "FILLED_PROTECTED"
+    coordinator.reconcile.assert_not_called()
 
 
 @pytest.mark.parametrize(

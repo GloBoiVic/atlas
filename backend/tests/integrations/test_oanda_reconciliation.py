@@ -7,11 +7,21 @@ from typing import Any
 from uuid import UUID
 
 import httpx
+import pytest
 from pydantic import SecretStr
 
 from backend.domain import Direction
-from backend.integrations.oanda import OandaPracticeReconciliationReader
-from backend.paper import PaperReconciliationContext, PaperReconciliationReadState
+from backend.integrations.oanda import (
+    OandaPracticeReconciliationReader,
+    OandaReconciliationNormalizationError,
+)
+from backend.paper import (
+    PAPER_BROKER_FACTS_SCHEMA_V2,
+    PaperObservationReadKind,
+    PaperReconciliationContext,
+    PaperReconciliationReadState,
+    PaperTradeExitCause,
+)
 
 TEST_TOKEN = "unit-credential"
 ACCOUNT_ID = "001-011-5838423-001"
@@ -157,6 +167,54 @@ def trade_detail() -> dict[str, Any]:
     }
 
 
+def closed_trade_detail(
+    *, closing_transaction_ids: list[str] | None = None
+) -> dict[str, Any]:
+    trade = trade_detail()["trade"]
+    trade.update(
+        {
+            "state": "CLOSED",
+            "currentUnits": "0",
+            "initialUnits": "19230",
+            "closeTime": "2026-09-03T13:00:00.000000000+02:00",
+            "averageClosePrice": "1.11030",
+            "realizedPL": "196.1538",
+            "financing": "-0.42",
+            "dividendAdjustment": "0",
+            "closingTransactionIDs": closing_transaction_ids or ["43"],
+        }
+    )
+    return {"trade": trade}
+
+
+def close_transaction(
+    *,
+    reason: str | None = "TAKE_PROFIT_ORDER",
+    trade_id: str = "7001",
+    transaction_id: str = "43",
+    reduction_key: str = "tradesClosed",
+) -> dict[str, Any]:
+    reduction = {
+        "tradeID": trade_id,
+        "units": "19230",
+        "price": "1.11035",
+        "realizedPL": "196.1538",
+        "financing": "-0.42",
+    }
+    transaction: dict[str, Any] = {
+        "id": transaction_id,
+        "accountID": ACCOUNT_ID,
+        "type": "ORDER_FILL",
+        "instrument": "EUR_USD",
+        "time": "2026-09-03T11:00:00Z",
+        "price": "9.99999",
+        reduction_key: [reduction] if reduction_key == "tradesClosed" else reduction,
+    }
+    if reason is not None:
+        transaction["reason"] = reason
+    return {"orderFillTransaction": transaction}
+
+
 def reader(handler: Any) -> OandaPracticeReconciliationReader:
     return OandaPracticeReconciliationReader(
         SecretStr(TEST_TOKEN),
@@ -248,6 +306,193 @@ def test_oanda_reader_normalizes_trade_protection_and_account_frontier() -> None
     assert account.frontier == "12"
     assert account.unexpected_exposure is False
     assert [request.method for request in requests] == ["GET", "GET"]
+
+
+def test_oanda_reader_normalizes_closed_trade_aggregate_with_initial_units() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json=closed_trade_detail(),
+            headers={"RequestID": "closed-trade"},
+        )
+
+    result = reader(handler).read_trade(known_fill_context(), "7001")
+
+    assert result.state is PaperReconciliationReadState.CLOSED
+    assert result.attributable is True
+    assert result.observation.signed_units == Decimal("19230")
+    assert result.observation.normalized_schema_version == PAPER_BROKER_FACTS_SCHEMA_V2
+    assert result.trade_closure is not None
+    assert result.trade_closure.closed_at == datetime(2026, 9, 3, 11, tzinfo=UTC)
+    assert result.trade_closure.average_close_price == Decimal("1.11030")
+    assert result.trade_closure.realized_pl == Decimal("196.1538")
+    assert result.trade_closure.financing == Decimal("-0.42")
+    assert result.trade_closure.dividend_adjustment == Decimal("0")
+    assert result.trade_closure.closing_transaction_ids == ("43",)
+    assert result.trade_closure.exit_cause is PaperTradeExitCause.UNRESOLVED
+    assert result.observation.normalized_facts["units"] == "0"
+    assert requests[0].method == "GET"
+    assert requests[0].url.path == f"/v3/accounts/{ACCOUNT_ID}/trades/7001"
+
+
+def test_oanda_reader_preserves_all_closed_transaction_ids_without_fan_out() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json=closed_trade_detail(closing_transaction_ids=["43", "44"]),
+        )
+
+    result = reader(handler).read_trade(known_fill_context(), "7001")
+
+    assert result.trade_closure is not None
+    assert result.trade_closure.exit_cause is PaperTradeExitCause.MULTIPLE
+    assert result.trade_closure.closing_transaction_ids == ("43", "44")
+    assert result.trade_closure.closing_transaction_id is None
+    assert result.trade_closure.exact_close_price is None
+    assert result.trade_closure.provider_reason is None
+    assert len(requests) == 1
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "closeTime",
+        "averageClosePrice",
+        "realizedPL",
+        "financing",
+        "dividendAdjustment",
+        "closingTransactionIDs",
+    ],
+)
+def test_oanda_reader_rejects_malformed_closed_trade_aggregate(field: str) -> None:
+    payload = closed_trade_detail()
+    payload["trade"][field] = None
+
+    with pytest.raises(OandaReconciliationNormalizationError, match="invalid"):
+        reader(static_response(payload)).read_trade(known_fill_context(), "7001")
+
+
+def test_oanda_closed_trade_does_not_use_current_units_for_identity() -> None:
+    payload = closed_trade_detail()
+    payload["trade"]["initialUnits"] = None
+    payload["trade"]["currentUnits"] = "19230"
+
+    result = reader(static_response(payload)).read_trade(known_fill_context(), "7001")
+
+    assert result.state is PaperReconciliationReadState.CLOSED
+    assert result.attributable is False
+    assert result.trade_closure is None
+
+
+@pytest.mark.parametrize(
+    ("reason", "cause"),
+    [
+        ("TAKE_PROFIT_ORDER", PaperTradeExitCause.TAKE_PROFIT),
+        ("STOP_LOSS_ORDER", PaperTradeExitCause.STOP_LOSS),
+        ("GUARANTEED_STOP_LOSS_ORDER", PaperTradeExitCause.STOP_LOSS),
+        ("TRAILING_STOP_LOSS_ORDER", PaperTradeExitCause.STOP_LOSS),
+        ("MARKET_ORDER_TRADE_CLOSE", PaperTradeExitCause.MARKET_CLOSE),
+        ("MARKET_ORDER_MARGIN_CLOSEOUT", PaperTradeExitCause.MARGIN_CLOSEOUT),
+        ("UNSUPPORTED_PROVIDER_REASON", PaperTradeExitCause.OTHER),
+    ],
+)
+def test_oanda_reader_maps_exact_close_reason_and_uses_trade_reduce_price(
+    reason: str, cause: PaperTradeExitCause
+) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json=close_transaction(reason=reason),
+            headers={"RequestID": "close-transaction"},
+        )
+
+    result = reader(handler).read_trade_close_transaction(
+        known_fill_context(), "43", "7001"
+    )
+
+    assert result.state is PaperReconciliationReadState.CLOSED
+    assert result.attributable is True
+    assert result.trade_close_transaction is not None
+    assert result.trade_close_transaction.exit_cause is cause
+    assert result.trade_close_transaction.provider_reason == reason
+    assert result.trade_close_transaction.close_price == Decimal("1.11035")
+    assert result.observation.read_kind is PaperObservationReadKind.TRANSACTION_DETAIL
+    assert result.observation.normalized_facts["close_price"] == "1.11035"
+    assert result.observation.normalized_facts["price"] == "9.99999"
+    assert result.observation.normalized_schema_version == PAPER_BROKER_FACTS_SCHEMA_V2
+    assert requests[0].method == "GET"
+    assert requests[0].url.path == f"/v3/accounts/{ACCOUNT_ID}/transactions/43"
+
+
+def test_oanda_reader_keeps_exact_close_with_missing_reason_unresolved() -> None:
+    result = reader(
+        static_response(close_transaction(reason=None))
+    ).read_trade_close_transaction(known_fill_context(), "43", "7001")
+
+    assert result.state is PaperReconciliationReadState.CLOSED
+    assert result.attributable is True
+    assert result.trade_close_transaction is not None
+    assert result.trade_close_transaction.provider_reason is None
+    assert result.trade_close_transaction.exit_cause is PaperTradeExitCause.UNRESOLVED
+
+
+def test_oanda_reader_rejects_oversized_exact_close_transaction_id() -> None:
+    requested_id = "9" * 65
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json=close_transaction())
+
+    with pytest.raises(OandaReconciliationNormalizationError, match="transaction"):
+        reader(handler).read_trade_close_transaction(
+            known_fill_context(), requested_id, "7001"
+        )
+
+    assert requests == []
+    with pytest.raises(OandaReconciliationNormalizationError, match="transaction"):
+        reader(
+            static_response(close_transaction(transaction_id=requested_id))
+        ).read_trade_close_transaction(known_fill_context(), "43", "7001")
+
+
+def test_oanda_reader_normalizes_trade_reduced_close_and_rejects_unrelated_trade() -> (
+    None
+):
+    result = reader(
+        static_response(close_transaction(reduction_key="tradeReduced"))
+    ).read_trade_close_transaction(known_fill_context(), "43", "7001")
+
+    assert result.attributable is True
+    assert result.trade_close_transaction is not None
+    assert result.trade_close_transaction.trade_id == "7001"
+
+    unrelated = reader(
+        static_response(close_transaction(trade_id="7002"))
+    ).read_trade_close_transaction(known_fill_context(), "43", "7001")
+
+    assert unrelated.state is PaperReconciliationReadState.CONFLICT
+    assert unrelated.attributable is False
+    assert unrelated.trade_close_transaction is None
+
+
+def test_oanda_reader_rejects_close_transaction_body_id_mismatch() -> None:
+    result = reader(
+        static_response(close_transaction(transaction_id="44"))
+    ).read_trade_close_transaction(known_fill_context(), "43", "7001")
+
+    assert result.state is PaperReconciliationReadState.CONFLICT
+    assert result.attributable is False
+    assert result.trade_close_transaction is None
 
 
 def test_oanda_reader_excludes_historical_position_from_exposure() -> None:
