@@ -45,6 +45,42 @@ describe('Paper broker state component', () => {
     expect(screen.getByText('$10.00')).toHaveClass('text-atlas-positive');
     expect(screen.getByText('EURUSD')).toBeInTheDocument();
     expect(screen.queryByText('EUR_USD')).not.toBeInTheDocument();
+    expect(screen.getByText('Trade 10')).toBeInTheDocument();
+  });
+
+  it('uses a trader-facing hierarchy and hides Trade ID in compact mode', async () => {
+    mocks.paperBrokerState.mockResolvedValue({
+      provider: 'OANDA',
+      environment: 'PRACTICE',
+      accountCurrency: 'USD',
+      openTrades: [
+        {
+          tradeId: '10',
+          instrument: 'EUR_USD',
+          openTime: '2026-01-05T08:00:00.123456Z',
+          openPrice: '1.10000',
+          currentUnits: '390663',
+          state: 'OPEN',
+          unrealizedPl: '10.00',
+        },
+      ],
+    });
+    render(<PaperBrokerStateSection compact />);
+
+    expect(
+      await screen.findByRole('heading', { name: 'Paper Trading' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('OPEN')).toBeInTheDocument();
+    expect(screen.getByText('EURUSD')).toBeInTheDocument();
+    expect(screen.getByText('$10.00')).toHaveClass('text-2xl', 'font-semibold');
+    expect(screen.queryByText('PAPER broker state')).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Current OANDA Practice open Trades/),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText('Trade 10')).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Refresh broker state' }),
+    ).toBeInTheDocument();
   });
 
   it('renders SHORT for negative units with absolute quantity', async () => {
@@ -64,7 +100,7 @@ describe('Paper broker state component', () => {
         },
       ],
     });
-    render(<PaperBrokerStateSection />);
+    render(<PaperBrokerStateSection compact />);
     expect(await screen.findByText('SHORT')).toBeInTheDocument();
     expect(screen.getByText('390,663 units')).toBeInTheDocument();
     expect(screen.getByText('-$746.67')).toHaveClass('text-atlas-negative');
@@ -98,7 +134,7 @@ describe('Paper broker state component', () => {
         },
       ],
     });
-    render(<PaperBrokerStateSection />);
+    render(<PaperBrokerStateSection compact />);
     expect(await screen.findByText('LONG')).toBeInTheDocument();
     expect(screen.getByText('SHORT')).toBeInTheDocument();
     expect(screen.getByText('100 units')).toBeInTheDocument();
@@ -121,6 +157,19 @@ describe('Paper broker state component', () => {
     expect(screen.queryByText('Broker unavailable')).not.toBeInTheDocument();
   });
 
+  it('uses a concise empty state in compact mode', async () => {
+    mocks.paperBrokerState.mockResolvedValue({
+      provider: 'OANDA',
+      environment: 'PRACTICE',
+      accountCurrency: 'USD',
+      openTrades: [],
+    });
+    render(<PaperBrokerStateSection compact />);
+
+    expect(await screen.findByText('No open trades')).toBeInTheDocument();
+    expect(screen.queryByText('Flat')).not.toBeInTheDocument();
+  });
+
   it('shows unavailable on error', async () => {
     mocks.paperBrokerState.mockRejectedValue(new Error('unavailable'));
     render(<PaperBrokerStateSection />);
@@ -128,6 +177,16 @@ describe('Paper broker state component', () => {
     expect(
       screen.queryByText('No open broker trades.'),
     ).not.toBeInTheDocument();
+  });
+
+  it('keeps compact broker failures unavailable without raw error detail', async () => {
+    mocks.paperBrokerState.mockRejectedValue(new Error('provider timeout'));
+    render(<PaperBrokerStateSection compact />);
+
+    expect(await screen.findByText('Broker unavailable')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(screen.queryByText('provider timeout')).not.toBeInTheDocument();
+    expect(screen.queryByText('No open trades')).not.toBeInTheDocument();
   });
 
   it('uses display timezone for opened time', async () => {
@@ -152,6 +211,30 @@ describe('Paper broker state component', () => {
     const text = await screen.findByText(/Jan 5, 2026/);
     expect(text).toBeInTheDocument();
     expect(screen.getByText('EURUSD')).toBeInTheDocument();
+  });
+
+  it('uses neutral styling for zero unrealized P/L', async () => {
+    mocks.paperBrokerState.mockResolvedValue({
+      provider: 'OANDA',
+      environment: 'PRACTICE',
+      accountCurrency: 'USD',
+      openTrades: [
+        {
+          tradeId: '8',
+          instrument: 'EUR_USD',
+          openTime: '2026-01-05T08:00:00Z',
+          openPrice: '1.1',
+          currentUnits: '100',
+          state: 'OPEN',
+          unrealizedPl: '0.00',
+        },
+      ],
+    });
+    render(<PaperBrokerStateSection compact />);
+
+    expect(await screen.findByText('$0.00')).toHaveClass(
+      'text-atlas-foreground',
+    );
   });
 
   it('refresh triggers GET-only retry', async () => {

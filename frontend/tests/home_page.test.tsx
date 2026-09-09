@@ -60,6 +60,9 @@ describe('home page', () => {
     expect(
       screen.getByRole('heading', { name: 'Overview' }),
     ).toBeInTheDocument();
-    expect(screen.getByText(/creates methodologies/)).toBeInTheDocument();
+    expect(screen.queryByText(/creates methodologies/)).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { name: 'Paper Trading' }),
+    ).toBeInTheDocument();
   });
 });

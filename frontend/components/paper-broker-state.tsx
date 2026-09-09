@@ -60,14 +60,24 @@ function unrealizedTone(value: string): 'positive' | 'negative' | 'neutral' {
   return trimmed.startsWith('-') ? 'negative' : 'positive';
 }
 
+function formatBrokerLabel(provider: string, environment: string): string {
+  const environmentLabel =
+    environment.trim().toUpperCase() === 'PRACTICE'
+      ? 'Practice'
+      : environment.trim();
+  return [provider.trim(), environmentLabel].filter(Boolean).join(' ');
+}
+
 function BrokerTradeCard({
   trade,
   accountCurrency,
   timeZone,
+  compact,
 }: {
   trade: PaperBrokerTrade;
   accountCurrency: string;
   timeZone: string;
+  compact: boolean;
 }) {
   const direction = directionFromUnits(trade.currentUnits);
   const quantity = formatUnitsAbsolute(trade.currentUnits);
@@ -78,6 +88,58 @@ function BrokerTradeCard({
       : tone === 'positive'
         ? 'text-atlas-positive'
         : 'text-atlas-foreground';
+
+  if (compact) {
+    return (
+      <div className="rounded border border-atlas-border p-4 sm:p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-lg font-semibold">
+              {formatInstrumentDisplay(trade.instrument)}
+            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <span
+                className={`status rounded-full border px-2.5 py-1 text-xs ${
+                  trade.state === 'OPEN'
+                    ? 'border-atlas-positive bg-atlas-positive-muted text-atlas-positive'
+                    : 'border-atlas-warning bg-atlas-warning-muted text-atlas-warning'
+                }`}
+              >
+                {trade.state}
+              </span>
+              <span className="text-sm font-semibold">
+                {direction}{' '}
+                <span className="font-normal text-atlas-foreground-muted">
+                  {quantity} units
+                </span>
+              </span>
+            </div>
+          </div>
+        </div>
+        <dl className="mt-5 border-t border-atlas-border pt-4">
+          <dt className="text-xs text-atlas-foreground-muted">
+            Unrealized P/L
+          </dt>
+          <dd className={`mt-1 text-2xl font-semibold ${toneClass}`}>
+            {formatUnrealized(accountCurrency, trade.unrealizedPl)}
+          </dd>
+        </dl>
+        <dl className="mt-4 grid gap-x-6 gap-y-3 sm:grid-cols-2">
+          <div>
+            <dt className="text-xs text-atlas-foreground-muted">Entry</dt>
+            <dd className="mt-1 text-sm font-mono">{trade.openPrice}</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-atlas-foreground-muted">Opened</dt>
+            <dd className="mt-1 text-sm">
+              {formatInstant(trade.openTime, timeZone as never)}
+            </dd>
+          </div>
+        </dl>
+      </div>
+    );
+  }
+
   return (
     <div className="rounded border border-atlas-border p-4">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -144,11 +206,13 @@ export function PaperBrokerStateSection({
       <div className="flex items-start justify-between gap-3">
         <div>
           <h2 id="paper-broker-state-heading" className="text-lg font-semibold">
-            PAPER broker state
+            {compact ? 'Paper Trading' : 'PAPER broker state'}
           </h2>
-          <p className="mt-1 text-sm text-atlas-foreground-muted">
-            Current OANDA Practice open Trades. Broker exposure, not runtime.
-          </p>
+          {!compact && (
+            <p className="mt-1 text-sm text-atlas-foreground-muted">
+              Current OANDA Practice open Trades. Broker exposure, not runtime.
+            </p>
+          )}
         </div>
         {state.status !== 'loading' && (
           <button
@@ -163,24 +227,40 @@ export function PaperBrokerStateSection({
       </div>
 
       {state.status === 'loading' && (
-        <LoadingState label="PAPER broker state" />
+        <LoadingState
+          label={compact ? 'broker exposure' : 'PAPER broker state'}
+        />
       )}
-      {state.status === 'error' && (
-        <div className="space-y-3">
-          <ReadError error={state.error} retry={retry} />
-          <UnavailableState>Broker unavailable</UnavailableState>
-        </div>
-      )}
+      {state.status === 'error' &&
+        (compact ? (
+          <div className="space-y-3">
+            <UnavailableState>Broker unavailable</UnavailableState>
+            <button
+              type="button"
+              onClick={retry}
+              className="text-sm font-medium text-atlas-primary underline-offset-2 hover:underline"
+            >
+              Retry
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <ReadError error={state.error} retry={retry} />
+            <UnavailableState>Broker unavailable</UnavailableState>
+          </div>
+        ))}
       {state.status === 'ready' && (
         <div className="space-y-4">
           <p className="text-sm text-atlas-foreground-muted">
-            OANDA Practice{' '}
+            {formatBrokerLabel(state.data.provider, state.data.environment)}{' '}
             <span className="font-mono text-xs">
               {state.data.accountCurrency}
             </span>
           </p>
           {state.data.openTrades.length === 0 ? (
-            <EmptyState>No open broker trades.</EmptyState>
+            <EmptyState>
+              {compact ? 'No open trades' : 'No open broker trades.'}
+            </EmptyState>
           ) : (
             <div className={compact ? 'space-y-3' : 'space-y-4'}>
               {state.data.openTrades.map((trade) => (
@@ -189,6 +269,7 @@ export function PaperBrokerStateSection({
                   trade={trade}
                   accountCurrency={state.data.accountCurrency}
                   timeZone={timeZone}
+                  compact={compact}
                 />
               ))}
             </div>
