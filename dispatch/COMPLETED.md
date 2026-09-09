@@ -1,5 +1,31 @@
 # Completed
 
+<!-- completion-id: ui-02-trader-shell-overview-product-cleanup -->
+## UI 02 - Trader Shell and Overview Product Cleanup
+
+- **Date/status:** 2026-09-09 - terminal closure; T001 and T002 BUILD, independent
+  validation, and independent review completed with no unresolved Critical or Important
+  findings. Four Minor follow-ups remain documented in `REVIEW.md`.
+- **Commit:** `523c1d5` Clean up trader shell and Overview; merge commit `554714f` merged
+  the feature branch into `main`.
+- **Scope:** Reworked the Overview into an exposure-first trader dashboard, added compact
+  broker/runtime presentation, retained read-only Strategy/Experiment/System summaries,
+  and removed diagnostic lifecycle, capability, snapshot, and Next Steps clutter. No
+  backend, API contract, broker mutation, activation, reconciliation, Risk, persistence,
+  LIVE, or automatic polling behavior changed.
+- **Validation:** Focused frontend tests passed with 34 tests; `npm run check:web` passed
+  with 91 tests, formatting, typecheck, and production build. Safari Technology Preview
+  desktop and 390px mobile read-only checks passed, including GET-only network evidence,
+  timezone behavior, hierarchy, focusability, and no page overflow. The existing 242
+  lint warnings remain documented; no changed-surface lint errors were introduced.
+- **Review:** Independent REVIEW **PASS** with no unresolved Critical or Important
+  findings. Minor concerns cover inherited shell accessibility debt, compact runtime
+  announcement semantics, and stale E2E assertions, as recorded in `REVIEW.md`.
+- **Git/state:** Feature branch pushed to GitHub; `main` merged and ready to push. The
+  workstream is closed and `dispatch/ACTIVE.md` is cleared. No credentials,
+  `atlas-runtime`, PAPER activation, reconciliation, broker mutation, or Trade action
+  occurred.
+
 <!-- completion-id: paper-visibility-01-current-broker-trade-read -->
 ## PAPER Visibility 01 - Current Broker Trade Read - completion record
 
