@@ -1,4 +1,4 @@
-from dataclasses import replace
+from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import cast
@@ -17,6 +17,8 @@ from backend.domain import (
     ValidatedParameterPayload,
 )
 from backend.paper import (
+    PAPER_BROKER_FACTS_SCHEMA_V1,
+    PAPER_BROKER_FACTS_SCHEMA_V2,
     BrokerFillFacts,
     PaperBrokerObservation,
     PaperExecutionOutcome,
@@ -25,6 +27,9 @@ from backend.paper import (
     PaperPersistenceContractError,
     PaperRiskAuthoritySnapshot,
     PaperStrategyEvaluationReceipt,
+    PaperTradeCloseTransaction,
+    PaperTradeClosure,
+    PaperTradeExitCause,
     canonical_json_bytes,
     validate_execution_outcome_transition,
 )
@@ -103,6 +108,116 @@ def test_normalized_observations_are_whitelisted_and_fingerprint_is_canonical() 
     )
     with pytest.raises(PaperPersistenceContractError, match="non-whitelisted"):
         replace(observation, normalized_facts={"raw_body": {"secret": "no"}})
+
+
+def test_trade_closure_is_immutable_and_preserves_exact_decimal_evidence() -> None:
+    closure = PaperTradeClosure(
+        trade_id="7001",
+        closed_at=datetime(2026, 9, 2, 14, tzinfo=UTC),
+        average_close_price=Decimal("1.11030"),
+        realized_pl=Decimal("196.1538"),
+        financing=Decimal("-0.42"),
+        dividend_adjustment=Decimal("0"),
+        closing_transaction_ids=("43",),
+        exit_cause=PaperTradeExitCause.TAKE_PROFIT,
+        provider_reason="TAKE_PROFIT_ORDER",
+        closing_transaction_id="43",
+        exact_close_price=Decimal("1.11035"),
+    )
+
+    assert closure.to_json() == {
+        "trade_id": "7001",
+        "closed_at": "2026-09-02T14:00:00Z",
+        "average_close_price": "1.11030",
+        "realized_pl": "196.1538",
+        "financing": "-0.42",
+        "dividend_adjustment": "0",
+        "closing_transaction_ids": ["43"],
+        "exit_cause": "TAKE_PROFIT",
+        "provider_reason": "TAKE_PROFIT_ORDER",
+        "closing_transaction_id": "43",
+        "exact_close_price": "1.11035",
+    }
+    with pytest.raises(FrozenInstanceError):
+        closure.__setattr__("realized_pl", Decimal("0"))
+
+
+def test_trade_closure_enforces_multiple_and_unresolved_semantics() -> None:
+    multiple = PaperTradeClosure(
+        trade_id="7001",
+        closed_at=NOW,
+        average_close_price=Decimal("1.11030"),
+        realized_pl=Decimal("1"),
+        financing=Decimal("2"),
+        dividend_adjustment=Decimal("0"),
+        closing_transaction_ids=("43", "44"),
+        exit_cause=PaperTradeExitCause.MULTIPLE,
+    )
+    unresolved = PaperTradeClosure(
+        trade_id="7001",
+        closed_at=NOW,
+        average_close_price=Decimal("1.11030"),
+        realized_pl=Decimal("1"),
+        financing=Decimal("2"),
+        dividend_adjustment=Decimal("0"),
+        closing_transaction_ids=("43",),
+        exit_cause=PaperTradeExitCause.UNRESOLVED,
+    )
+
+    assert multiple.closing_transaction_id is None
+    assert multiple.exact_close_price is None
+    assert multiple.provider_reason is None
+    assert unresolved.exit_cause is PaperTradeExitCause.UNRESOLVED
+    with pytest.raises(PaperPersistenceContractError, match="multiple closes"):
+        replace(multiple, exit_cause=PaperTradeExitCause.STOP_LOSS)
+
+
+def test_close_transaction_contract_is_bounded_and_decimal_exact() -> None:
+    close = PaperTradeCloseTransaction(
+        transaction_id="43",
+        trade_id="7001",
+        closed_units=Decimal("19230"),
+        close_price=Decimal("1.11035"),
+        realized_pl=Decimal("196.1538"),
+        financing=Decimal("-0.42"),
+        provider_reason="TAKE_PROFIT_ORDER",
+        exit_cause=PaperTradeExitCause.TAKE_PROFIT,
+    )
+
+    assert close.to_json()["close_price"] == "1.11035"
+    assert replace(close, provider_reason=None).to_json()["provider_reason"] is None
+    with pytest.raises(PaperPersistenceContractError, match="positive"):
+        replace(close, close_price=Decimal("0"))
+    with pytest.raises(PaperPersistenceContractError, match="bounded"):
+        replace(close, transaction_id="9" * 65)
+
+
+def test_v2_normalized_closure_facts_keep_v1_observation_defaults() -> None:
+    observation = PaperBrokerObservation(
+        attempt_id=ATTEMPT_ID,
+        read_kind=PaperObservationReadKind.TRADE_DETAIL,
+        object_kind=PaperObservationObjectKind.TRADE,
+        provider_account_id="001-011-5838423-001",
+        instrument=Instrument.EUR_USD,
+        normalized_facts={
+            "trade_id": "7001",
+            "state": "CLOSED",
+            "close_time": "2026-09-02T14:00:00Z",
+            "average_close_price": "1.11030",
+            "realized_pl": "1",
+            "financing": "-0.42",
+            "dividend_adjustment": "0",
+            "closing_transaction_ids": ["43"],
+            "exit_cause": "UNRESOLVED",
+        },
+        normalized_schema_version=PAPER_BROKER_FACTS_SCHEMA_V2,
+        atlas_observed_at=NOW,
+    )
+
+    assert observation.normalized_schema_version == PAPER_BROKER_FACTS_SCHEMA_V2
+    assert observation.to_json()["facts"] == observation.normalized_facts
+    with pytest.raises(PaperPersistenceContractError, match="V2"):
+        replace(observation, normalized_schema_version=PAPER_BROKER_FACTS_SCHEMA_V1)
 
 
 def test_execution_outcome_validator_preserves_fill_truth_and_protection_boundary() -> (

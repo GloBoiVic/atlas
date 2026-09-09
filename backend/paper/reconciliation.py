@@ -45,6 +45,8 @@ from .persistence_contracts import (
     PaperReconciliationFindingCode,
     PaperReconciliationRun,
     PaperReconciliationRunStatus,
+    PaperTradeCloseTransaction,
+    PaperTradeClosure,
     ReconciliationStatus,
 )
 
@@ -141,6 +143,8 @@ class PaperReconciliationRead:
     unexpected_exposure: bool = False
     range_truncated: bool = False
     transactions: tuple[PaperReconciliationTransaction, ...] = ()
+    trade_closure: PaperTradeClosure | None = None
+    trade_close_transaction: PaperTradeCloseTransaction | None = None
 
     def __post_init__(self) -> None:
         if type(self.observation) is not PaperBrokerObservation:
@@ -172,6 +176,18 @@ class PaperReconciliationRead:
             or type(self.protection_drift) is not bool
         ):
             raise PaperPersistenceContractError("reconciliation flags are invalid")
+        if (
+            self.trade_closure is not None
+            and type(self.trade_closure) is not PaperTradeClosure
+        ):
+            raise PaperPersistenceContractError("reconciliation closure is invalid")
+        if (
+            self.trade_close_transaction is not None
+            and type(self.trade_close_transaction) is not PaperTradeCloseTransaction
+        ):
+            raise PaperPersistenceContractError(
+                "reconciliation close transaction is invalid"
+            )
 
     @property
     def attempt_id(self) -> UUID:
@@ -191,6 +207,10 @@ class PaperReconciliationProvider(Protocol):
 
     def read_transaction(
         self, context: PaperReconciliationContext, transaction_id: str
+    ) -> PaperReconciliationRead: ...
+
+    def read_trade_close_transaction(
+        self, context: PaperReconciliationContext, transaction_id: str, trade_id: str
     ) -> PaperReconciliationRead: ...
 
     def read_trade(
@@ -214,6 +234,7 @@ class PaperReconciliationResult:
     reconciliation_status: ReconciliationStatus
     execution_outcome: PaperExecutionOutcome | None
     stale: bool = False
+    trade_closure: PaperTradeClosure | None = None
 
 
 class PaperReconciliationError(RuntimeError):
@@ -268,6 +289,7 @@ class PaperReconciliationCoordinator:
         fill: BrokerFillFacts | None = None
         rejection: BrokerRejection | None = None
         protection: ProtectionConfirmation | None = None
+        trade_closure: PaperTradeClosure | None = None
         resulting_outcome = _row_outcome(row)
         status = ReconciliationStatus.UNRESOLVED
         block_code: str | None = None
@@ -296,6 +318,69 @@ class PaperReconciliationCoordinator:
             reads.append(value)
             return value
 
+        def enrich_trade_closure(
+            trade_read: PaperReconciliationRead,
+            trade_context: PaperReconciliationContext,
+        ) -> PaperTradeClosure | None:
+            nonlocal read_error, budget_exhausted
+            closure = trade_read.trade_closure
+            if closure is None:
+                return None
+            if len(closure.closing_transaction_ids) != 1:
+                return closure
+
+            close_reader = getattr(self._provider, "read_trade_close_transaction", None)
+            if not callable(close_reader):
+                record(PaperReconciliationFindingCode.UNRESOLVED)
+                return closure
+
+            # Cause attribution is optional. A failed secondary read must not
+            # turn an already authoritative CLOSED Trade into a failed run.
+            read_error_before = read_error
+            budget_exhausted_before = budget_exhausted
+            close_read = read(
+                lambda: cast(
+                    Callable[
+                        [PaperReconciliationContext, str, str],
+                        PaperReconciliationRead,
+                    ],
+                    close_reader,
+                )(
+                    trade_context,
+                    closure.closing_transaction_ids[0],
+                    closure.trade_id,
+                )
+            )
+            if close_read is None:
+                read_error = read_error_before
+                budget_exhausted = budget_exhausted_before
+                return closure
+
+            close_transaction = close_read.trade_close_transaction
+            if (
+                close_read.state is PaperReconciliationReadState.CONFLICT
+                or not close_read.attributable
+            ):
+                record(PaperReconciliationFindingCode.CONFLICT)
+                record(PaperReconciliationFindingCode.UNRESOLVED)
+                return closure
+            if (
+                close_read.state is not PaperReconciliationReadState.CLOSED
+                or close_transaction is None
+                or close_transaction.transaction_id
+                != closure.closing_transaction_ids[0]
+                or close_transaction.trade_id != closure.trade_id
+            ):
+                record(PaperReconciliationFindingCode.UNRESOLVED)
+                return closure
+            return replace(
+                closure,
+                exit_cause=close_transaction.exit_cause,
+                provider_reason=close_transaction.provider_reason,
+                closing_transaction_id=close_transaction.transaction_id,
+                exact_close_price=close_transaction.close_price,
+            )
+
         try:
             if fill is not None:  # pragma: no cover - defensive; row load owns Fill
                 raise AssertionError
@@ -318,6 +403,8 @@ class PaperReconciliationCoordinator:
                         fill=fill,
                         findings=findings,
                     )
+                    if status is ReconciliationStatus.LIFECYCLE_ADVANCED:
+                        trade_closure = enrich_trade_closure(trade, context)
                 else:
                     status = ReconciliationStatus.UNRESOLVED
                     record(PaperReconciliationFindingCode.UNRESOLVED)
@@ -400,6 +487,13 @@ class PaperReconciliationCoordinator:
                                     )
                                     if conflict_detected:
                                         status = ReconciliationStatus.CONFLICT
+                                    if (
+                                        status
+                                        is ReconciliationStatus.LIFECYCLE_ADVANCED
+                                    ):
+                                        trade_closure = enrich_trade_closure(
+                                            trade, context
+                                        )
                                 else:
                                     status = (
                                         ReconciliationStatus.CONFLICT
@@ -480,6 +574,13 @@ class PaperReconciliationCoordinator:
                                         )
                                         if conflict_detected:
                                             status = ReconciliationStatus.CONFLICT
+                                        if (
+                                            status
+                                            is ReconciliationStatus.LIFECYCLE_ADVANCED
+                                        ):
+                                            trade_closure = enrich_trade_closure(
+                                                trade, context
+                                            )
                                     else:
                                         status = (
                                             ReconciliationStatus.CONFLICT
@@ -572,6 +673,19 @@ class PaperReconciliationCoordinator:
         try:
             session = self._session_factory()
             try:
+                if self._repository.has_conflicting_closure_observations(
+                    session, run.attempt_id, linked_observations
+                ):
+                    status = ReconciliationStatus.CONFLICT
+                    trade_closure = None
+                    block_code = "CLOSURE_EVIDENCE_CONFLICT"
+                    record(PaperReconciliationFindingCode.CONFLICT)
+                    run = replace(
+                        run,
+                        status=PaperReconciliationRunStatus.CONFLICT,
+                        finding_codes=tuple(findings),
+                        diagnostic_summary=block_code,
+                    )
                 self._repository.apply_reconciliation_run(
                     session,
                     run,
@@ -631,6 +745,7 @@ class PaperReconciliationCoordinator:
             ),
             execution_outcome=resulting_outcome,
             stale=stale,
+            trade_closure=None if stale else trade_closure,
         )
 
     def _load_context(

@@ -212,9 +212,57 @@ def test_paper_routes_project_all_control_and_status_seams() -> None:
     assert stopped.json()["lifecycleState"] == "STOP_REQUESTED"
     assert reconciled.status_code == 200
     assert reconciled.json()["executionOutcome"] == "UNKNOWN"
+    assert reconciled.json()["tradeClosure"] is None
     assert len(service.activation_requests) == 1
     assert service.stop_requests[0][0] == ACTIVATION_ID
     assert service.reconcile_ids == [ACTIVATION_ID]
+
+
+def test_paper_reconcile_route_projects_bounded_trade_closure() -> None:
+    class ClosureService(_PaperService):
+        def reconcile(self, activation_id: UUID):
+            self.reconcile_ids.append(activation_id)
+            return SimpleNamespace(
+                to_json=lambda: {
+                    "activation_id": str(activation_id),
+                    "attempt_id": str(ATTEMPT_ID),
+                    "performed": True,
+                    "reconciliation_status": "LIFECYCLE_ADVANCED",
+                    "execution_outcome": "FILLED_PROTECTED",
+                    "stale": False,
+                    "trade_closure": {
+                        "trade_id": "7001",
+                        "closed_at": "2026-09-03T11:00:00Z",
+                        "average_close_price": "1.11030",
+                        "realized_pl": "196.1538",
+                        "financing": "-0.42",
+                        "dividend_adjustment": "0",
+                        "closing_transaction_ids": ["43"],
+                        "exit_cause": "TAKE_PROFIT",
+                        "provider_reason": "TAKE_PROFIT_ORDER",
+                        "closing_transaction_id": "43",
+                        "exact_close_price": "1.11035",
+                    },
+                }
+            )
+
+    with TestClient(_app(ClosureService()), base_url="http://localhost") as client:
+        response = client.post(f"/api/v1/paper/activations/{ACTIVATION_ID}/reconcile")
+
+    assert response.status_code == 200
+    assert response.json()["tradeClosure"] == {
+        "tradeId": "7001",
+        "closedAt": "2026-09-03T11:00:00Z",
+        "averageClosePrice": "1.11030",
+        "realizedPl": "196.1538",
+        "financing": "-0.42",
+        "dividendAdjustment": "0",
+        "closingTransactionIds": ["43"],
+        "exitCause": "TAKE_PROFIT",
+        "providerReason": "TAKE_PROFIT_ORDER",
+        "closingTransactionId": "43",
+        "exactClosePrice": "1.11035",
+    }
 
 
 def test_real_activation_projection_restores_requested_at_and_decimal_contract() -> (

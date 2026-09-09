@@ -137,6 +137,20 @@ class PaperRuntimeStatusResponse(StrictModel):
     terminal_runtime_state_does_not_prove_flat: bool
 
 
+class PaperTradeClosureResponse(StrictModel):
+    trade_id: str
+    closed_at: str
+    average_close_price: str
+    realized_pl: str
+    financing: str
+    dividend_adjustment: str
+    closing_transaction_ids: list[str]
+    exit_cause: str
+    provider_reason: str | None
+    closing_transaction_id: str | None
+    exact_close_price: str | None
+
+
 class PaperRuntimeReconcileResponse(StrictModel):
     activation_id: UUID
     attempt_id: UUID | None
@@ -144,6 +158,7 @@ class PaperRuntimeReconcileResponse(StrictModel):
     reconciliation_status: str | None
     execution_outcome: str | None
     stale: bool
+    trade_closure: PaperTradeClosureResponse | None = None
 
 
 class PeriodRequest(StrictModel):

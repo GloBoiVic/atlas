@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from types import SimpleNamespace
@@ -10,6 +11,8 @@ import pytest
 
 from backend.domain import Direction, Instrument
 from backend.paper import (
+    PAPER_BROKER_FACTS_SCHEMA_V1,
+    PAPER_BROKER_FACTS_SCHEMA_V2,
     BrokerFillFacts,
     BrokerProtectionOrder,
     BrokerRejection,
@@ -23,7 +26,11 @@ from backend.paper import (
     PaperReconciliationFindingCode,
     PaperReconciliationRead,
     PaperReconciliationReadState,
+    PaperReconciliationRunStatus,
     PaperReconciliationTransaction,
+    PaperTradeCloseTransaction,
+    PaperTradeClosure,
+    PaperTradeExitCause,
     ProtectionConfirmation,
     ProtectionLegStatus,
     ReconciliationStatus,
@@ -87,7 +94,13 @@ class Repository:
             self.runs.append(run)
             raise StaleReconciliationError(str(run.run_id))
         self.runs.append(run)
-        self.observations.extend(kwargs["observations"])
+        for observation in kwargs["observations"]:
+            if not any(
+                existing.normalized_facts_fingerprint
+                == observation.normalized_facts_fingerprint
+                for existing in self.observations
+            ):
+                self.observations.append(observation)
         fill = kwargs.get("fill")
         if fill is not None:
             self.row.fill_broker_order_id = fill.broker_order_id
@@ -122,6 +135,33 @@ class Repository:
                 current_frontier, proposed_frontier, key=int
             )
 
+    def has_conflicting_closure_observations(
+        self,
+        session: object,
+        attempt_id: UUID,
+        observations: tuple[PaperBrokerObservation, ...],
+    ) -> bool:
+        prior = [
+            signature
+            for observation in self.observations
+            for signature in (_closure_signature(observation),)
+            if signature is not None
+        ]
+        current = [
+            signature
+            for observation in observations
+            for signature in (_closure_signature(observation),)
+            if signature is not None
+        ]
+        return any(
+            any(
+                existing != candidate
+                for existing in prior
+                if existing[0] == candidate[0]
+            )
+            for candidate in current
+        )
+
 
 class Provider:
     def __init__(self) -> None:
@@ -145,6 +185,17 @@ class Provider:
     ) -> PaperReconciliationRead:
         self.calls.append(("transaction", (transaction_id,)))
         return self.reads["transaction"]
+
+    def read_trade_close_transaction(
+        self,
+        context: PaperReconciliationContext,
+        transaction_id: str,
+        trade_id: str,
+    ) -> PaperReconciliationRead:
+        self.calls.append(("close_transaction", (transaction_id, trade_id)))
+        if "close_transaction" in self.failures:
+            raise RuntimeError("close_transaction failed")
+        return self.reads["close_transaction"]
 
     def read_trade(
         self, context: PaperReconciliationContext, trade_id: str
@@ -247,6 +298,8 @@ def observation(
     client_trade_id: str | None = None,
     signed_units: Decimal | None = None,
     price: Decimal | None = None,
+    normalized_facts: dict[str, object] | None = None,
+    normalized_schema_version: str = PAPER_BROKER_FACTS_SCHEMA_V1,
 ) -> PaperBrokerObservation:
     return PaperBrokerObservation(
         attempt_id=ATTEMPT_ID,
@@ -258,7 +311,7 @@ def observation(
             if object_kind is PaperObservationObjectKind.ACCOUNT
             else Instrument.EUR_USD
         ),
-        normalized_facts={"found": True},
+        normalized_facts=normalized_facts or {"found": True},
         provider_order_id=provider_order_id,
         provider_trade_id=provider_trade_id,
         provider_transaction_id=provider_transaction_id,
@@ -267,7 +320,47 @@ def observation(
         price=price,
         last_transaction_id=frontier,
         atlas_observed_at=NOW,
+        normalized_schema_version=normalized_schema_version,
     )
+
+
+def _closure_signature(
+    observation: PaperBrokerObservation,
+) -> tuple[object, ...] | None:
+    facts = observation.normalized_facts
+    if (
+        observation.read_kind is PaperObservationReadKind.TRADE_DETAIL
+        and observation.object_kind is PaperObservationObjectKind.TRADE
+        and "close_time" in facts
+    ):
+        return (
+            "TRADE",
+            observation.provider_trade_id,
+            facts.get("trade_id"),
+            facts.get("close_time"),
+            facts.get("average_close_price"),
+            facts.get("realized_pl"),
+            facts.get("financing"),
+            facts.get("dividend_adjustment"),
+            facts.get("closing_transaction_ids"),
+        )
+    if (
+        observation.read_kind is PaperObservationReadKind.TRANSACTION_DETAIL
+        and observation.object_kind is PaperObservationObjectKind.TRANSACTION
+        and "closed_trade_id" in facts
+    ):
+        return (
+            "TRANSACTION",
+            observation.provider_transaction_id,
+            observation.provider_trade_id,
+            facts.get("transaction_id"),
+            facts.get("closed_trade_id"),
+            facts.get("closed_units"),
+            facts.get("close_price"),
+            facts.get("close_realized_pl"),
+            facts.get("close_financing"),
+        )
+    return None
 
 
 def read(
@@ -291,7 +384,39 @@ def read(
     client_trade_id: str | None = None,
     signed_units: Decimal | None = None,
     price: Decimal | None = None,
+    trade_closure: PaperTradeClosure | None = None,
+    trade_close_transaction: PaperTradeCloseTransaction | None = None,
 ) -> PaperReconciliationRead:
+    normalized_facts: dict[str, object] = {"found": True}
+    normalized_schema_version = PAPER_BROKER_FACTS_SCHEMA_V1
+    if trade_closure is not None:
+        normalized_schema_version = PAPER_BROKER_FACTS_SCHEMA_V2
+        normalized_facts.update(
+            {
+                "trade_id": trade_closure.trade_id,
+                "state": "CLOSED",
+                "close_time": trade_closure.closed_at.isoformat(),
+                "average_close_price": str(trade_closure.average_close_price),
+                "realized_pl": str(trade_closure.realized_pl),
+                "financing": str(trade_closure.financing),
+                "dividend_adjustment": str(trade_closure.dividend_adjustment),
+                "closing_transaction_ids": list(trade_closure.closing_transaction_ids),
+            }
+        )
+    if trade_close_transaction is not None:
+        normalized_schema_version = PAPER_BROKER_FACTS_SCHEMA_V2
+        normalized_facts.update(
+            {
+                "transaction_id": trade_close_transaction.transaction_id,
+                "closed_trade_id": trade_close_transaction.trade_id,
+                "closed_units": str(trade_close_transaction.closed_units),
+                "close_price": str(trade_close_transaction.close_price),
+                "close_realized_pl": str(trade_close_transaction.realized_pl),
+                "close_financing": str(trade_close_transaction.financing),
+                "provider_reason": trade_close_transaction.provider_reason,
+                "exit_cause": trade_close_transaction.exit_cause.value,
+            }
+        )
     return PaperReconciliationRead(
         observation(
             kind,
@@ -303,6 +428,8 @@ def read(
             client_trade_id=client_trade_id,
             signed_units=signed_units,
             price=price,
+            normalized_facts=normalized_facts,
+            normalized_schema_version=normalized_schema_version,
         ),
         state,
         fill=fill,
@@ -314,6 +441,8 @@ def read(
         protection_drift=protection_drift,
         unexpected_exposure=unexpected_exposure,
         transactions=transactions,
+        trade_closure=trade_closure,
+        trade_close_transaction=trade_close_transaction,
     )
 
 
@@ -353,6 +482,67 @@ def protection(*, target: bool = True) -> ProtectionConfirmation:
             else None
         ),
         Decimal("1.11030") if target else None,
+    )
+
+
+def closure(
+    *,
+    closing_transaction_ids: tuple[str, ...] = ("43",),
+) -> PaperTradeClosure:
+    return PaperTradeClosure(
+        trade_id=TRADE_ID,
+        closed_at=NOW,
+        average_close_price=Decimal("1.11030"),
+        realized_pl=Decimal("196.1538"),
+        financing=Decimal("-0.42"),
+        dividend_adjustment=Decimal("0"),
+        closing_transaction_ids=closing_transaction_ids,
+        exit_cause=(
+            PaperTradeExitCause.MULTIPLE
+            if len(closing_transaction_ids) > 1
+            else PaperTradeExitCause.UNRESOLVED
+        ),
+    )
+
+
+def close_transaction() -> PaperTradeCloseTransaction:
+    return PaperTradeCloseTransaction(
+        transaction_id="43",
+        trade_id=TRADE_ID,
+        closed_units=Decimal("19230"),
+        close_price=Decimal("1.11035"),
+        realized_pl=Decimal("196.1538"),
+        financing=Decimal("-0.42"),
+        provider_reason="TAKE_PROFIT_ORDER",
+        exit_cause=PaperTradeExitCause.TAKE_PROFIT,
+    )
+
+
+def configure_closed_reads(
+    provider: Provider,
+    *,
+    trade_closure: PaperTradeClosure,
+    close_transaction_value: PaperTradeCloseTransaction,
+) -> None:
+    provider.reads["trade"] = read(
+        PaperObservationReadKind.TRADE_DETAIL,
+        PaperObservationObjectKind.TRADE,
+        PaperReconciliationReadState.CLOSED,
+        trade_id=TRADE_ID,
+        provider_trade_id=TRADE_ID,
+        client_trade_id=CORRELATION[1],
+        signed_units=Decimal("19230"),
+        price=Decimal("1.10010"),
+        trade_closure=trade_closure,
+    )
+    provider.reads["close_transaction"] = read(
+        PaperObservationReadKind.TRANSACTION_DETAIL,
+        PaperObservationObjectKind.TRANSACTION,
+        PaperReconciliationReadState.CLOSED,
+        provider_transaction_id=close_transaction_value.transaction_id,
+        provider_trade_id=close_transaction_value.trade_id,
+        trade_id=close_transaction_value.trade_id,
+        trade_close_transaction=close_transaction_value,
     )
 
 
@@ -838,14 +1028,251 @@ def test_protected_closed_trade_is_lifecycle_advanced_without_downgrade() -> Non
         client_trade_id=CORRELATION[1],
         signed_units=Decimal("19230"),
         price=Decimal("1.10010"),
+        trade_closure=closure(),
+    )
+    provider.reads["close_transaction"] = read(
+        PaperObservationReadKind.TRANSACTION_DETAIL,
+        PaperObservationObjectKind.TRANSACTION,
+        PaperReconciliationReadState.CLOSED,
+        provider_transaction_id="43",
+        provider_trade_id=TRADE_ID,
+        trade_id=TRADE_ID,
+        trade_close_transaction=close_transaction(),
     )
 
     result = coordinator(repository, provider).reconcile(ATTEMPT_ID)
 
     assert result.reconciliation_status is ReconciliationStatus.LIFECYCLE_ADVANCED
+    assert result.trade_closure is not None
+    assert result.trade_closure.exit_cause is PaperTradeExitCause.TAKE_PROFIT
+    assert result.trade_closure.provider_reason == "TAKE_PROFIT_ORDER"
+    assert result.trade_closure.exact_close_price == Decimal("1.11035")
+    assert provider.calls == [
+        ("trade", (TRADE_ID,)),
+        ("close_transaction", ("43", TRADE_ID)),
+    ]
+    assert all(
+        observation.reconciliation_run_id == result.run.run_id
+        for observation in repository.observations
+    )
     assert (
         repository.row.execution_outcome == PaperExecutionOutcome.FILLED_PROTECTED.value
     )
+
+
+def test_identical_closed_trade_replay_is_idempotent_and_not_conflict() -> None:
+    repository = Repository(
+        row(
+            outcome=PaperExecutionOutcome.FILLED_PROTECTED,
+            fill=fill(),
+            target=Decimal("1.11030"),
+        )
+    )
+    provider = Provider()
+    configure_closed_reads(
+        provider,
+        trade_closure=closure(),
+        close_transaction_value=close_transaction(),
+    )
+
+    first = coordinator(repository, provider).reconcile(ATTEMPT_ID)
+    second = coordinator(repository, provider).reconcile(ATTEMPT_ID)
+
+    assert first.reconciliation_status is ReconciliationStatus.LIFECYCLE_ADVANCED
+    assert second.reconciliation_status is ReconciliationStatus.LIFECYCLE_ADVANCED
+    assert PaperReconciliationFindingCode.CONFLICT not in second.run.finding_codes
+    assert second.trade_closure is not None
+    assert len(repository.observations) == 2
+
+
+def test_changed_aggregate_closure_economics_is_conflict_and_append_only() -> None:
+    repository = Repository(
+        row(
+            outcome=PaperExecutionOutcome.FILLED_PROTECTED,
+            fill=fill(),
+            target=Decimal("1.11030"),
+        )
+    )
+    provider = Provider()
+    configure_closed_reads(
+        provider,
+        trade_closure=closure(),
+        close_transaction_value=close_transaction(),
+    )
+    coordinator(repository, provider).reconcile(ATTEMPT_ID)
+    configure_closed_reads(
+        provider,
+        trade_closure=replace(closure(), realized_pl=Decimal("999")),
+        close_transaction_value=close_transaction(),
+    )
+
+    result = coordinator(repository, provider).reconcile(ATTEMPT_ID)
+
+    assert result.reconciliation_status is ReconciliationStatus.CONFLICT
+    assert result.run.status is PaperReconciliationRunStatus.CONFLICT
+    assert PaperReconciliationFindingCode.CONFLICT in result.run.finding_codes
+    assert result.trade_closure is None
+    assert len(repository.observations) == 3
+
+
+@pytest.mark.parametrize("change", ["economics", "identity"])
+def test_changed_exact_close_evidence_is_conflict_and_append_only(change: str) -> None:
+    repository = Repository(
+        row(
+            outcome=PaperExecutionOutcome.FILLED_PROTECTED,
+            fill=fill(),
+            target=Decimal("1.11030"),
+        )
+    )
+    provider = Provider()
+    configure_closed_reads(
+        provider,
+        trade_closure=closure(),
+        close_transaction_value=close_transaction(),
+    )
+    coordinator(repository, provider).reconcile(ATTEMPT_ID)
+    changed = (
+        replace(close_transaction(), close_price=Decimal("1.11036"))
+        if change == "economics"
+        else replace(close_transaction(), transaction_id="44")
+    )
+    configure_closed_reads(
+        provider,
+        trade_closure=closure(),
+        close_transaction_value=changed,
+    )
+
+    result = coordinator(repository, provider).reconcile(ATTEMPT_ID)
+
+    assert result.reconciliation_status is ReconciliationStatus.CONFLICT
+    assert result.run.status is PaperReconciliationRunStatus.CONFLICT
+    assert PaperReconciliationFindingCode.CONFLICT in result.run.finding_codes
+    assert result.trade_closure is None
+    assert len(repository.observations) == 3
+
+
+def test_protected_open_trade_is_consistent_without_closure() -> None:
+    repository = Repository(
+        row(
+            outcome=PaperExecutionOutcome.FILLED_PROTECTED,
+            fill=fill(),
+            target=Decimal("1.11030"),
+            take_profit_claimed=True,
+        )
+    )
+    provider = Provider()
+    provider.reads["trade"] = read(
+        PaperObservationReadKind.TRADE_DETAIL,
+        PaperObservationObjectKind.TRADE,
+        PaperReconciliationReadState.OPEN,
+        trade_id=TRADE_ID,
+        provider_trade_id=TRADE_ID,
+        client_trade_id=CORRELATION[1],
+        signed_units=Decimal("19230"),
+        price=Decimal("1.10010"),
+        protection=protection(),
+    )
+
+    result = coordinator(repository, provider).reconcile(ATTEMPT_ID)
+
+    assert result.reconciliation_status is ReconciliationStatus.CONSISTENT
+    assert result.trade_closure is None
+    assert [name for name, _ in provider.calls] == ["trade"]
+
+
+def test_failed_close_enrichment_preserves_lifecycle_and_marks_unresolved() -> None:
+    repository = Repository(
+        row(
+            outcome=PaperExecutionOutcome.FILLED_PROTECTED,
+            fill=fill(),
+            target=Decimal("1.11030"),
+        )
+    )
+    provider = Provider()
+    provider.reads["trade"] = read(
+        PaperObservationReadKind.TRADE_DETAIL,
+        PaperObservationObjectKind.TRADE,
+        PaperReconciliationReadState.CLOSED,
+        trade_id=TRADE_ID,
+        provider_trade_id=TRADE_ID,
+        client_trade_id=CORRELATION[1],
+        signed_units=Decimal("19230"),
+        price=Decimal("1.10010"),
+        trade_closure=closure(),
+    )
+    provider.failures.add("close_transaction")
+
+    result = coordinator(repository, provider).reconcile(ATTEMPT_ID)
+
+    assert result.reconciliation_status is ReconciliationStatus.LIFECYCLE_ADVANCED
+    assert result.run.status is PaperReconciliationRunStatus.LIFECYCLE_ADVANCED
+    assert result.trade_closure is not None
+    assert result.trade_closure.exit_cause is PaperTradeExitCause.UNRESOLVED
+    assert PaperReconciliationFindingCode.UNRESOLVED in result.run.finding_codes
+    assert [name for name, _ in provider.calls] == [
+        "trade",
+        "close_transaction",
+    ]
+
+
+def test_missing_close_reason_preserves_lifecycle_without_false_conflict() -> None:
+    repository = Repository(
+        row(
+            outcome=PaperExecutionOutcome.FILLED_PROTECTED,
+            fill=fill(),
+            target=Decimal("1.11030"),
+        )
+    )
+    provider = Provider()
+    configure_closed_reads(
+        provider,
+        trade_closure=closure(),
+        close_transaction_value=replace(
+            close_transaction(),
+            provider_reason=None,
+            exit_cause=PaperTradeExitCause.UNRESOLVED,
+        ),
+    )
+
+    result = coordinator(repository, provider).reconcile(ATTEMPT_ID)
+
+    assert result.reconciliation_status is ReconciliationStatus.LIFECYCLE_ADVANCED
+    assert result.trade_closure is not None
+    assert result.trade_closure.exit_cause is PaperTradeExitCause.UNRESOLVED
+    assert result.trade_closure.provider_reason is None
+    assert PaperReconciliationFindingCode.CONFLICT not in result.run.finding_codes
+
+
+def test_multiple_close_ids_do_not_fan_out_or_claim_one_exit() -> None:
+    repository = Repository(
+        row(
+            outcome=PaperExecutionOutcome.FILLED_PROTECTED,
+            fill=fill(),
+            target=Decimal("1.11030"),
+        )
+    )
+    provider = Provider()
+    provider.reads["trade"] = read(
+        PaperObservationReadKind.TRADE_DETAIL,
+        PaperObservationObjectKind.TRADE,
+        PaperReconciliationReadState.CLOSED,
+        trade_id=TRADE_ID,
+        provider_trade_id=TRADE_ID,
+        client_trade_id=CORRELATION[1],
+        signed_units=Decimal("19230"),
+        price=Decimal("1.10010"),
+        trade_closure=closure(closing_transaction_ids=("43", "44")),
+    )
+
+    result = coordinator(repository, provider).reconcile(ATTEMPT_ID)
+
+    assert result.reconciliation_status is ReconciliationStatus.LIFECYCLE_ADVANCED
+    assert result.trade_closure is not None
+    assert result.trade_closure.exit_cause is PaperTradeExitCause.MULTIPLE
+    assert result.trade_closure.closing_transaction_ids == ("43", "44")
+    assert result.trade_closure.closing_transaction_id is None
+    assert result.trade_closure.exact_close_price is None
+    assert provider.calls == [("trade", (TRADE_ID,))]
 
 
 def test_protection_drift_is_conflict_and_does_not_adopt_broker_leg() -> None:

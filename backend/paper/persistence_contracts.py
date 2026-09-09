@@ -46,7 +46,9 @@ from backend.risk import RiskConfig, RiskDecision, RiskPhase, TradeIntent
 MAX_CANONICAL_SNAPSHOT_BYTES = 32_768
 MAX_NORMALIZED_FACTS_BYTES = 16_384
 MAX_COLLECTION_ITEMS = 64
+MAX_PROVIDER_TRANSACTION_ID_LENGTH = 64
 PAPER_BROKER_FACTS_SCHEMA_V1 = "ATLAS_PAPER_BROKER_FACTS_V1"
+PAPER_BROKER_FACTS_SCHEMA_V2 = "ATLAS_PAPER_BROKER_FACTS_V2"
 PAPER_STRATEGY_RECEIPT_SCHEMA_V1 = "ATLAS_PAPER_STRATEGY_RECEIPT_V1"
 PAPER_RISK_AUTHORITY_SCHEMA_V1 = "ATLAS_PAPER_RISK_AUTHORITY_V1"
 
@@ -92,6 +94,18 @@ class PaperObservationObjectKind(StrEnum):
     TRADE = "TRADE"
     ACCOUNT = "ACCOUNT"
     MUTATION_RESULT = "MUTATION_RESULT"
+
+
+class PaperTradeExitCause(StrEnum):
+    """Bounded product-level interpretation of one Trade's exit evidence."""
+
+    TAKE_PROFIT = "TAKE_PROFIT"
+    STOP_LOSS = "STOP_LOSS"
+    MARKET_CLOSE = "MARKET_CLOSE"
+    MARGIN_CLOSEOUT = "MARGIN_CLOSEOUT"
+    OTHER = "OTHER"
+    MULTIPLE = "MULTIPLE"
+    UNRESOLVED = "UNRESOLVED"
 
 
 class PaperReconciliationFindingCode(StrEnum):
@@ -623,8 +637,182 @@ _OBSERVATION_FACT_KEYS = frozenset(
         "open_trades",
         "open_positions",
         "pending_orders",
+        "close_time",
+        "average_close_price",
+        "realized_pl",
+        "financing",
+        "dividend_adjustment",
+        "closing_transaction_ids",
+        "provider_reason",
+        "closed_trade_id",
+        "closed_units",
+        "close_price",
+        "close_realized_pl",
+        "close_financing",
+        "exit_cause",
+        "closing_transaction_id",
+        "exact_close_price",
     }
 )
+_CLOSURE_FACT_KEYS = frozenset(
+    {
+        "close_time",
+        "average_close_price",
+        "realized_pl",
+        "financing",
+        "dividend_adjustment",
+        "closing_transaction_ids",
+        "provider_reason",
+        "closed_trade_id",
+        "closed_units",
+        "close_price",
+        "close_realized_pl",
+        "close_financing",
+        "exit_cause",
+        "closing_transaction_id",
+        "exact_close_price",
+    }
+)
+
+
+@dataclass(frozen=True, slots=True)
+class PaperTradeCloseTransaction:
+    """Exact normalized evidence from one provider closing transaction."""
+
+    transaction_id: str
+    trade_id: str
+    closed_units: Decimal
+    close_price: Decimal
+    realized_pl: Decimal
+    financing: Decimal
+    provider_reason: str | None
+    exit_cause: PaperTradeExitCause
+
+    def __post_init__(self) -> None:
+        _text(
+            self.transaction_id,
+            "transaction_id",
+            maximum=MAX_PROVIDER_TRANSACTION_ID_LENGTH,
+        )
+        _text(self.trade_id, "trade_id", maximum=128)
+        _decimal(self.closed_units, "closed_units")
+        _decimal(self.close_price, "close_price", positive=True)
+        _decimal(self.realized_pl, "realized_pl")
+        _decimal(self.financing, "financing")
+        if self.provider_reason is not None:
+            _text(self.provider_reason, "provider_reason", maximum=128)
+        if type(self.exit_cause) is not PaperTradeExitCause:
+            raise PaperPersistenceContractError("exit_cause is invalid")
+
+    def to_json(self) -> dict[str, object]:
+        return {
+            "transaction_id": self.transaction_id,
+            "trade_id": self.trade_id,
+            "closed_units": str(self.closed_units),
+            "close_price": str(self.close_price),
+            "realized_pl": str(self.realized_pl),
+            "financing": str(self.financing),
+            "provider_reason": self.provider_reason,
+            "exit_cause": self.exit_cause.value,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class PaperTradeClosure:
+    """Immutable aggregate closure evidence for one exact provider Trade."""
+
+    trade_id: str
+    closed_at: datetime
+    average_close_price: Decimal
+    realized_pl: Decimal
+    financing: Decimal
+    dividend_adjustment: Decimal
+    closing_transaction_ids: tuple[str, ...]
+    exit_cause: PaperTradeExitCause
+    provider_reason: str | None = None
+    closing_transaction_id: str | None = None
+    exact_close_price: Decimal | None = None
+
+    def __post_init__(self) -> None:
+        _text(self.trade_id, "trade_id", maximum=128)
+        object.__setattr__(self, "closed_at", _utc(self.closed_at, "closed_at"))
+        _decimal(self.average_close_price, "average_close_price", positive=True)
+        _decimal(self.realized_pl, "realized_pl")
+        _decimal(self.financing, "financing")
+        _decimal(self.dividend_adjustment, "dividend_adjustment")
+        if type(self.closing_transaction_ids) is not tuple or not (
+            0 < len(self.closing_transaction_ids) <= MAX_COLLECTION_ITEMS
+        ):
+            raise PaperPersistenceContractError(
+                "closing_transaction_ids must contain one bounded transaction"
+            )
+        for transaction_id in self.closing_transaction_ids:
+            _text(transaction_id, "closing_transaction_id", maximum=128)
+        if len(set(self.closing_transaction_ids)) != len(self.closing_transaction_ids):
+            raise PaperPersistenceContractError(
+                "closing_transaction_ids must be unique"
+            )
+        if type(self.exit_cause) is not PaperTradeExitCause:
+            raise PaperPersistenceContractError("exit_cause is invalid")
+        if self.provider_reason is not None:
+            _text(self.provider_reason, "provider_reason", maximum=128)
+        if self.closing_transaction_id is not None:
+            _text(self.closing_transaction_id, "closing_transaction_id", maximum=128)
+            if len(self.closing_transaction_ids) != 1 or (
+                self.closing_transaction_id != self.closing_transaction_ids[0]
+            ):
+                raise PaperPersistenceContractError(
+                    "closing_transaction_id must identify the sole close"
+                )
+        if self.exact_close_price is not None:
+            _decimal(self.exact_close_price, "exact_close_price", positive=True)
+            if self.closing_transaction_id is None:
+                raise PaperPersistenceContractError(
+                    "exact_close_price requires exact close attribution"
+                )
+        if self.provider_reason is not None and self.closing_transaction_id is None:
+            raise PaperPersistenceContractError(
+                "provider_reason requires exact close attribution"
+            )
+        if len(self.closing_transaction_ids) > 1:
+            if self.exit_cause is not PaperTradeExitCause.MULTIPLE:
+                raise PaperPersistenceContractError(
+                    "multiple closes require MULTIPLE exit cause"
+                )
+            if any(
+                value is not None
+                for value in (
+                    self.provider_reason,
+                    self.closing_transaction_id,
+                    self.exact_close_price,
+                )
+            ):
+                raise PaperPersistenceContractError(
+                    "multiple closes cannot claim one exact exit"
+                )
+        elif self.exit_cause is PaperTradeExitCause.MULTIPLE:
+            raise PaperPersistenceContractError(
+                "MULTIPLE exit cause requires multiple closes"
+            )
+
+    def to_json(self) -> dict[str, object]:
+        return {
+            "trade_id": self.trade_id,
+            "closed_at": self.closed_at.isoformat().replace("+00:00", "Z"),
+            "average_close_price": str(self.average_close_price),
+            "realized_pl": str(self.realized_pl),
+            "financing": str(self.financing),
+            "dividend_adjustment": str(self.dividend_adjustment),
+            "closing_transaction_ids": list(self.closing_transaction_ids),
+            "exit_cause": self.exit_cause.value,
+            "provider_reason": self.provider_reason,
+            "closing_transaction_id": self.closing_transaction_id,
+            "exact_close_price": (
+                str(self.exact_close_price)
+                if self.exact_close_price is not None
+                else None
+            ),
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -718,6 +906,12 @@ class PaperBrokerObservation:
             self, "atlas_observed_at", _utc(self.atlas_observed_at, "atlas_observed_at")
         )
         _text(self.normalized_schema_version, "normalized_schema_version", maximum=100)
+        if self.normalized_schema_version == PAPER_BROKER_FACTS_SCHEMA_V1 and (
+            set(self.normalized_facts) & _CLOSURE_FACT_KEYS
+        ):
+            raise PaperPersistenceContractError(
+                "closure facts require the V2 normalized schema"
+            )
 
     @property
     def normalized_facts_fingerprint(self) -> str:
@@ -977,7 +1171,9 @@ def validate_execution_outcome_transition(
 __all__ = [
     "MAX_CANONICAL_SNAPSHOT_BYTES",
     "MAX_NORMALIZED_FACTS_BYTES",
+    "MAX_PROVIDER_TRANSACTION_ID_LENGTH",
     "PAPER_BROKER_FACTS_SCHEMA_V1",
+    "PAPER_BROKER_FACTS_SCHEMA_V2",
     "PAPER_RISK_AUTHORITY_SCHEMA_V1",
     "PAPER_STRATEGY_RECEIPT_SCHEMA_V1",
     "PaperBrokerObservation",
@@ -987,6 +1183,9 @@ __all__ = [
     "PaperObservationObjectKind",
     "PaperObservationReadKind",
     "PaperPersistenceContractError",
+    "PaperTradeCloseTransaction",
+    "PaperTradeClosure",
+    "PaperTradeExitCause",
     "PaperReconciliationFinding",
     "PaperReconciliationFindingCode",
     "PaperReconciliationRun",

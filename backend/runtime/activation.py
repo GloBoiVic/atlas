@@ -26,6 +26,8 @@ from backend.domain import (
     ValidatedParameterPayload,
 )
 from backend.integrations.oanda.account import is_valid_oanda_practice_account_id
+from backend.paper.execution import BrokerFillFacts, PaperExecutionOutcome
+from backend.paper.persistence_contracts import PaperTradeClosure
 from backend.persistence.models import (
     PaperExecutionAttemptModel,
     PaperRuntimeActivationModel,
@@ -238,6 +240,7 @@ class PaperRuntimeReconcileResult:
     reconciliation_status: str | None
     execution_outcome: str | None
     stale: bool = False
+    trade_closure: PaperTradeClosure | None = None
 
     def to_json(self) -> dict[str, object]:
         return {
@@ -255,6 +258,9 @@ class PaperRuntimeReconcileResult:
                 else None
             ),
             "stale": self.stale,
+            "trade_closure": (
+                self.trade_closure.to_json() if self.trade_closure is not None else None
+            ),
         }
 
 
@@ -626,7 +632,14 @@ class PaperRuntimeService:
                     "the active runtime owns reconciliation recovery",
                 )
             attempt = self._latest_attempt(session, activation_id)
-            if attempt is None or not self._attempt_is_outstanding(attempt):
+            if (
+                attempt is None
+                or self._attempt_is_lifecycle_complete(attempt)
+                or not (
+                    self._attempt_is_manual_reconciliation_eligible(attempt)
+                    or self._attempt_is_outstanding(attempt)
+                )
+            ):
                 return PaperRuntimeReconcileResult(
                     activation_id=activation_id,
                     attempt_id=attempt.attempt_id if attempt is not None else None,
@@ -676,6 +689,7 @@ class PaperRuntimeService:
                 _enum_text(execution_outcome) if execution_outcome is not None else None
             ),
             stale=bool(getattr(result, "stale", False)),
+            trade_closure=getattr(result, "trade_closure", None),
         )
 
     def _require_activation_configuration(self) -> None:
@@ -806,6 +820,47 @@ class PaperRuntimeService:
     @staticmethod
     def _attempt_is_outstanding(row: PaperExecutionAttemptModel) -> bool:
         return is_unsafe_paper_attempt(row.execution_outcome, row.reconciliation_status)
+
+    @staticmethod
+    def _attempt_is_lifecycle_complete(row: PaperExecutionAttemptModel) -> bool:
+        return (
+            row.execution_outcome == PaperExecutionOutcome.FILLED_PROTECTED.value
+            and row.reconciliation_status == "LIFECYCLE_ADVANCED"
+        )
+
+    @staticmethod
+    def _attempt_is_manual_reconciliation_eligible(
+        row: PaperExecutionAttemptModel,
+    ) -> bool:
+        """Allow lifecycle reads without changing the recovery safety predicate."""
+        if row.execution_outcome != PaperExecutionOutcome.FILLED_PROTECTED.value:
+            return False
+        if row.reconciliation_status not in {"NOT_RUN", "CONSISTENT"}:
+            return False
+        values = (
+            getattr(row, "fill_broker_order_id", None),
+            getattr(row, "fill_transaction_id", None),
+            getattr(row, "fill_trade_id", None),
+            getattr(row, "fill_signed_units", None),
+            getattr(row, "fill_price", None),
+            getattr(row, "fill_executed_at", None),
+            getattr(row, "fill_actual_initial_risk", None),
+        )
+        if any(value is None for value in values):
+            return False
+        try:
+            BrokerFillFacts(
+                cast(str, values[0]),
+                cast(str, values[1]),
+                cast(str, values[2]),
+                cast(Decimal, values[3]),
+                cast(Decimal, values[4]),
+                cast(datetime, values[5]),
+                cast(Decimal, values[6]),
+            )
+        except Exception:
+            return False
+        return True
 
     def _now(self) -> datetime:
         try:

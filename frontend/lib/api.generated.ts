@@ -1061,6 +1061,7 @@ export interface components {
       executionOutcome: string | null;
       /** Stale */
       stale: boolean;
+      tradeClosure?: components['schemas']['PaperTradeClosureResponse'] | null;
     };
     /** PaperRuntimeStatusResponse */
     PaperRuntimeStatusResponse: {
@@ -1078,6 +1079,31 @@ export interface components {
     PaperStopRequest: {
       /** Reason */
       reason: string;
+    };
+    /** PaperTradeClosureResponse */
+    PaperTradeClosureResponse: {
+      /** Tradeid */
+      tradeId: string;
+      /** Closedat */
+      closedAt: string;
+      /** Averagecloseprice */
+      averageClosePrice: string;
+      /** Realizedpl */
+      realizedPl: string;
+      /** Financing */
+      financing: string;
+      /** Dividendadjustment */
+      dividendAdjustment: string;
+      /** Closingtransactionids */
+      closingTransactionIds: string[];
+      /** Exitcause */
+      exitCause: string;
+      /** Providerreason */
+      providerReason: string | null;
+      /** Closingtransactionid */
+      closingTransactionId: string | null;
+      /** Exactcloseprice */
+      exactClosePrice: string | null;
     };
     /** PeriodRequest */
     PeriodRequest: {
