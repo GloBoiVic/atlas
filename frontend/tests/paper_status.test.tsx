@@ -15,7 +15,10 @@ vi.mock('../app/providers', () => ({
 }));
 vi.mock('../lib/api-client', () => ({ atlasApi: mocks }));
 
-import { PaperStatus } from '../components/paper-status';
+import {
+  PaperActiveStatusSection,
+  PaperStatus,
+} from '../components/paper-status';
 
 const capability = {
   provider: 'OANDA Practice',
@@ -96,6 +99,44 @@ describe('PAPER read-only surface', () => {
     expect(
       screen.queryByText(/Buy|Sell|Close|SL\/TP|Activate|Stop/),
     ).not.toBeInTheDocument();
+  });
+
+  it('renders active runtime concisely in compact mode', async () => {
+    mocks.activePaperStatus.mockResolvedValue(activeStatus);
+    render(<PaperActiveStatusSection compact />);
+
+    expect(
+      await screen.findByRole('heading', { name: 'Runtime' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Active')).toBeInTheDocument();
+    expect(screen.getByText('RUNNING')).toBeInTheDocument();
+    expect(screen.queryByText('FLAT_UNKNOWN')).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(
+        'Terminal runtime state does not prove broker flatness.',
+      ),
+    ).not.toBeInTheDocument();
+  });
+
+  it('renders no active runtime concisely without the provider code', async () => {
+    render(<PaperActiveStatusSection compact />);
+
+    expect(await screen.findByText('No active runtime')).toBeInTheDocument();
+    expect(
+      screen.queryByText('PAPER_ACTIVATION_NOT_ACTIVE'),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/No active PAPER activation reported/),
+    ).not.toBeInTheDocument();
+  });
+
+  it('keeps compact runtime failures concise and retryable', async () => {
+    mocks.activePaperStatus.mockRejectedValue(new Error('runtime unavailable'));
+    render(<PaperActiveStatusSection compact />);
+
+    expect(await screen.findByText('Runtime unavailable')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(screen.queryByText('runtime unavailable')).not.toBeInTheDocument();
   });
 
   it('keeps capability errors independent from the current empty status', async () => {

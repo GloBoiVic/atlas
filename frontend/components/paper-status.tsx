@@ -132,6 +132,18 @@ function PaperStatusFacts({ data }: { data: PaperStatus }) {
   );
 }
 
+function CompactPaperStatus({ data }: { data: PaperStatus }) {
+  return (
+    <div className="space-y-3">
+      <p className="status status-success">Active</p>
+      <p className="text-sm text-atlas-foreground-muted">
+        Phase{' '}
+        <span className="font-mono">{data.activation.operationalPhase}</span>
+      </p>
+    </div>
+  );
+}
+
 export function PaperActiveStatusSection({
   compact = false,
 }: {
@@ -147,23 +159,45 @@ export function PaperActiveStatusSection({
     >
       <div>
         <h2 id="paper-current-status-heading" className="text-lg font-semibold">
-          Runtime status
+          {compact ? 'Runtime' : 'Runtime status'}
         </h2>
-        <p className="mt-1 text-sm text-atlas-foreground-muted">
-          Runtime is Atlas activation state, not broker exposure. This is a
-          current-state read, not a session history.
-        </p>
+        {!compact && (
+          <p className="mt-1 text-sm text-atlas-foreground-muted">
+            Runtime is Atlas activation state, not broker exposure. This is a
+            current-state read, not a session history.
+          </p>
+        )}
       </div>
-      {state.status === 'loading' && <LoadingState label="Runtime status" />}
-      {state.status === 'error' && (
-        <ReadError error={state.error} retry={retry} />
+      {state.status === 'loading' && (
+        <LoadingState label={compact ? 'runtime' : 'Runtime status'} />
       )}
+      {state.status === 'error' &&
+        (compact ? (
+          <div className="space-y-3">
+            <UnavailableState>Runtime unavailable</UnavailableState>
+            <button
+              type="button"
+              onClick={retry}
+              className="text-sm font-medium text-atlas-primary underline-offset-2 hover:underline"
+            >
+              Retry
+            </button>
+          </div>
+        ) : (
+          <ReadError error={state.error} retry={retry} />
+        ))}
       {state.status === 'ready' &&
         (state.data === null ? (
-          <EmptyState>
-            No active PAPER activation reported. Current-state result:{' '}
-            <span className="font-mono">PAPER_ACTIVATION_NOT_ACTIVE</span>
-          </EmptyState>
+          compact ? (
+            <EmptyState>No active runtime</EmptyState>
+          ) : (
+            <EmptyState>
+              No active PAPER activation reported. Current-state result:{' '}
+              <span className="font-mono">PAPER_ACTIVATION_NOT_ACTIVE</span>
+            </EmptyState>
+          )
+        ) : compact ? (
+          <CompactPaperStatus data={state.data} />
         ) : (
           <PaperStatusFacts data={state.data} />
         ))}

@@ -92,38 +92,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </div>
       </header>
-      <div className="border-b border-atlas-border bg-atlas-background">
-        <div className="mx-auto flex max-w-[1440px] flex-wrap items-center gap-x-5 gap-y-1 px-6 py-2.5 text-xs lg:px-10">
-          <span className="font-semibold uppercase tracking-[0.14em] text-atlas-primary">
-            Historical research
-          </span>
-          <span className="text-atlas-foreground-muted">
-            Strategies are authored and versioned
-          </span>
-          <span className="text-atlas-foreground-disabled" aria-hidden>
-            /
-          </span>
-          <span className="text-atlas-foreground-disabled">
-            Experiments are deterministic historical research
-          </span>
-          <span className="text-atlas-foreground-disabled" aria-hidden>
-            /
-          </span>
-          <span className="text-atlas-foreground-disabled">
-            PAPER status is observable, not controllable here
-          </span>
-          <span className="text-atlas-foreground-disabled" aria-hidden>
-            /
-          </span>
-          <span className="text-atlas-foreground-disabled">
-            LIVE is a future capability
-          </span>
-        </div>
-      </div>
       <main className="mx-auto max-w-[1440px] px-6 py-12 lg:px-10">
-        <p className="mb-6 text-xs text-atlas-foreground-muted" role="status">
-          Times shown in {timeZone}
-        </p>
         {children}
       </main>
     </div>

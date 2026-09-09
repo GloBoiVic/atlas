@@ -2,23 +2,21 @@
 
 import Link from 'next/link';
 import { useCallback } from 'react';
+import { AlertCircle } from 'lucide-react';
 import { atlasApi } from '../lib/api-client';
-import {
-  EmptyState,
-  LoadingState,
-  ReadError,
-  UnavailableState,
-  useReadResource,
-} from './read-resource';
-import {
-  PaperActiveStatusSection,
-  PaperCapabilitySection,
-} from './paper-status';
+import { useDisplayTimeZone } from '../app/providers';
+import { EmptyState, LoadingState, useReadResource } from './read-resource';
+import { PaperActiveStatusSection } from './paper-status';
 import { PaperBrokerStateSection } from './paper-broker-state';
 import {
-  HistoricalCapabilitySection,
-  SnapshotOptionsSection,
-} from './data-overview';
+  experimentHeadlineMetrics,
+  experimentIdentity,
+  experimentPeriod,
+  object,
+  statusLabel,
+  strategyIdentity,
+  text,
+} from './experiments/shared';
 
 type Health = Awaited<ReturnType<typeof atlasApi.ready>>;
 type Strategies = Awaited<ReturnType<typeof atlasApi.listStrategies>>;
@@ -38,41 +36,90 @@ function Fact({ label, value }: { label: string; value: string }) {
   );
 }
 
-function ReadinessSection() {
-  const loader = useCallback(() => atlasApi.ready(), []);
-  const { state, retry } = useReadResource<Health>(loader);
+function OverviewReadError({
+  error,
+  retry,
+}: {
+  error: unknown;
+  retry: () => void;
+}) {
+  const message =
+    error instanceof Error
+      ? error.message
+      : 'Atlas could not complete this read request.';
 
   return (
-    <section aria-labelledby="readiness-heading" className="space-y-4">
+    <div
+      role="alert"
+      className="flex items-start gap-3 border-l-2 border-atlas-negative bg-atlas-negative-muted p-4 text-sm text-atlas-negative"
+    >
+      <AlertCircle aria-hidden className="mt-0.5 size-4 shrink-0" />
       <div>
-        <h2 id="readiness-heading" className="text-lg font-semibold">
-          API and database readiness
+        <p>{message}</p>
+        <button
+          type="button"
+          onClick={retry}
+          className="mt-3 font-medium underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-atlas-focus-ring focus-visible:ring-offset-2"
+        >
+          Retry
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function healthLabel(value: unknown) {
+  switch (String(value).toLowerCase()) {
+    case 'ready':
+    case 'ok':
+      return 'Ready';
+    case 'not_ready':
+      return 'Not ready';
+    case 'unavailable':
+      return 'Unavailable';
+    default:
+      return display(value);
+  }
+}
+
+function SystemSection() {
+  const loader = useCallback(() => atlasApi.ready(), []);
+  const { state, retry } = useReadResource<Health>(loader);
+  const healthy =
+    state.status === 'ready' &&
+    state.data.status === 'ready' &&
+    state.data.checks.database === 'ok';
+
+  return (
+    <section aria-labelledby="system-heading" className="space-y-4">
+      <div>
+        <h2 id="system-heading" className="text-lg font-semibold">
+          System
         </h2>
-        <p className="mt-1 text-sm text-atlas-foreground-muted">
-          Readiness is a system check, not a PAPER connectivity claim.
-        </p>
       </div>
       {state.status === 'loading' && <LoadingState label="system readiness" />}
       {state.status === 'error' && (
-        <ReadError error={state.error} retry={retry} />
+        <OverviewReadError error={state.error} retry={retry} />
       )}
       {state.status === 'ready' && (
         <div className="space-y-4">
+          <p
+            role="status"
+            className={
+              healthy
+                ? 'status status-success'
+                : 'status rounded border border-atlas-warning bg-atlas-warning-muted px-2.5 py-1 text-atlas-warning'
+            }
+          >
+            {healthy ? 'Ready' : 'Needs attention'}
+          </p>
           <dl className="grid gap-x-6 gap-y-4 sm:grid-cols-2">
-            <Fact label="API" value={display(state.data.status)} />
+            <Fact label="API" value={healthLabel(state.data.status)} />
             <Fact
               label="Database"
-              value={display(state.data.checks.database)}
+              value={healthLabel(state.data.checks.database)}
             />
           </dl>
-          {(state.data.status !== 'ready' ||
-            state.data.checks.database !== 'ok') && (
-            <UnavailableState>
-              Readiness is unavailable. The API reports{' '}
-              {display(state.data.status)} and the database check reports{' '}
-              {display(state.data.checks.database)}.
-            </UnavailableState>
-          )}
         </div>
       )}
     </section>
@@ -84,34 +131,47 @@ function StrategySection() {
   const { state, retry } = useReadResource<Strategies>(loader);
 
   return (
-    <section aria-labelledby="strategy-summary-heading" className="space-y-4">
-      <div className="flex flex-wrap items-baseline justify-between gap-3">
-        <div>
-          <h2 id="strategy-summary-heading" className="text-lg font-semibold">
-            Strategy catalog
-          </h2>
-          <p className="mt-1 text-sm text-atlas-foreground-muted">
-            Count of items returned by the catalog read.
-          </p>
-        </div>
-        {state.status === 'ready' && (
-          <span className="text-sm tabular-nums text-atlas-foreground-muted">
-            {state.data.items.length} returned items
-          </span>
-        )}
+    <section aria-labelledby="strategies-summary-heading" className="space-y-4">
+      <div>
+        <h2 id="strategies-summary-heading" className="text-lg font-semibold">
+          Strategies
+        </h2>
       </div>
-      {state.status === 'loading' && <LoadingState label="Strategy catalog" />}
+      {state.status === 'loading' && <LoadingState label="Strategies" />}
       {state.status === 'error' && (
-        <ReadError error={state.error} retry={retry} />
+        <OverviewReadError error={state.error} retry={retry} />
       )}
       {state.status === 'ready' && state.data.items.length === 0 && (
-        <EmptyState>No Strategy catalog items were returned.</EmptyState>
+        <EmptyState>No Strategies</EmptyState>
+      )}
+      {state.status === 'ready' && state.data.items.length > 0 && (
+        <ul className="divide-y divide-atlas-border border-y border-atlas-border">
+          {state.data.items.slice(0, 3).map((item) => (
+            <li key={item.strategyKey} className="py-3 first:pt-0 last:pb-0">
+              <Link
+                href={`/strategies/${encodeURIComponent(item.strategyKey)}`}
+                className="font-medium text-atlas-primary underline-offset-4 hover:underline"
+              >
+                {item.name}
+              </Link>
+              <p className="mt-1 text-sm text-atlas-foreground-muted">
+                {item.latestVersion?.displayName ??
+                  'Latest version unavailable'}
+              </p>
+              {typeof item.experimentCount === 'number' && (
+                <p className="mt-1 text-xs text-atlas-foreground-muted">
+                  {item.experimentCount} Experiments
+                </p>
+              )}
+            </li>
+          ))}
+        </ul>
       )}
       <Link
         href="/strategies"
         className="inline-flex text-sm font-medium text-atlas-primary underline-offset-4 hover:underline"
       >
-        Open Strategies
+        View Strategies
       </Link>
     </section>
   );
@@ -127,19 +187,9 @@ function ExperimentSection() {
   const { state, retry } = useReadResource<ExperimentList>(loader);
   const items =
     state.status === 'ready' && Array.isArray(state.data.items)
-      ? state.data.items
+      ? state.data.items.slice(0, 3)
       : [];
-
-  const counts = new Map<string, number>();
-  for (const item of items) {
-    const status =
-      item && typeof item === 'object' && 'status' in item
-        ? (item as { status?: unknown }).status
-        : undefined;
-    if (typeof status === 'string' && status.length > 0) {
-      counts.set(status, (counts.get(status) ?? 0) + 1);
-    }
-  }
+  const { timeZone } = useDisplayTimeZone();
 
   return (
     <section aria-labelledby="experiment-summary-heading" className="space-y-4">
@@ -147,51 +197,75 @@ function ExperimentSection() {
         <h2 id="experiment-summary-heading" className="text-lg font-semibold">
           Experiments
         </h2>
-        <p className="mt-1 text-sm text-atlas-foreground-muted">
-          Status summary for the visible first page only; no global total or
-          performance metric is inferred.
-        </p>
       </div>
-      {state.status === 'loading' && (
-        <LoadingState label="visible Experiments" />
-      )}
+      {state.status === 'loading' && <LoadingState label="Experiments" />}
       {state.status === 'error' && (
-        <ReadError error={state.error} retry={retry} />
+        <OverviewReadError error={state.error} retry={retry} />
       )}
       {state.status === 'ready' && items.length === 0 && (
-        <EmptyState>
-          No Experiment items were returned on the first page.
-        </EmptyState>
+        <EmptyState>No Experiments</EmptyState>
       )}
       {state.status === 'ready' && items.length > 0 && (
-        <div className="space-y-2 text-sm">
-          <p className="text-atlas-foreground-muted">
-            {items.length} returned items on the visible first page.
-          </p>
-          {counts.size > 0 ? (
-            <ul className="flex flex-wrap gap-x-5 gap-y-2">
-              {Array.from(counts, ([status, count]) => (
-                <li key={status}>
-                  <span className="font-mono text-atlas-primary">{status}</span>{' '}
-                  <span className="text-atlas-foreground-muted">
-                    {count} returned
-                  </span>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-atlas-foreground-muted">
-              No status values were included in the returned items.
-            </p>
-          )}
-        </div>
+        <ul className="divide-y divide-atlas-border border-y border-atlas-border">
+          {items.map((raw, index) => {
+            const item = object(raw);
+            const id = text(item.id, '');
+            const status = statusLabel(item.status);
+            const identity = experimentIdentity(item);
+            const metrics = experimentHeadlineMetrics(item);
+            const metricParts =
+              status === 'COMPLETED'
+                ? [
+                    metrics.netReturn !== '—' ? metrics.netReturn : null,
+                    metrics.trades !== '—'
+                      ? `${metrics.trades} ${metrics.trades === '1' ? 'trade' : 'trades'}`
+                      : null,
+                  ].filter((value): value is string => value !== null)
+                : [];
+            const period = experimentPeriod(item, timeZone);
+
+            return (
+              <li
+                key={id || `${identity}-${index}`}
+                className="space-y-1 py-3 first:pt-0 last:pb-0"
+              >
+                {id ? (
+                  <Link
+                    href={`/experiments/${encodeURIComponent(id)}`}
+                    className="font-medium text-atlas-foreground underline-offset-4 hover:underline"
+                  >
+                    {identity}
+                  </Link>
+                ) : (
+                  <span className="font-medium">{identity}</span>
+                )}
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-atlas-foreground-muted">
+                  <span className="status status-muted">{status}</span>
+                  <span>{strategyIdentity(item)}</span>
+                </div>
+                {metricParts.length > 0 && (
+                  <p className="text-sm tabular-nums text-atlas-foreground-muted">
+                    {metricParts.join(' · ')}
+                  </p>
+                )}
+                {period !== 'Period unavailable' && (
+                  <p className="text-xs text-atlas-foreground-muted">
+                    {period}
+                  </p>
+                )}
+              </li>
+            );
+          })}
+        </ul>
       )}
-      <Link
-        href="/experiments"
-        className="inline-flex text-sm font-medium text-atlas-primary underline-offset-4 hover:underline"
-      >
-        Open Experiments
-      </Link>
+      <div className="flex flex-wrap gap-3">
+        <Link href="/experiments" className="action-secondary">
+          View Experiments
+        </Link>
+        <Link href="/experiments/new" className="action-primary">
+          Run Experiment
+        </Link>
+      </div>
     </section>
   );
 }
@@ -200,27 +274,19 @@ export function Overview() {
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-8">
       <header className="max-w-3xl">
-        <p className="mb-2 text-sm font-medium text-atlas-primary">
-          Trader workspace
-        </p>
         <h1
           id="overview-heading"
           className="text-3xl font-semibold tracking-tight"
         >
           Overview
         </h1>
-        <p className="mt-3 text-sm leading-6 text-atlas-foreground-muted">
-          Atlas is where the trader creates methodologies, runs deterministic
-          historical experiments, and operates approved methodology through
-          PAPER.
-        </p>
       </header>
-      <div className="grid gap-6 lg:grid-cols-2">
-        <div className="rounded-lg border border-atlas-border bg-atlas-surface p-5 lg:col-span-2">
+      <div className="grid gap-6 lg:grid-cols-3">
+        <div className="rounded-lg border border-atlas-border bg-atlas-surface p-5 lg:col-span-3">
           <PaperBrokerStateSection compact />
-        </div>
-        <div className="rounded-lg border border-atlas-border bg-atlas-surface p-5">
-          <ReadinessSection />
+          <div className="mt-6 border-t border-atlas-border pt-6">
+            <PaperActiveStatusSection compact />
+          </div>
         </div>
         <div className="rounded-lg border border-atlas-border bg-atlas-surface p-5">
           <StrategySection />
@@ -228,49 +294,10 @@ export function Overview() {
         <div className="rounded-lg border border-atlas-border bg-atlas-surface p-5">
           <ExperimentSection />
         </div>
-        <div className="space-y-6 rounded-lg border border-atlas-border bg-atlas-surface p-5">
-          <PaperCapabilitySection compact />
-          <PaperActiveStatusSection compact />
-        </div>
-        <div className="space-y-6 rounded-lg border border-atlas-border bg-atlas-surface p-5 lg:col-span-2">
-          <HistoricalCapabilitySection compact />
-          <div className="border-t border-atlas-border pt-6">
-            <SnapshotOptionsSection compact />
-          </div>
+        <div className="rounded-lg border border-atlas-border bg-atlas-surface p-5">
+          <SystemSection />
         </div>
       </div>
-      <section
-        aria-labelledby="next-steps-heading"
-        className="border-t border-atlas-border pt-6"
-      >
-        <h2 id="next-steps-heading" className="text-lg font-semibold">
-          Next steps
-        </h2>
-        <p className="mt-1 text-sm text-atlas-foreground-muted">
-          Continue through the read-only lifecycle surfaces and existing
-          research workflows.
-        </p>
-        <nav
-          aria-label="Overview next steps"
-          className="mt-4 flex flex-wrap gap-3"
-        >
-          <Link href="/strategies" className="action-secondary">
-            Review Strategies
-          </Link>
-          <Link href="/experiments/new" className="action-primary">
-            Configure an Experiment
-          </Link>
-          <Link href="/experiments" className="action-secondary">
-            Inspect Experiments
-          </Link>
-          <Link href="/data" className="action-secondary">
-            Inspect Data
-          </Link>
-          <Link href="/paper" className="action-secondary">
-            View PAPER status
-          </Link>
-        </nav>
-      </section>
     </div>
   );
 }
