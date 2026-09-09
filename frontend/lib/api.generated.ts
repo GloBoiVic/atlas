@@ -329,6 +329,108 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/v1/paper/capability': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Capability */
+    get: operations['capability_api_v1_paper_capability_get'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/paper/activations': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Activate */
+    post: operations['activate_api_v1_paper_activations_post'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/paper/activations/active': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Active */
+    get: operations['active_api_v1_paper_activations_active_get'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/paper/activations/{activation_id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Detail */
+    get: operations['detail_api_v1_paper_activations__activation_id__get'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/paper/activations/{activation_id}/stop': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Stop */
+    post: operations['stop_api_v1_paper_activations__activation_id__stop_post'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/paper/activations/{activation_id}/reconcile': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Reconcile */
+    post: operations['reconcile_api_v1_paper_activations__activation_id__reconcile_post'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -755,6 +857,182 @@ export interface components {
       startedAt: string | null;
       /** Finishedat */
       finishedAt: string | null;
+    };
+    /**
+     * PaperActivationRequest
+     * @description Exact non-secret activation request accepted by the PAPER boundary.
+     */
+    PaperActivationRequest: {
+      /**
+       * Activationrequestid
+       * Format: uuid
+       */
+      activationRequestId: string;
+      /**
+       * Strategyversionid
+       * Format: uuid
+       */
+      strategyVersionId: string;
+      /** Parameters */
+      parameters: {
+        [key: string]: unknown;
+      };
+      /** Riskpertrade */
+      riskPerTrade: number | string;
+      /**
+       * Confirmation
+       * @constant
+       */
+      confirmation: 'ACTIVATE_PAPER';
+    };
+    /** PaperCapabilityResponse */
+    PaperCapabilityResponse: {
+      /** Provider */
+      provider: string;
+      /** Environment */
+      environment: string;
+      /** Basecurrency */
+      baseCurrency: string;
+      /** Instrument */
+      instrument: string;
+      /** Analyticalresolution */
+      analyticalResolution: string;
+      /** Analyticalpricecomponent */
+      analyticalPriceComponent: string;
+      /** Pollintervalseconds */
+      pollIntervalSeconds: number;
+      /** Tokenconfigured */
+      tokenConfigured: boolean;
+      /** Accountconfigured */
+      accountConfigured: boolean;
+      /** Configuredaccountid */
+      configuredAccountId: string | null;
+      /** Available */
+      available: boolean;
+      /** Reasoncode */
+      reasonCode: string | null;
+      /** Activationrequired */
+      activationRequired: boolean;
+    };
+    /** PaperRuntimeActivationResponse */
+    PaperRuntimeActivationResponse: {
+      /**
+       * Activationid
+       * Format: uuid
+       */
+      activationId: string;
+      /**
+       * Strategyversionid
+       * Format: uuid
+       */
+      strategyVersionId: string;
+      /** Strategykey */
+      strategyKey: string;
+      /** Strategyversionnumber */
+      strategyVersionNumber: number;
+      /** Sourcefingerprint */
+      sourceFingerprint: string;
+      /** Implementationkey */
+      implementationKey: string;
+      /** Validatedparametersnapshot */
+      validatedParameterSnapshot: {
+        [key: string]: unknown;
+      };
+      /** Parameterfingerprint */
+      parameterFingerprint: string;
+      /** Provider */
+      provider: string;
+      /** Environment */
+      environment: string;
+      /** Provideraccountid */
+      providerAccountId: string;
+      /** Basecurrency */
+      baseCurrency: string;
+      /** Instrument */
+      instrument: string;
+      /** Riskpertrade */
+      riskPerTrade: string;
+      /** Stateorigin */
+      stateOrigin: string;
+      /** Runtimepolicyversion */
+      runtimePolicyVersion: string;
+      /** Pollintervalseconds */
+      pollIntervalSeconds: number;
+      /** Approvalkind */
+      approvalKind: string;
+      /** Approvalcode */
+      approvalCode: string;
+      /** Requestedat */
+      requestedAt: string;
+      /** Lifecyclestate */
+      lifecycleState: string;
+      /** Statereasoncode */
+      stateReasonCode: string | null;
+      /** Statedetail */
+      stateDetail: string | null;
+      /** Statechangedat */
+      stateChangedAt: string;
+      /** Operationalphase */
+      operationalPhase: string;
+      /** Lastoperationalreasoncode */
+      lastOperationalReasonCode: string | null;
+      /** Lastoperationalat */
+      lastOperationalAt: string | null;
+      /** Strategystate */
+      strategyState: {
+        [key: string]: unknown;
+      } | null;
+      /** Strategystatefingerprint */
+      strategyStateFingerprint: string | null;
+      /** Lastfrontierend */
+      lastFrontierEnd: string | null;
+      /** Lastcycleid */
+      lastCycleId: string | null;
+      /** Controlversion */
+      controlVersion: number;
+      /** Updatedat */
+      updatedAt: string;
+    };
+    /** PaperRuntimeActivationResultResponse */
+    PaperRuntimeActivationResultResponse: {
+      activation: components['schemas']['PaperRuntimeActivationResponse'];
+      /** Replayed */
+      replayed: boolean;
+    };
+    /** PaperRuntimeReconcileResponse */
+    PaperRuntimeReconcileResponse: {
+      /**
+       * Activationid
+       * Format: uuid
+       */
+      activationId: string;
+      /** Attemptid */
+      attemptId: string | null;
+      /** Performed */
+      performed: boolean;
+      /** Reconciliationstatus */
+      reconciliationStatus: string | null;
+      /** Executionoutcome */
+      executionOutcome: string | null;
+      /** Stale */
+      stale: boolean;
+    };
+    /** PaperRuntimeStatusResponse */
+    PaperRuntimeStatusResponse: {
+      activation: components['schemas']['PaperRuntimeActivationResponse'];
+      /** Currentfinancialpositionstate */
+      currentFinancialPositionState: string | null;
+      /** Executionoutcome */
+      executionOutcome: string | null;
+      /** Reconciliationstatus */
+      reconciliationStatus: string;
+      /** Terminalruntimestatedoesnotproveflat */
+      terminalRuntimeStateDoesNotProveFlat: boolean;
+    };
+    /** PaperStopRequest */
+    PaperStopRequest: {
+      /** Reason */
+      reason: string;
     };
     /** PeriodRequest */
     PeriodRequest: {
@@ -1688,6 +1966,176 @@ export interface operations {
         };
         content: {
           'application/json': unknown;
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  capability_api_v1_paper_capability_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['PaperCapabilityResponse'];
+        };
+      };
+    };
+  };
+  activate_api_v1_paper_activations_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['PaperActivationRequest'];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['PaperRuntimeActivationResultResponse'];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  active_api_v1_paper_activations_active_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['PaperRuntimeStatusResponse'];
+        };
+      };
+    };
+  };
+  detail_api_v1_paper_activations__activation_id__get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        activation_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['PaperRuntimeStatusResponse'];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  stop_api_v1_paper_activations__activation_id__stop_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        activation_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['PaperStopRequest'];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['PaperRuntimeActivationResponse'];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
+        };
+      };
+    };
+  };
+  reconcile_api_v1_paper_activations__activation_id__reconcile_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        activation_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['PaperRuntimeReconcileResponse'];
         };
       };
       /** @description Validation Error */

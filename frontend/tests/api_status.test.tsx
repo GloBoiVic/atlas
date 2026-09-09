@@ -26,7 +26,7 @@ describe('API status', () => {
 
     render(<ApiStatus />);
 
-    expect(await screen.findByText('PAPER · connected')).toBeVisible();
+    expect(await screen.findByText('API ready')).toBeVisible();
     expect(fetch).toHaveBeenCalledWith(
       '/atlas-api/health/ready',
       expect.objectContaining({ headers: { Accept: 'application/json' } }),

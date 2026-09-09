@@ -5,13 +5,13 @@ import { AlertCircle, CheckCircle2, LoaderCircle } from 'lucide-react';
 import { atlasApi } from '../lib/api-client';
 
 export function ApiStatus() {
-  const [state, setState] = useState<'checking' | 'connected' | 'unavailable'>(
+  const [state, setState] = useState<'checking' | 'ready' | 'unavailable'>(
     'checking',
   );
   const check = useCallback(() => {
     setState('checking');
     atlasApi.ready().then(
-      () => setState('connected'),
+      () => setState('ready'),
       () => setState('unavailable'),
     );
   }, []);
@@ -19,7 +19,7 @@ export function ApiStatus() {
   useEffect(() => {
     let active = true;
     atlasApi.ready().then(
-      () => active && setState('connected'),
+      () => active && setState('ready'),
       () => active && setState('unavailable'),
     );
     return () => {
@@ -50,8 +50,8 @@ export function ApiStatus() {
   }
   return (
     <span className="status status-primary" role="status">
-      <CheckCircle2 aria-hidden className="size-3.5 text-atlas-positive" />{' '}
-      PAPER · connected
+      <CheckCircle2 aria-hidden className="size-3.5 text-atlas-positive" /> API
+      ready
     </span>
   );
 }

@@ -1,5 +1,10 @@
-import { redirect } from 'next/navigation';
+import { AppShell } from '../components/app-shell';
+import { Overview } from '../components/overview';
 
 export default function Home() {
-  redirect('/experiments');
+  return (
+    <AppShell>
+      <Overview />
+    </AppShell>
+  );
 }
