@@ -1,5 +1,34 @@
 # Completed
 
+<!-- completion-id: ui-01-trader-shell-read-only-overview -->
+## UI 01 - Trader Shell and Read-Only Overview - completion record
+
+- **Date/status:** 2026-09-08 - terminal closure; T001-T003 BUILD, R001 remediation,
+  independent validation, and independent review completed with no unresolved Critical
+  or Important findings. Three Minor accessibility observations remain documented and
+  deferred.
+- **Commit:** `1f9354c` Implement read-only trader overview shell; merge commit
+  `4901844` merged the feature branch into `main`.
+- **Scope:** Added the responsive Atlas lifecycle shell with Overview, Strategies,
+  Experiments, PAPER, and Data navigation; read-only Overview, PAPER current-status,
+  and historical-data surfaces; typed safe GET client methods and fresh generated API
+  types; focused frontend tests and Playwright smoke coverage. PAPER remains observable
+  but uncontrollable, with no historical activation reconstruction or unsupported
+  broker/account/performance claims.
+- **Validation:** Focused and full frontend tests passed (57 tests); lint, typecheck,
+  changed-file formatting, build, generated-client freshness, and diff checks passed.
+  Safari desktop/390px checks passed for routes, overflow, focusability, wrapped facts,
+  and GET-only PAPER reads. Playwright discovery passed, while execution was blocked by
+  the occupied API port and missing dedicated `ATLAS_E2E_DATABASE_URL`. Five unrelated
+  baseline formatter failures and existing lint warnings remain documented.
+- **Review:** Independent review **PASS** with no unresolved Critical or Important
+  findings. Minor findings are limited to Overview/API retry focus styling and a shared
+  shell skip link, as recorded in `dispatch/workstreams/ui-01-trader-shell-read-only-overview/REVIEW.md`.
+- **Git/state:** `solo/ui-01-trader-shell-read-only-overview` and `main` were pushed to
+  GitHub; `dispatch/ACTIVE.md` was cleared; all workstream and R001 evidence is preserved.
+  No credentials, `atlas-runtime`, PAPER activation, reconciliation, broker mutation,
+  Trade 11, or Dogfood 02 action occurred.
+
 <!-- completion-id: dogfood-02-account-details-position-projection -->
 ## Dogfood 02 — Account Details Position Projection — completion record
 
