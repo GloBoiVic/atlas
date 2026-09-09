@@ -1,5 +1,33 @@
 # Completed
 
+<!-- completion-id: paper-visibility-01-current-broker-trade-read -->
+## PAPER Visibility 01 - Current Broker Trade Read - completion record
+
+- **Date/status:** 2026-09-09 - terminal closure; T001 BUILD, R001 remediation,
+  validation, and review completed with no unresolved Critical or Important findings.
+  Follow-up trader-approved P/L display precision and test placement changes were
+  included before merge.
+- **Commit:** `a787966` Implement current PAPER broker visibility; merge commit
+  `f10924a` merged the feature branch into `main`.
+- **Scope:** Added the read-only current OANDA Practice broker Trade projection to
+  Overview and PAPER, preserving the distinction between broker exposure and Atlas
+  runtime state. Added trader-facing instrument formatting, semantic positive and
+  negative P/L colors, and two-decimal display truncation while preserving exact API
+  decimal strings. No broker mutation, activation, reconciliation, Risk, persistence,
+  LIVE, or capital-capable behavior was introduced.
+- **Validation:** `npm run check:web` passed with 87 frontend tests and a successful
+  production build; focused broker/PAPER tests passed with 18 tests. Backend broker
+  state tests and the original workstream validation passed. Existing 242 ESLint
+  warnings remain documented as unused-import/properties debt in decomposed
+  Experiment modules; there are no ESLint errors.
+- **Review:** Parent workstream review **PASS** and R001 remediation review **PASS
+  WITH CONCERNS**. Concerns were limited to worker availability and the known E2E
+  harness limitation; no product blocker remained.
+- **Git/state:** `solo/paper-visibility-01-current-broker-trade-read` and `main`
+  were pushed to GitHub; `dispatch/ACTIVE.md` was cleared. No credentials,
+  `atlas-runtime`, PAPER activation, reconciliation, broker mutation, Trade 11, or
+  Dogfood 02 action occurred.
+
 <!-- completion-id: ui-01-trader-shell-read-only-overview -->
 ## UI 01 - Trader Shell and Read-Only Overview - completion record
 
