@@ -2,8 +2,10 @@
 
 import { useCallback } from 'react';
 import { atlasApi } from '../lib/api-client';
+import { formatInstrumentDisplay } from '../lib/instrument';
 import { formatInstant } from '../lib/time';
 import { useDisplayTimeZone } from '../app/providers';
+import { PaperBrokerStateSection } from './paper-broker-state';
 import {
   EmptyState,
   LoadingState,
@@ -58,7 +60,10 @@ export function PaperCapabilitySection({
           <dl className="grid gap-x-6 gap-y-4 sm:grid-cols-2">
             <Fact label="Provider" value={state.data.provider} />
             <Fact label="Environment" value={state.data.environment} />
-            <Fact label="Instrument" value={state.data.instrument} />
+            <Fact
+              label="Instrument"
+              value={formatInstrumentDisplay(state.data.instrument)}
+            />
             <Fact
               label="Availability"
               value={state.data.available ? 'Available' : 'Unavailable'}
@@ -142,15 +147,14 @@ export function PaperActiveStatusSection({
     >
       <div>
         <h2 id="paper-current-status-heading" className="text-lg font-semibold">
-          PAPER current status
+          Runtime status
         </h2>
         <p className="mt-1 text-sm text-atlas-foreground-muted">
-          This is a current-state read, not a session history.
+          Runtime is Atlas activation state, not broker exposure. This is a
+          current-state read, not a session history.
         </p>
       </div>
-      {state.status === 'loading' && (
-        <LoadingState label="current PAPER status" />
-      )}
+      {state.status === 'loading' && <LoadingState label="Runtime status" />}
       {state.status === 'error' && (
         <ReadError error={state.error} retry={retry} />
       )}
@@ -181,10 +185,14 @@ export function PaperStatus() {
           PAPER
         </h1>
         <p className="mt-3 text-sm leading-6 text-atlas-foreground-muted">
-          Current PAPER capability and runtime status are observable here, but
-          this surface does not control the runtime or broker.
+          Current PAPER capability, broker exposure, and runtime status are
+          observable here, but this surface does not control the runtime or
+          broker.
         </p>
       </header>
+      <div className="rounded-lg border border-atlas-border bg-atlas-surface p-5">
+        <PaperBrokerStateSection />
+      </div>
       <div className="grid gap-6 lg:grid-cols-2">
         <div className="space-y-6 rounded-lg border border-atlas-border bg-atlas-surface p-5">
           <PaperCapabilitySection />

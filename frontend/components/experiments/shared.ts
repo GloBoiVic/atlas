@@ -1,5 +1,6 @@
 'use client';
 import { ApiError } from '../../lib/api-client';
+import { formatInstrumentDisplay } from '../../lib/instrument';
 import {
   formatChartTime,
   formatChartTick,
@@ -113,7 +114,11 @@ export const timeframeIdentity = (data: unknown) => {
   );
 };
 export const marketIdentity = (data: unknown) =>
-  [instrumentIdentity(data), venueIdentity(data), accountIdentity(data)]
+  [
+    formatInstrumentDisplay(instrumentIdentity(data)),
+    venueIdentity(data),
+    accountIdentity(data),
+  ]
     .filter((value) => !value.endsWith(' unavailable'))
     .join(' · ');
 export const statusOf = (value: unknown): Status =>
@@ -160,7 +165,7 @@ export const snapshotLabel = (item: Json) => {
   const bars = Number.isFinite(count)
     ? ` · ${count.toLocaleString()} bars`
     : '';
-  return `EUR/USD · ${compact(item.coverageStart)} → ${compact(item.coverageEnd)} · ${product}${bars}`;
+  return `${formatInstrumentDisplay('EUR/USD')} · ${compact(item.coverageStart)} → ${compact(item.coverageEnd)} · ${product}${bars}`;
 };
 const snapshotFactsKey = (item: Json) => {
   // Use the rendered authoritative facts as the identity key. If two

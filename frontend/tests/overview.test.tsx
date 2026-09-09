@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   listStrategies: vi.fn(),
   listExperiments: vi.fn(),
   paperCapability: vi.fn(),
+  paperBrokerState: vi.fn(),
   activePaperStatus: vi.fn(),
   historicalCapability: vi.fn(),
   configurationOptions: vi.fn(),
@@ -63,6 +64,22 @@ beforeEach(() => {
     available: true,
     reasonCode: null,
   });
+  mocks.paperBrokerState.mockResolvedValue({
+    provider: 'OANDA',
+    environment: 'PRACTICE',
+    accountCurrency: 'USD',
+    openTrades: [
+      {
+        tradeId: '7',
+        instrument: 'EUR_USD',
+        openTime: '2026-01-05T08:00:00.123456Z',
+        openPrice: '1.16188',
+        currentUnits: '1000',
+        state: 'OPEN',
+        unrealizedPl: '12.34',
+      },
+    ],
+  });
   mocks.activePaperStatus.mockResolvedValue(null);
   mocks.historicalCapability.mockResolvedValue({
     provider: 'OANDA Practice',
@@ -91,7 +108,9 @@ describe('Overview surface', () => {
       screen.getByText('2 returned items on the visible first page.'),
     ).toBeInTheDocument();
     expect(screen.getByText('COMPLETED')).toBeInTheDocument();
-    expect(screen.getAllByText('OANDA Practice')).toHaveLength(2);
+    expect(screen.getAllByText('OANDA Practice').length).toBeGreaterThanOrEqual(
+      3,
+    );
     expect(screen.getByText('1 returned options')).toBeInTheDocument();
     expect(screen.getByText('sha256:overview-snapshot')).toBeInTheDocument();
     expect(
@@ -105,6 +124,7 @@ describe('Overview surface', () => {
     mocks.listStrategies.mockReturnValue(pending);
     mocks.listExperiments.mockReturnValue(pending);
     mocks.paperCapability.mockReturnValue(pending);
+    mocks.paperBrokerState.mockReturnValue(pending);
     mocks.activePaperStatus.mockReturnValue(pending);
     mocks.historicalCapability.mockReturnValue(pending);
     mocks.configurationOptions.mockReturnValue(pending);
@@ -117,9 +137,8 @@ describe('Overview surface', () => {
       screen.getByText('Loading visible Experiments…'),
     ).toBeInTheDocument();
     expect(screen.getByText('Loading PAPER capability…')).toBeInTheDocument();
-    expect(
-      screen.getByText('Loading current PAPER status…'),
-    ).toBeInTheDocument();
+    expect(screen.getByText('Loading PAPER broker state…')).toBeInTheDocument();
+    expect(screen.getByText('Loading Runtime status…')).toBeInTheDocument();
     expect(
       screen.getByText('Loading historical data capability…'),
     ).toBeInTheDocument();
@@ -182,6 +201,154 @@ describe('Overview surface', () => {
       await screen.findByText('Strategy catalog offline'),
     ).toBeInTheDocument();
     expect(screen.getByText('sha256:overview-snapshot')).toBeInTheDocument();
-    expect(screen.getAllByText('OANDA Practice')).toHaveLength(2);
+    expect(screen.getAllByText('OANDA Practice').length).toBeGreaterThanOrEqual(
+      2,
+    );
+  });
+
+  it('shows broker exposure first with LONG derived from positive units', async () => {
+    mocks.paperBrokerState.mockResolvedValue({
+      provider: 'OANDA',
+      environment: 'PRACTICE',
+      accountCurrency: 'USD',
+      openTrades: [
+        {
+          tradeId: '7',
+          instrument: 'EUR_USD',
+          openTime: '2026-01-05T08:00:00.123456Z',
+          openPrice: '1.10000',
+          currentUnits: '5000',
+          state: 'OPEN',
+          unrealizedPl: '10.00',
+        },
+      ],
+    });
+    render(<Overview />);
+    expect(await screen.findByText('LONG')).toBeInTheDocument();
+    expect(screen.getByText('5,000 units')).toBeInTheDocument();
+    expect(screen.getAllByText('EURUSD').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('1.10000')).toBeInTheDocument();
+    expect(screen.getByText('$10.00')).toBeInTheDocument();
+    const headings = screen.getAllByRole('heading');
+    const brokerIdx = headings.findIndex((h) =>
+      h.textContent?.includes('PAPER broker state'),
+    );
+    const readinessIdx = headings.findIndex((h) =>
+      h.textContent?.includes('API and database readiness'),
+    );
+    expect(brokerIdx).toBeGreaterThanOrEqual(0);
+    expect(readinessIdx).toBeGreaterThanOrEqual(0);
+    expect(brokerIdx).toBeLessThan(readinessIdx);
+  });
+
+  it('shows SHORT derived from negative units with absolute quantity', async () => {
+    mocks.paperBrokerState.mockResolvedValue({
+      provider: 'OANDA',
+      environment: 'PRACTICE',
+      accountCurrency: 'USD',
+      openTrades: [
+        {
+          tradeId: '9',
+          instrument: 'EUR_USD',
+          openTime: '2026-01-05T08:00:00Z',
+          openPrice: '1.20000',
+          currentUnits: '-390663',
+          state: 'OPEN',
+          unrealizedPl: '-410.20',
+        },
+      ],
+    });
+    render(<Overview />);
+    expect(await screen.findByText('SHORT')).toBeInTheDocument();
+    expect(screen.getByText('390,663 units')).toBeInTheDocument();
+    expect(screen.getByText('-$410.20')).toBeInTheDocument();
+  });
+
+  it('shows multiple Trades distinct without netting', async () => {
+    mocks.paperBrokerState.mockResolvedValue({
+      provider: 'OANDA',
+      environment: 'PRACTICE',
+      accountCurrency: 'USD',
+      openTrades: [
+        {
+          tradeId: '3',
+          instrument: 'EUR_USD',
+          openTime: '2026-01-05T08:00:00Z',
+          openPrice: '1.1',
+          currentUnits: '100',
+          state: 'OPEN',
+          unrealizedPl: '1.00',
+        },
+        {
+          tradeId: '4',
+          instrument: 'EUR_USD',
+          openTime: '2026-01-05T08:01:00Z',
+          openPrice: '1.2',
+          currentUnits: '-200',
+          state: 'CLOSE_WHEN_TRADEABLE',
+          unrealizedPl: '-2.00',
+        },
+      ],
+    });
+    render(<Overview />);
+    expect(await screen.findAllByText('EURUSD')).not.toHaveLength(0);
+    expect(screen.getByText('LONG')).toBeInTheDocument();
+    expect(screen.getByText('SHORT')).toBeInTheDocument();
+    expect(screen.getByText('100 units')).toBeInTheDocument();
+    expect(screen.getByText('200 units')).toBeInTheDocument();
+  });
+
+  it('shows No open broker trades only for successful empty', async () => {
+    mocks.paperBrokerState.mockResolvedValue({
+      provider: 'OANDA',
+      environment: 'PRACTICE',
+      accountCurrency: 'USD',
+      openTrades: [],
+    });
+    render(<Overview />);
+    expect(
+      await screen.findByText('No open broker trades.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Broker unavailable')).not.toBeInTheDocument();
+  });
+
+  it('shows Broker unavailable on failure not flat', async () => {
+    mocks.paperBrokerState.mockRejectedValue(
+      new Error('Current broker state is unavailable.'),
+    );
+    render(<Overview />);
+    expect(await screen.findByText('Broker unavailable')).toBeInTheDocument();
+    expect(
+      screen.queryByText('No open broker trades.'),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText('Flat')).not.toBeInTheDocument();
+  });
+
+  it('uses display timezone for opened time and refresh is GET-only', async () => {
+    const brokerData = {
+      provider: 'OANDA',
+      environment: 'PRACTICE',
+      accountCurrency: 'USD',
+      openTrades: [
+        {
+          tradeId: '7',
+          instrument: 'EUR_USD',
+          openTime: '2026-01-05T08:00:00.123456Z',
+          openPrice: '1.1',
+          currentUnits: '100',
+          state: 'OPEN',
+          unrealizedPl: '1.00',
+        },
+      ],
+    };
+    mocks.paperBrokerState.mockResolvedValue(brokerData);
+    render(<Overview />);
+    expect(await screen.findByText('PAPER broker state')).toBeInTheDocument();
+    // Refresh button exists and is not a mutation
+    const refresh = screen.getAllByRole('button', { name: /Refresh/ })[0];
+    expect(refresh).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Buy|Sell|Close|Activate|Stop|Reconcile/),
+    ).not.toBeInTheDocument();
   });
 });

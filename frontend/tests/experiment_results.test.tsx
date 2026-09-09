@@ -170,6 +170,17 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe('completed Experiment result states', () => {
+  it('formats the instrument in the experiment status surface', async () => {
+    mocks.getExperiment.mockResolvedValue({
+      ...completed('0'),
+      identity: { instrument: { code: 'EUR_USD' } },
+    });
+    render(<ExperimentStatusPage />);
+
+    expect(await screen.findAllByText(/EURUSD/)).not.toHaveLength(0);
+    expect(screen.queryByText(/EUR_USD/)).not.toBeInTheDocument();
+  });
+
   it('renders VALUE, INFINITE, unavailable reasons, zero-Trade messaging, disclosures, and both charts', async () => {
     mocks.getExperiment.mockResolvedValue(completed('0'));
     const { unmount } = render(<ExperimentStatusPage />);
@@ -339,7 +350,7 @@ describe('completed Experiment result states', () => {
 
     expect(await screen.findByText('Strategy parameters')).toBeInTheDocument();
     expect(screen.getByText('Confirmation bars')).toBeInTheDocument();
-    expect(screen.getByText(/0\.0001/)).toBeInTheDocument();
+    expect(screen.getAllByText(/0\.0001/).length).toBeGreaterThanOrEqual(1);
     expect(
       await screen.findByText('Persisted Strategy evidence'),
     ).toBeInTheDocument();

@@ -10,12 +10,20 @@ describe('UTC input and display time contract', () => {
     expect(parseUtcInput('2026-03-08T02:15:00')).toBeNull();
   });
   it('round-trips instants through UTC fields independent of Chicago DST', () => {
-    expect(utcInputFromInstant('2026-03-08T02:15:00Z')).toBe('2026-03-08T02:15');
-    expect(utcInputFromInstant('2026-11-01T01:45:00Z')).toBe('2026-11-01T01:45');
+    expect(utcInputFromInstant('2026-03-08T02:15:00Z')).toBe(
+      '2026-03-08T02:15',
+    );
+    expect(utcInputFromInstant('2026-11-01T01:45:00Z')).toBe(
+      '2026-11-01T01:45',
+    );
     expect(utcInputFromInstant('2026-03-08T02:15')).toBe('2026-03-08T02:15');
   });
   it('distinguishes fall-back abbreviations in the selected display zone', () => {
-    expect(formatInstant('2026-11-01T06:30:00Z', 'America/Chicago')).toContain('CDT');
-    expect(formatInstant('2026-11-01T07:30:00Z', 'America/Chicago')).toContain('CST');
+    expect(formatInstant('2026-11-01T06:30:00Z', 'America/Chicago')).toContain(
+      'CDT',
+    );
+    expect(formatInstant('2026-11-01T07:30:00Z', 'America/Chicago')).toContain(
+      'CST',
+    );
   });
 });

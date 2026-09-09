@@ -34,12 +34,14 @@ describe('comparison API client contract', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     await atlasApi.paperCapability();
+    await atlasApi.paperBrokerState();
     await atlasApi.activePaperStatus();
     await atlasApi.historicalCapability();
     await atlasApi.activeHistoricalLoad();
 
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
       '/atlas-api/api/v1/paper/capability',
+      '/atlas-api/api/v1/paper/broker-state',
       '/atlas-api/api/v1/paper/activations/active',
       '/atlas-api/api/v1/historical-data/capability',
       '/atlas-api/api/v1/historical-data/load-requests/active',
@@ -47,6 +49,22 @@ describe('comparison API client contract', () => {
     expect(
       fetchMock.mock.calls.every(([, init]) => init?.method === undefined),
     ).toBe(true);
+  });
+
+  it('does not map paper broker 404 to empty', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+        json: async () => ({
+          error: { code: 'SOME_NOT_FOUND', message: 'not found' },
+        }),
+      }),
+    );
+    await expect(atlasApi.paperBrokerState()).rejects.toMatchObject({
+      code: 'SOME_NOT_FOUND',
+    });
   });
 
   it('represents missing active PAPER and historical loads as null', async () => {

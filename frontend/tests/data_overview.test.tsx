@@ -64,6 +64,8 @@ describe('Data read-only surface', () => {
     expect(screen.getByText('1000')).toBeInTheDocument();
     expect(screen.getByText(/Gap Count/)).toBeInTheDocument();
     expect(screen.getByText('0')).toBeInTheDocument();
+    expect(screen.getByText('EURUSD')).toBeInTheDocument();
+    expect(screen.queryByText('EUR/USD')).not.toBeInTheDocument();
     expect(screen.getAllByText(/Dec 31, 2023/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/EST/).length).toBeGreaterThan(0);
     expect(

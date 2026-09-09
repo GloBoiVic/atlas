@@ -14,6 +14,7 @@ import {
   PaperActiveStatusSection,
   PaperCapabilitySection,
 } from './paper-status';
+import { PaperBrokerStateSection } from './paper-broker-state';
 import {
   HistoricalCapabilitySection,
   SnapshotOptionsSection,
@@ -215,6 +216,9 @@ export function Overview() {
         </p>
       </header>
       <div className="grid gap-6 lg:grid-cols-2">
+        <div className="rounded-lg border border-atlas-border bg-atlas-surface p-5 lg:col-span-2">
+          <PaperBrokerStateSection compact />
+        </div>
         <div className="rounded-lg border border-atlas-border bg-atlas-surface p-5">
           <ReadinessSection />
         </div>

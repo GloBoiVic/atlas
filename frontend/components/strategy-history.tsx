@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import { AlertCircle, ArrowLeft, LoaderCircle } from 'lucide-react';
 import { AppShell } from './app-shell';
 import { atlasApi } from '../lib/api-client';
+import { formatInstrumentDisplay } from '../lib/instrument';
 import { formatInstant } from '../lib/time';
 
 type Version = {
@@ -246,8 +247,11 @@ export function StrategyDetailPage() {
                         Market requirements
                       </dt>
                       <dd className="font-medium">
-                        {v.marketRequirements?.instrument ??
-                          'Instrument unavailable'}{' '}
+                        {v.marketRequirements?.instrument
+                          ? formatInstrumentDisplay(
+                              v.marketRequirements.instrument,
+                            )
+                          : 'Instrument unavailable'}{' '}
                         · {v.marketRequirements?.resolution ?? v.timeframe} ·{' '}
                         {v.marketRequirements?.priceComponent ??
                           'Price basis unavailable'}
