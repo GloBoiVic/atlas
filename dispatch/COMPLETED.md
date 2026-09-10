@@ -1,5 +1,15 @@
 # Completed
 
+<!-- completion-id: paper-control-01-trader-activation-supervision -->
+## PAPER Control 01 — Trader Activation & Supervision
+
+- **Date/status:** 2026-09-09 — terminal closure; T001/T002/T003 BUILD, root validation, R001 remediation BUILD/VALIDATE/REVIEW, and final review completed with no unresolved Critical or Important findings.
+- **Commit:** `319ed63` Implement PAPER trader activation supervision; fast-forward merged into `main`.
+- **Scope:** Added the typed PAPER activation/detail/STOP client seam, exact decimal-string Risk conversion, deliberate StrategyVersion activation review with stable request identity and typed approval, current-session supervision with bounded recurring status polling, and runtime-only STOP controls. Preserved existing Risk, Strategy, runtime, execution, broker, persistence, API route, migration, and UI 03 history semantics. R001 corrected unchanged non-terminal polling and compact blocked/failed status styling.
+- **Validation:** T001 focused tests passed with 25 tests; T002 with 12; T003 with 41; root web checks passed with 143 frontend tests, typecheck, formatting, build, and zero lint errors; safe backend authority checks passed with 200 tests, Pyright, Alembic, and diff checks. R001 targeted validation passed with 44 tests and independent review **PASS**. The immutable root validation records F-001/F-002, both closed by R001; F-003 remains a non-blocking Minor UI guideline concern and mocked visual validation was unavailable under the no-live-operation constraint.
+- **Review:** R001 independent REVIEW **PASS** with no unresolved Critical or Important findings. No credentials, `atlas-runtime`, PAPER activation, OANDA read, broker mutation, or capital-capable operation occurred.
+- **Git/state:** Feature branch pushed to GitHub; `main` fast-forward merged from `solo/paper-control-01-trader-activation-supervision`; active dispatch state cleared.
+
 <!-- completion-id: ui-03-paper-trade-outcome-visibility -->
 ## UI 03 - PAPER Trade Outcome Visibility
 
