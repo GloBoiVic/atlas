@@ -1,5 +1,28 @@
 # Completed
 
+<!-- completion-id: ui-03-paper-trade-outcome-visibility -->
+## UI 03 - PAPER Trade Outcome Visibility
+
+- **Date/status:** 2026-09-09 - terminal closure; T001/T002 BUILD, R001/R002 remediation,
+  independent validation, independent review, and the requested compact Overview refinement
+  completed with no unresolved Critical or Important findings.
+- **Commit:** `4b1632b` Implement PAPER trade outcome visibility; merge commit `bf44855`
+  merged the feature branch into `main`.
+- **Scope:** Added the bounded database-only completed PAPER Trade history read and read-only
+  API, generated client contract, fuller PAPER history, and compact Overview outcomes. The
+  refinement presents compact scan-friendly rows with trader-facing instruments, human units,
+  realized P/L, Strategy/version, close time, Entry/Exit/Stop/Target facts, and secondary
+  unavailable-cause copy. No execution, reconciliation, Risk, persistence, migration, or
+  broker semantics changed.
+- **Validation:** Focused backend evidence passed with 30 tests; focused frontend validation
+  passed with 30 tests; `npm run check:web` passed formatting, TypeScript, 95 frontend tests,
+  production build, and ESLint with the existing 242 warnings only. `git diff --check` passed.
+- **Review:** Final independent REVIEW **PASS** with no unresolved Critical or Important
+  findings. Dogfood 02 remains `Exit cause unavailable` when exact durable evidence is absent.
+- **Git/state:** Feature branch pushed to GitHub; `main` merged and ready to push. The
+  workstream is closed and `dispatch/ACTIVE.md` is cleared. No credentials, `atlas-runtime`,
+  PAPER activation, reconciliation, broker mutation, or capital-capable action occurred.
+
 <!-- completion-id: dogfood-02-protected-trade-lifecycle-closure -->
 ## Dogfood 02 - Protected Trade Lifecycle Closure
 
