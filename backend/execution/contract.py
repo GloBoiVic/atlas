@@ -14,8 +14,8 @@ class ExecutionInputError(ValueError):
 class ExecutionRejection(StrEnum):
     NOT_TRIGGERED = "NOT_TRIGGERED"
     INVALID_SLIPPAGE = "INVALID_SLIPPAGE"
-    # Retained as compatibility values for the Phase 3 runner; Phase 4 never
-    # uses them for a valid historical observation.
+    # Retained as compatibility values for the legacy simulated-execution path;
+    # current historical execution does not use them for a valid observation.
     UNSUPPORTED_PHASE3_STOP_GAP = "UNSUPPORTED_PHASE3_STOP_GAP"
     UNSUPPORTED_PHASE3_INTRABAR_TRIGGER = "UNSUPPORTED_PHASE3_INTRABAR_TRIGGER"
 
@@ -116,7 +116,7 @@ class ExecutionObservation:
 
 @dataclass(frozen=True, slots=True)
 class Fill:
-    """One complete, in-memory Phase 3 Fill; persistence applies it later."""
+    """One complete, in-memory Fill; persistence applies it later."""
 
     order_id: UUID
     sequence_number: int

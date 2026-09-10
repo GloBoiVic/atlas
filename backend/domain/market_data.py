@@ -1,4 +1,4 @@
-"""Canonical market observations accepted by the Phase 1 strategy boundary."""
+"""Canonical market observations accepted at the Strategy boundary."""
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta

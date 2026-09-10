@@ -2,9 +2,11 @@
 
 Atlas is a local-first, single-user algorithmic trading platform.
 
-The committed `main` branch currently supports historical EUR/USD research: historical OANDA Practice market data is loaded into immutable DatasetSnapshots, registered immutable StrategyVersions are evaluated through deterministic Experiments, centralized Risk and simulated execution produce auditable trading facts, and results and Trades can be inspected through the application.
+The committed `main` branch currently supports historical EUR/USD research: historical OANDA Practice market data is loaded into immutable DatasetSnapshots, registered immutable StrategyVersions are evaluated through deterministic Experiments, centralized Risk and simulated execution produce auditable trading facts, and results and Trades can be inspected through the application. It also contains guarded OANDA Practice PAPER execution/runtime/activation/reconciliation capability for the supported EUR/USD baseline.
 
-PAPER/LIVE broker execution is not a committed-main capability unless the current implementation and tests explicitly show otherwise.
+Atlas is currently undeployed. Development-era prototype compatibility is not automatically permanent; retain it only when current behavior, deliberately retained evidence, or an explicit transition requires it.
+
+Starting Atlas, starting `atlas-runtime`, inspecting broker state, or possessing configured credentials does not authorize trading. PAPER activation is a separate guarded operation requiring explicit trader authorization and applicable runtime/reconciliation controls. LIVE broker execution is not a committed-main capability.
 
 ## Prerequisites
 
@@ -26,7 +28,7 @@ cp .env.example .env
 
 Set local database configuration in `.env`.
 
-A real OANDA Practice token is required only for workflows that call the external OANDA historical-data API. Keep credentials only in ignored environment files. Do not place credentials in commands, source files, committed fixtures, or logs.
+A real OANDA Practice token is required for workflows that call the external OANDA historical-data API and for guarded PAPER runtime or broker reads that call OANDA. Keep credentials only in ignored environment files. Do not place credentials in commands, source files, committed fixtures, or logs.
 
 Install dependencies:
 
@@ -116,7 +118,7 @@ http://localhost:3000
 
 ## Runtime process
 
-The committed runtime process currently provides database readiness and process lifecycle behavior.
+The committed runtime process currently provides database readiness, process lifecycle behavior, and guarded OANDA Practice PAPER runtime behavior.
 
 Check readiness:
 
@@ -130,7 +132,7 @@ Run the process:
 uv run atlas-runtime
 ```
 
-Do not assume that starting `atlas-runtime` activates PAPER or LIVE trading. Capital-capable runtime behavior must be demonstrated by current implementation and requires explicit trader authorization.
+Starting Atlas or `atlas-runtime`, inspecting broker state, or possessing configured credentials does not activate or authorize trading. PAPER activation is a separate guarded operation requiring explicit trader authorization and applicable runtime/reconciliation controls. Capital-capable runtime behavior must be demonstrated by current implementation and requires explicit trader authorization.
 
 ## Historical Experiment workflow
 
@@ -213,7 +215,7 @@ npm run test:e2e
 
 Permanent repository guidance is intentionally small:
 
-- `AGENTS.md` — how coding agents should locate authoritative context.
+- `AGENTS.md` — how coding agents should locate authoritative context and apply repository engineering rules.
 - `DOMAIN.md` — durable cross-cutting Atlas trading laws.
 - `README.md` — setup, operation, and supported workflow.
 - `dispatch/` — active and historical SoloFlow workstreams.

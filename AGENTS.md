@@ -1,6 +1,6 @@
 # Atlas
 
-Atlas is a single-user algorithmic trading platform for taking a trading methodology through controlled, reproducible research and eventually PAPER and LIVE operation.
+Atlas is a single-user algorithmic trading platform for controlled, reproducible research and guarded OANDA Practice PAPER operation.
 
 Atlas prioritizes correctness, reproducibility, capital safety, simplicity, auditability, and trader control over speculative abstraction or scale.
 
@@ -52,11 +52,11 @@ Do not create a parallel prose representation of the application.
 
 ## Current boundary
 
-Committed `main` supports historical EUR/USD research using OANDA Practice historical data, immutable DatasetSnapshots, deterministic Experiments, centralized Risk, simulated execution, and inspectable Trade/results evidence.
+Committed `main` supports historical EUR/USD research using OANDA Practice historical data, immutable DatasetSnapshots, deterministic Experiments, centralized Risk, simulated execution, and inspectable Trade/results evidence, plus guarded OANDA Practice PAPER execution/runtime/activation/reconciliation capability.
 
-PAPER/LIVE broker execution, broker reconciliation, and capital-capable runtime behavior are not committed-main capabilities unless current code and tests explicitly show otherwise.
+Atlas is currently undeployed. Development-era prototype compatibility is not automatically permanent; retain it only when current behavior, deliberately retained evidence, or an explicit transition requires it.
 
-Do not infer a future capability from historical workstreams.
+PAPER capability remains guarded: starting Atlas, starting `atlas-runtime`, inspecting broker state, or possessing configured credentials does not authorize trading. LIVE broker execution is not a committed-main capability. Do not infer a future capability from historical workstreams.
 
 ## Engineering rules
 
@@ -68,6 +68,22 @@ Do not infer a future capability from historical workstreams.
 - Keep external provider payloads behind normalization boundaries.
 - Keep credentials in ignored environment files. Never persist or log secrets.
 - Treat unknown, stale, contradictory, partial, or failed financial state explicitly. Do not convert uncertainty into success.
+
+### Provider-first
+
+Before Atlas derives, reconstructs, hard-codes, or maintains a market, account, execution, pricing, conversion, margin, instrument, or transaction fact, determine whether the provider already exposes the authoritative fact. Prefer normalized provider truth. Atlas should own Atlas decisions, not duplicate the broker's ledger or market metadata. This is an engineering rule, not a reason to generalize provider infrastructure.
+
+### Complexity ratchet
+
+Generated files are exempt. For hand-maintained production code:
+
+- A new module should normally target approximately 400 lines or fewer.
+- A new module above approximately 600 lines requires explicit PLAN justification based on cohesion.
+- An existing file at or above 800 lines must not receive a new responsibility without extracting a cohesive boundary.
+- An existing file at or above 800 lines should not grow by more than approximately 50 net lines unless the PLAN explicitly explains why the behavior belongs there.
+- For files above 1,200 lines, separable new behavior should normally be implemented in a new cohesive module rather than extending the existing file.
+- These are ratchets, not automatic refactor triggers. Do not split a cohesive state machine merely to satisfy a line count.
+- Every future Feature/Critical PLAN should identify expected files to modify/create and call out any large-file growth exception.
 
 ## Trading boundaries
 
@@ -105,6 +121,22 @@ ATLAS_TEST_DATABASE_URL=<dedicated *_test database> uv run pytest -m integration
 npm run check:web
 npm run test:e2e
 ```
+
+### Temporary Pyright baseline policy
+
+- The repository-wide `uv run pyright backend` result is a recorded baseline, not a
+  clean gate. Record its total errors, warnings, and informations truthfully.
+- For every touched production Python file, compare focused structured Pyright output
+  before and after the change using the same locked environment. The change must add
+  no diagnostic absent from that file's baseline; an isolated clean surface must
+  remain at zero diagnostics.
+- Apply the same no-new-diagnostics comparison to touched test files against their
+  test-file baseline.
+- A valid structured report with a diagnostic exit status is distinct from a
+  command/runtime failure. Report missing or invalid output, tool failures, and
+  `uv` failures separately.
+- Do not disable a Pyright rule or change Pyright configuration or lock state merely
+  to make this baseline green.
 
 Integration tests must use a dedicated PostgreSQL test database.
 

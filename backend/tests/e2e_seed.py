@@ -109,7 +109,7 @@ def main() -> None:
             # Keep the invalid snapshot's coverage facts distinct from the
             # valid zero-Trade fixture; its sparse execution remains invalid.
             invalid_id, invalid_snapshot_id, _ = _seed(session, "LONG", m15_count=104)
-            # The test database may still contain the retired Phase 4 insert
+            # The test database may still contain the retired legacy insert
             # trigger, which changes current-model inserts from PENDING to
             # RUNNING. Restore the intended command boundary for these E2E
             # fixtures without changing application or migration behavior.

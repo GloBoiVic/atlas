@@ -2,8 +2,6 @@
 import { ApiError } from '../../lib/api-client';
 import { formatInstrumentDisplay } from '../../lib/instrument';
 import {
-  formatChartTime,
-  formatChartTick,
   formatInstant,
   parseUtcInput,
   utcInputFromInstant,
@@ -17,16 +15,6 @@ import {
 
 export type Json = Record<string, unknown>;
 export type Status = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED';
-type ChartPoint = { time: import('lightweight-charts').Time };
-
-// Lightweight Charts rejects non-ascending or duplicate timestamps.
-export const strictlyAscending = <T extends ChartPoint>(points: T[]): T[] => {
-  const sorted = [...points].sort((a, b) => Number(a.time) - Number(b.time));
-  return sorted.filter(
-    (point, index) =>
-      index === 0 || Number(point.time) > Number(sorted[index - 1].time),
-  );
-};
 
 export const object = (value: unknown): Json =>
   value && typeof value === 'object' ? (value as Json) : {};

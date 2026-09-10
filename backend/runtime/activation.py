@@ -807,10 +807,6 @@ class PaperRuntimeService:
             .limit(1)
         )
 
-    def _unsafe_attempt_exists(self, session: Session, account_id: str) -> bool:
-        """Use the repository's single durable-attempt safety predicate."""
-        return self._repository.has_unsafe_attempt(session, account_id)
-
     def _new_session_history_blocker_exists(
         self, session: Session, account_id: str
     ) -> bool:

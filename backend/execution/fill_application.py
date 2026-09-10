@@ -103,10 +103,10 @@ def apply_fill(
             )
         )
         # Historical V2 uses the same constrained exit-reason vocabulary as
-        # the original Phase 4 model.  Keep the legacy value for persisted
-        # Phase 4 rows while ensuring V2 end-of-experiment fills are not
+        # the earlier historical model. Keep the legacy value for persisted
+        # earlier historical rows while ensuring V2 end-of-experiment fills are not
         # misclassified as the unrestricted live/runtime EXIT reason.
-        phase4 = model_version in {
+        uses_historical_end_close_reason = model_version in {
             "PHASE4_HISTORICAL_EXECUTION_V1",
             "PHASE5_HISTORICAL_EXECUTION_V2",
         }
@@ -215,7 +215,9 @@ def apply_fill(
             trade.exit_reason = (
                 "STOP_LOSS" if order.purpose == "STOP_LOSS"
                 else "TAKE_PROFIT" if order.purpose == "TAKE_PROFIT"
-                else "END_OF_EXPERIMENT" if phase4 else "EXIT"
+                else "END_OF_EXPERIMENT"
+                if uses_historical_end_close_reason
+                else "EXIT"
             )
             trade.commission_cost = (trade.commission_cost or _ZERO) + fill.fee
             trade.financing_cost = None

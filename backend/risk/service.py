@@ -1,4 +1,4 @@
-"""Small, deterministic, fail-closed Risk service for Phase 3.
+"""Small, deterministic, fail-closed Risk service.
 
 Risk accepts facts explicitly.  It does not read persistence, call a broker,
 or submit an Order.  In particular, Strategy owns neither account state nor
@@ -82,7 +82,7 @@ class RiskDecision:
 
 
 class RiskService:
-    """The sole Phase 3 authority for entry eligibility and sizing."""
+    """The sole Risk authority for entry eligibility and sizing."""
 
     def evaluate_pre_flight(
         self,

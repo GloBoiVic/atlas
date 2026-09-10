@@ -1,5 +1,3 @@
-import { formatChartTick, formatChartTime } from '../../lib/time';
-
 const chartRoleVariables = {
   background: 'var(--atlas-color-background)',
   surface: 'var(--atlas-color-surface)',
@@ -34,13 +32,6 @@ export const chartRoles = new Proxy(chartRoleVariables, {
   },
 });
 
-type DisplayZone = Parameters<typeof formatChartTime>[1];
-export const chartTime = (time: number, zone?: DisplayZone) =>
-  formatChartTime(time, zone);
-export const chartTick = (time: number, zone?: DisplayZone) =>
-  formatChartTick(time, zone);
-
-export type Json = Record<string, unknown>;
 export type ChartPoint = { time: import('lightweight-charts').Time };
 
 /** Lightweight Charts rejects non-ascending or duplicate timestamps. */

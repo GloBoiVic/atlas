@@ -25,7 +25,7 @@ from backend.experiments.configuration import (
 from backend.strategies.production import create_production_strategy_registry
 
 
-def test_configuration_derives_only_supported_phase4_assumptions() -> None:
+def test_configuration_uses_supported_historical_execution_assumptions() -> None:
     assert risk_config(Decimal("0.01")) == {
         "schema_version": RISK_SCHEMA_VERSION,
         "risk_per_trade": "0.01",

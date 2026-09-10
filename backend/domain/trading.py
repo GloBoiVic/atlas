@@ -1,8 +1,8 @@
-"""Strict financial Position value objects for the Phase 3 trading boundary.
+"""Strict financial Position value objects at the trading boundary.
 
 This module is deliberately separate from ``domain.strategy``.  A strategy's
 PositionState is an evaluation input; Position is the financial exposure
-projection that is changed only by a Fill in later Phase 3 work.
+projection that is changed only by a Fill in the execution path.
 """
 
 from dataclasses import dataclass

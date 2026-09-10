@@ -46,7 +46,7 @@ def create_database_engine(settings: Settings) -> Engine:
 
 def create_session_factory(engine: Engine) -> sessionmaker[Session]:
     configure_utc_session_timezone(engine)
-    # Phase 4's historical runner creates dependent facts and then reads them
+    # The historical runner creates dependent facts and then reads them
     # again within the caller-owned transaction.  Keep the application session
     # factory's flush behavior aligned with the direct runner/lifecycle path;
     # disabling autoflush makes the API composition unable to observe pending

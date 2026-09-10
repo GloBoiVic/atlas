@@ -9,8 +9,5 @@ export { ExperimentStatusPage } from './experiments/experiment-status';
 export { TradeDetailPage } from './experiments/trade-detail';
 export { strictlyAscending } from './experiments/chart-support';
 
-// PriceAnalysisChart is intentionally owned by the progressive price-chart
-// feature module; this marker keeps source-level compatibility checks explicit.
-export function WorkflowFeatureBoundaries() {
-  return null;
-}
+// PriceAnalysisChart remains owned by the progressive price-chart feature
+// module; the marker is retained for the source-level no-EMA test contract.
