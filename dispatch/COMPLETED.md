@@ -1,5 +1,31 @@
 # Completed
 
+<!-- completion-id: development-baseline-consolidation -->
+## Development Baseline Consolidation
+
+- **Date/status:** 2026-09-10 - terminal closure; T001-T004 BUILD, independent validation,
+  initial review, R001 remediation BUILD/VALIDATE/REVIEW, and Git End completed.
+- **Commit:** `e122aaa` Consolidate development baseline; fast-forward merged into `main`.
+- **Scope:** Corrected current README and AGENTS capability truth, undeployed/non-authorization,
+  provider-first, complexity-ratchet, and temporary Pyright policy guidance. Recorded the
+  contradictory Pyright baseline and compatibility classifications, mechanically removed
+  proven duplicate/dead symbols, and preserved current/evidence/transition-bound seams.
+  No GBP/JPY, Strategy SDK, EMA refinement, Experiment redesign, LIVE capability, migration,
+  database reset, persisted-data rewrite, or trading/safety semantic change was introduced.
+- **Validation:** Safe backend suite passed with 1,296 tests; `npm run check:web` passed with
+  146 frontend tests and production build; changed-surface Ruff/Pyright, Prettier, ESLint,
+  and diff checks passed. Repository-wide Pyright remains a truthful 3,011-error baseline;
+  existing Ruff/format/frontend warning debt and intermittent Vitest teardown behavior remain
+  documented as non-blocking tooling debt. Integration, external, and seeded E2E operations
+  were not run under the approved no-provider/no-database-reset boundary.
+- **Review:** Initial independent review findings F-001/F-002 were closed by R001. Final
+  R001 independent REVIEW **PASS** found no unresolved Critical or Important findings and
+  recommended proceeding to the next workstream after merge.
+- **Git/state:** Feature branch was pushed to GitHub and fast-forward merged into `main`;
+  `dispatch/ACTIVE.md` was cleared. Atlas is ready to begin Market Capability 01 - GBP/JPY
+  on OANDA Practice as a separate approved workstream. No credentials, runtime, PAPER,
+  broker, OANDA, or capital-capable operation occurred.
+
 <!-- completion-id: paper-control-01-trader-activation-supervision -->
 ## PAPER Control 01 — Trader Activation & Supervision
 
