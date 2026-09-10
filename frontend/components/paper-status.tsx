@@ -1,9 +1,15 @@
 'use client';
 
-import { useCallback } from 'react';
-import { atlasApi } from '../lib/api-client';
+import Link from 'next/link';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { atlasApi, ApiError } from '../lib/api-client';
 import { formatInstrumentDisplay } from '../lib/instrument';
 import { formatInstant } from '../lib/time';
+import {
+  formatPaperLifecycle,
+  formatPaperOperationalPhase,
+  PAPER_STOP_REASON,
+} from '../lib/paper-control';
 import { useDisplayTimeZone } from '../app/providers';
 import { PaperBrokerStateSection } from './paper-broker-state';
 import { PaperTradeHistory } from './paper-trade-history';
@@ -12,6 +18,7 @@ import {
   LoadingState,
   ReadError,
   UnavailableState,
+  type ReadState,
   useReadResource,
 } from './read-resource';
 import type { components } from '../lib/api.generated';
@@ -19,8 +26,36 @@ import type { components } from '../lib/api.generated';
 type PaperCapability = components['schemas']['PaperCapabilityResponse'];
 type PaperStatus = components['schemas']['PaperRuntimeStatusResponse'];
 
+const PAPER_STATUS_POLL_MS = 3000;
+const TERMINAL_LIFECYCLE_STATES = new Set(['STOPPED', 'BLOCKED', 'FAILED']);
+
 const display = (value: string | number | boolean | null | undefined) =>
   value === null || value === undefined || value === '' ? '—' : String(value);
+
+const isTerminalLifecycle = (value: string) =>
+  TERMINAL_LIFECYCLE_STATES.has(value);
+
+function formatRiskPercentage(value: string | undefined): string {
+  if (!value) return 'Unavailable';
+  const [wholeText, fractionalText = ''] = value.trim().split('.');
+  if (!/^\d+$/.test(wholeText) || !/^\d*$/.test(fractionalText)) {
+    return `${value} ratio`;
+  }
+
+  const digits = `${wholeText}${fractionalText}`;
+  const decimalIndex = wholeText.length + 2;
+  const percentage =
+    decimalIndex >= digits.length
+      ? `${digits}${'0'.repeat(decimalIndex - digits.length)}`
+      : `${digits.slice(0, decimalIndex)}.${digits.slice(decimalIndex)}`;
+  const [percentageWhole, percentageFraction = ''] = percentage.split('.');
+  const normalizedWhole = percentageWhole.replace(/^0+/, '') || '0';
+  const normalizedFraction = percentageFraction.replace(/0+$/, '');
+  return `${normalizedWhole}${normalizedFraction ? `.${normalizedFraction}` : ''}%`;
+}
+
+const stopAccepted = (value: string) =>
+  value === 'STOP_REQUESTED' || value === 'STOPPED';
 
 function Fact({ label, value }: { label: string; value: string }) {
   return (
@@ -88,14 +123,35 @@ export function PaperCapabilitySection({
   );
 }
 
-function PaperStatusFacts({ data }: { data: PaperStatus }) {
+function PaperStatusFacts({
+  data,
+  lifecycleState,
+}: {
+  data: PaperStatus;
+  lifecycleState: string;
+}) {
   const { timeZone } = useDisplayTimeZone();
   const activation = data.activation;
   return (
     <div className="space-y-4">
       <dl className="grid gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
-        <Fact label="Lifecycle state" value={activation.lifecycleState} />
-        <Fact label="Operational phase" value={activation.operationalPhase} />
+        <Fact label="Strategy" value={activation.strategyKey} />
+        <Fact
+          label="StrategyVersion"
+          value={`v${activation.strategyVersionNumber}`}
+        />
+        <Fact
+          label="Risk per trade"
+          value={formatRiskPercentage(activation.riskPerTrade)}
+        />
+        <Fact
+          label="Lifecycle state"
+          value={formatPaperLifecycle(lifecycleState)}
+        />
+        <Fact
+          label="Operational phase"
+          value={formatPaperOperationalPhase(activation.operationalPhase)}
+        />
         <Fact
           label="Current financial position state"
           value={display(data.currentFinancialPositionState)}
@@ -134,13 +190,67 @@ function PaperStatusFacts({ data }: { data: PaperStatus }) {
 }
 
 function CompactPaperStatus({ data }: { data: PaperStatus }) {
+  const lifecycle = formatPaperLifecycle(data.activation.lifecycleState);
+  const lifecycleClass =
+    data.activation.lifecycleState === 'BLOCKED' ||
+    data.activation.lifecycleState === 'FAILED'
+      ? 'status status-danger'
+      : 'status status-success';
   return (
     <div className="space-y-3">
-      <p className="status status-success">Active</p>
+      <p className={lifecycleClass}>{lifecycle}</p>
       <p className="text-sm text-atlas-foreground-muted">
         Phase{' '}
-        <span className="font-mono">{data.activation.operationalPhase}</span>
+        <span>
+          {formatPaperOperationalPhase(data.activation.operationalPhase)}
+        </span>
       </p>
+    </div>
+  );
+}
+
+function StopConfirmation({
+  submitting,
+  onCancel,
+  onConfirm,
+}: {
+  submitting: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="paper-stop-heading"
+      className="space-y-4 border border-atlas-warning bg-atlas-warning-muted p-4"
+    >
+      <div>
+        <h3 id="paper-stop-heading" className="font-semibold">
+          Stop the PAPER runtime session?
+        </h3>
+        <p className="mt-2 text-sm leading-6 text-atlas-warning">
+          Stopping PAPER does not close or modify broker positions or orders.
+        </p>
+      </div>
+      <div className="flex flex-wrap gap-3">
+        <button
+          type="button"
+          className="action-secondary"
+          disabled={submitting}
+          onClick={onCancel}
+        >
+          Keep running
+        </button>
+        <button
+          type="button"
+          className="action-primary"
+          disabled={submitting}
+          onClick={onConfirm}
+        >
+          {submitting ? 'Requesting stop…' : 'Confirm stop'}
+        </button>
+      </div>
     </div>
   );
 }
@@ -151,7 +261,172 @@ export function PaperActiveStatusSection({
   compact?: boolean;
 }) {
   const loader = useCallback(() => atlasApi.activePaperStatus(), []);
-  const { state, retry } = useReadResource<PaperStatus | null>(loader);
+  const { state: activeState, retry: retryActiveRead } =
+    useReadResource<PaperStatus | null>(loader);
+  const [retainedActivationId, setRetainedActivationId] = useState<
+    string | null
+  >(null);
+  const [detailState, setDetailState] =
+    useState<ReadState<PaperStatus | null> | null>(null);
+  const [detailRetry, setDetailRetry] = useState(0);
+  const [detailPollAttempt, setDetailPollAttempt] = useState(0);
+  const [stopDialogOpen, setStopDialogOpen] = useState(false);
+  const [stopSubmitting, setStopSubmitting] = useState(false);
+  const [stopRequested, setStopRequested] = useState(false);
+  const [stopError, setStopError] = useState('');
+  const discoveredActiveRef = useRef(false);
+  const detailRequestRef = useRef(0);
+  const stopSubmittingRef = useRef(false);
+
+  useEffect(() => {
+    if (activeState.status !== 'ready' || discoveredActiveRef.current) return;
+
+    discoveredActiveRef.current = true;
+    if (activeState.data === null) {
+      // Preserve the active-status empty result as the retained session state.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setDetailState({ status: 'ready', data: null });
+      return;
+    }
+
+    // The active read establishes the durable ID that detail polling retains.
+    setRetainedActivationId(activeState.data.activation.activationId);
+    setDetailState({ status: 'ready', data: activeState.data });
+  }, [activeState]);
+
+  const observedLifecycle =
+    detailState?.status === 'ready' && detailState.data
+      ? detailState.data.activation.lifecycleState
+      : null;
+
+  useEffect(() => {
+    if (
+      !retainedActivationId ||
+      (observedLifecycle !== null && isTerminalLifecycle(observedLifecycle))
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    const timer = globalThis.setTimeout(() => {
+      const requestNumber = ++detailRequestRef.current;
+      atlasApi.paperStatus(retainedActivationId).then(
+        (data) => {
+          if (cancelled || requestNumber !== detailRequestRef.current) return;
+          setDetailState({ status: 'ready', data });
+          if (!isTerminalLifecycle(data.activation.lifecycleState)) {
+            setDetailPollAttempt((attempt) => attempt + 1);
+          }
+        },
+        (error: unknown) => {
+          if (cancelled || requestNumber !== detailRequestRef.current) return;
+          setDetailState({ status: 'error', error });
+        },
+      );
+    }, PAPER_STATUS_POLL_MS);
+
+    return () => {
+      cancelled = true;
+      globalThis.clearTimeout(timer);
+    };
+  }, [detailPollAttempt, detailRetry, observedLifecycle, retainedActivationId]);
+
+  const retryDetail = () => {
+    setDetailState({ status: 'loading' });
+    setDetailRetry((attempt) => attempt + 1);
+  };
+
+  const retryActive = () => {
+    discoveredActiveRef.current = false;
+    setDetailState(null);
+    retryActiveRead();
+  };
+
+  const sessionState: ReadState<PaperStatus | null> =
+    detailState ?? activeState;
+  const sessionData =
+    sessionState.status === 'ready' ? sessionState.data : null;
+  const sessionLifecycle = sessionData?.activation.lifecycleState ?? null;
+  const displayedLifecycle =
+    sessionData &&
+    stopRequested &&
+    !isTerminalLifecycle(sessionData.activation.lifecycleState)
+      ? 'STOP_REQUESTED'
+      : sessionLifecycle;
+  const terminal = sessionLifecycle
+    ? isTerminalLifecycle(sessionLifecycle)
+    : false;
+  const isStopping =
+    sessionData !== null &&
+    (sessionLifecycle === 'STOP_REQUESTED' || stopRequested) &&
+    !terminal;
+
+  const stop = async () => {
+    if (
+      stopSubmittingRef.current ||
+      !retainedActivationId ||
+      !sessionData ||
+      terminal ||
+      sessionLifecycle === 'STOP_REQUESTED'
+    ) {
+      return;
+    }
+
+    stopSubmittingRef.current = true;
+    setStopSubmitting(true);
+    setStopError('');
+    const requestNumber = ++detailRequestRef.current;
+
+    try {
+      const response = await atlasApi.stopPaper(retainedActivationId, {
+        reason: PAPER_STOP_REASON,
+      });
+      if (requestNumber !== detailRequestRef.current) return;
+
+      setStopRequested(!isTerminalLifecycle(response.lifecycleState));
+      setStopDialogOpen(false);
+      setStopError('');
+      if (sessionData) {
+        setDetailState({
+          status: 'ready',
+          data: { ...sessionData, activation: response },
+        });
+      }
+    } catch (error) {
+      if (error instanceof ApiError) {
+        setStopError(`Stop was not accepted. ${error.message}`);
+        setStopDialogOpen(false);
+      } else {
+        try {
+          const detailRequestNumber = ++detailRequestRef.current;
+          const detail = await atlasApi.paperStatus(retainedActivationId);
+          if (detailRequestNumber !== detailRequestRef.current) return;
+
+          setDetailState({ status: 'ready', data: detail });
+          if (stopAccepted(detail.activation.lifecycleState)) {
+            setStopRequested(true);
+            setStopDialogOpen(false);
+            setStopError('');
+          } else {
+            setStopRequested(false);
+            setStopDialogOpen(false);
+            setStopError(
+              'Stop outcome is uncertain. Atlas did not confirm STOP_REQUESTED or STOPPED. Retry explicitly.',
+            );
+          }
+        } catch (readError) {
+          setStopRequested(false);
+          setStopDialogOpen(false);
+          setStopError(
+            `Stop outcome is uncertain. The read-only status check failed: ${readError instanceof Error ? readError.message : 'Atlas could not confirm the session state.'}`,
+          );
+        }
+      }
+    } finally {
+      stopSubmittingRef.current = false;
+      setStopSubmitting(false);
+    }
+  };
 
   return (
     <section
@@ -169,38 +444,87 @@ export function PaperActiveStatusSection({
           </p>
         )}
       </div>
-      {state.status === 'loading' && (
+      {sessionState.status === 'loading' && (
         <LoadingState label={compact ? 'runtime' : 'Runtime status'} />
       )}
-      {state.status === 'error' &&
+      {sessionState.status === 'error' &&
         (compact ? (
           <div className="space-y-3">
             <UnavailableState>Runtime unavailable</UnavailableState>
             <button
               type="button"
-              onClick={retry}
+              onClick={sessionState === activeState ? retryActive : retryDetail}
               className="text-sm font-medium text-atlas-primary underline-offset-2 hover:underline"
             >
               Retry
             </button>
           </div>
         ) : (
-          <ReadError error={state.error} retry={retry} />
+          <ReadError
+            error={sessionState.error}
+            retry={sessionState === activeState ? retryActive : retryDetail}
+          />
         ))}
-      {state.status === 'ready' &&
-        (state.data === null ? (
+      {sessionState.status === 'ready' &&
+        (sessionState.data === null ? (
           compact ? (
             <EmptyState>No active runtime</EmptyState>
           ) : (
-            <EmptyState>
-              No active PAPER activation reported. Current-state result:{' '}
-              <span className="font-mono">PAPER_ACTIVATION_NOT_ACTIVE</span>
-            </EmptyState>
+            <div className="space-y-4">
+              <EmptyState>No active PAPER session</EmptyState>
+              <Link href="/paper/activate" className="action-primary">
+                Activate PAPER
+              </Link>
+            </div>
           )
-        ) : compact ? (
-          <CompactPaperStatus data={state.data} />
         ) : (
-          <PaperStatusFacts data={state.data} />
+          <div className="space-y-5">
+            {compact ? (
+              <CompactPaperStatus data={sessionState.data} />
+            ) : (
+              <>
+                {stopError && (
+                  <p
+                    role="alert"
+                    className="border-l-2 border-atlas-warning bg-atlas-warning-muted p-3 text-sm text-atlas-warning"
+                  >
+                    {stopError}
+                  </p>
+                )}
+                <PaperStatusFacts
+                  data={sessionState.data}
+                  lifecycleState={displayedLifecycle ?? sessionLifecycle ?? ''}
+                />
+                {isStopping && (
+                  <p className="text-sm text-atlas-warning" role="status">
+                    Stop requested. Atlas is waiting for durable terminal
+                    session state.
+                  </p>
+                )}
+                {!terminal && !isStopping && (
+                  <>
+                    <button
+                      type="button"
+                      className="action-secondary"
+                      onClick={() => {
+                        setStopError('');
+                        setStopDialogOpen(true);
+                      }}
+                    >
+                      Stop PAPER
+                    </button>
+                    {stopDialogOpen && (
+                      <StopConfirmation
+                        submitting={stopSubmitting}
+                        onCancel={() => setStopDialogOpen(false)}
+                        onConfirm={stop}
+                      />
+                    )}
+                  </>
+                )}
+              </>
+            )}
+          </div>
         ))}
     </section>
   );
@@ -211,7 +535,7 @@ export function PaperStatus() {
     <div className="mx-auto flex w-full max-w-5xl flex-col gap-8">
       <header className="max-w-3xl">
         <p className="mb-2 text-sm font-medium text-atlas-primary">
-          Read-only PAPER status
+          PAPER supervision
         </p>
         <h1
           id="paper-heading"
@@ -220,9 +544,9 @@ export function PaperStatus() {
           PAPER
         </h1>
         <p className="mt-3 text-sm leading-6 text-atlas-foreground-muted">
-          Current PAPER capability, broker exposure, and runtime status are
-          observable here, but this surface does not control the runtime or
-          broker.
+          Supervise the PAPER runtime separately from current broker exposure.
+          Stopping the runtime does not close or modify broker positions or
+          orders.
         </p>
       </header>
       <div className="rounded-lg border border-atlas-border bg-atlas-surface p-5">

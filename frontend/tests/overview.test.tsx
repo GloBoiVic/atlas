@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => ({
   paperBrokerState: vi.fn(),
   listPaperTrades: vi.fn(),
   activePaperStatus: vi.fn(),
+  paperStatus: vi.fn(),
+  stopPaper: vi.fn(),
 }));
 
 vi.mock('next/link', () => ({
@@ -122,6 +124,13 @@ beforeEach(() => {
   mocks.paperBrokerState.mockResolvedValue(brokerState);
   mocks.listPaperTrades.mockResolvedValue({ items: [completedPaperTrade] });
   mocks.activePaperStatus.mockResolvedValue(null);
+  mocks.paperStatus.mockResolvedValue({
+    activation: {
+      activationId: 'activation-1',
+      lifecycleState: 'REQUESTED',
+      operationalPhase: 'STARTING',
+    },
+  });
 });
 afterEach(() => cleanup());
 
@@ -330,8 +339,9 @@ describe('Overview surface', () => {
   it('uses compact runtime state and keeps broker refresh read-only', async () => {
     mocks.activePaperStatus.mockResolvedValue({
       activation: {
-        lifecycleState: 'ACTIVE',
-        operationalPhase: 'RUNNING',
+        activationId: 'activation-1',
+        lifecycleState: 'REQUESTED',
+        operationalPhase: 'STARTING',
         stateChangedAt: '2026-01-01T00:00:00Z',
         stateReasonCode: 'PAPER_RUNNING',
         stateDetail: 'Current runtime status is reported.',
@@ -343,8 +353,10 @@ describe('Overview surface', () => {
     });
     render(<Overview />);
 
-    expect(await screen.findByText('Active')).toBeInTheDocument();
-    expect(screen.getAllByText('RUNNING')).not.toHaveLength(0);
+    expect(
+      await screen.findByText('Approved — waiting for Atlas runtime'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Starting')).toBeInTheDocument();
     expect(
       screen.queryByText('PAPER_ACTIVATION_NOT_ACTIVE'),
     ).not.toBeInTheDocument();
@@ -355,5 +367,25 @@ describe('Overview surface', () => {
     expect(
       screen.queryByText(/Buy|Sell|Activate|Reconcile/),
     ).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ['BLOCKED', 'Blocked'],
+    ['FAILED', 'Failed'],
+  ])('does not style compact %s as success', async (lifecycle, label) => {
+    mocks.activePaperStatus.mockResolvedValue({
+      activation: {
+        activationId: 'activation-1',
+        lifecycleState: lifecycle,
+        operationalPhase: lifecycle,
+      },
+    });
+    render(<Overview />);
+
+    const lifecycleStatus = await screen.findByText(label, {
+      selector: 'p.status',
+    });
+    expect(lifecycleStatus).toHaveClass('status-danger');
+    expect(lifecycleStatus).not.toHaveClass('status-success');
   });
 });

@@ -168,6 +168,38 @@ export const atlasApi = {
         return null;
       throw error;
     }),
+  activatePaper: (
+    body: Omit<
+      components['schemas']['PaperActivationRequest'],
+      'riskPerTrade'
+    > & {
+      riskPerTrade: string;
+    },
+  ) =>
+    request<components['schemas']['PaperRuntimeActivationResultResponse']>(
+      '/api/v1/paper/activations',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      },
+    ),
+  paperStatus: (activationId: string) =>
+    request<components['schemas']['PaperRuntimeStatusResponse']>(
+      `/api/v1/paper/activations/${encodeURIComponent(activationId)}`,
+    ),
+  stopPaper: (
+    activationId: string,
+    body: components['schemas']['PaperStopRequest'],
+  ) =>
+    request<components['schemas']['PaperRuntimeActivationResponse']>(
+      `/api/v1/paper/activations/${encodeURIComponent(activationId)}/stop`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      },
+    ),
   getStrategy: (strategyKey: string) =>
     request<components['schemas']['StrategyDetailResponse']>(
       `/api/v1/strategies/${encodeURIComponent(strategyKey)}`,

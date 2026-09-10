@@ -135,4 +135,71 @@ describe('comparison API client contract', () => {
       status: 503,
     });
   });
+
+  it('posts the stable typed PAPER activation body without changing its risk string', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ activation: {}, replayed: false }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const body = {
+      activationRequestId: '11111111-1111-1111-1111-111111111111',
+      strategyVersionId: '22222222-2222-2222-2222-222222222222',
+      parameters: { lookback: 20 },
+      riskPerTrade: '0.005',
+      confirmation: 'ACTIVATE_PAPER' as const,
+    };
+
+    await atlasApi.activatePaper(body);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/atlas-api/api/v1/paper/activations',
+      expect.objectContaining({
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      }),
+    );
+  });
+
+  it('gets PAPER activation detail by its encoded ID', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ activation: {} }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await atlasApi.paperStatus('activation/request');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/atlas-api/api/v1/paper/activations/activation%2Frequest',
+      expect.objectContaining({ headers: { Accept: 'application/json' } }),
+    );
+  });
+
+  it('posts the bounded runtime-only PAPER stop request', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ activationId: 'activation-1' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const body = { reason: 'Trader requested stop from Atlas UI.' };
+
+    await atlasApi.stopPaper('activation-1', body);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/atlas-api/api/v1/paper/activations/activation-1/stop',
+      expect.objectContaining({
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      }),
+    );
+  });
 });
