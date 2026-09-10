@@ -51,6 +51,26 @@ describe('comparison API client contract', () => {
     ).toBe(true);
   });
 
+  it('requests bounded completed PAPER trade history with the typed response', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ items: [] }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(atlasApi.listPaperTrades({ limit: 20 })).resolves.toEqual({
+      items: [],
+    });
+
+    const requestUrl = new URL(
+      fetchMock.mock.lastCall?.[0] as string,
+      'http://localhost',
+    );
+    expect(requestUrl.pathname).toBe('/atlas-api/api/v1/paper/trades');
+    expect(requestUrl.searchParams.get('limit')).toBe('20');
+    expect(fetchMock.mock.lastCall?.[1]?.method).toBeUndefined();
+  });
+
   it('does not map paper broker 404 to empty', async () => {
     vi.stubGlobal(
       'fetch',

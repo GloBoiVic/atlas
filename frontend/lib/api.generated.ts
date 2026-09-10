@@ -448,6 +448,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/v1/paper/trades': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Trades */
+    get: operations['trades_api_v1_paper_trades_get'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1104,6 +1121,48 @@ export interface components {
       closingTransactionId: string | null;
       /** Exactcloseprice */
       exactClosePrice: string | null;
+    };
+    /** PaperTradeHistoryItemResponse */
+    PaperTradeHistoryItemResponse: {
+      /** Strategykey */
+      strategyKey: string;
+      /** Strategyname */
+      strategyName: string;
+      /** Strategyversionnumber */
+      strategyVersionNumber: number;
+      /** Instrument */
+      instrument: string;
+      /** Direction */
+      direction: string;
+      /** Units */
+      units: string;
+      /** Entryprice */
+      entryPrice: string;
+      /** Enteredat */
+      enteredAt: string;
+      /** Stopprice */
+      stopPrice: string | null;
+      /** Targetprice */
+      targetPrice: string | null;
+      /** Initialrisk */
+      initialRisk: string | null;
+      /** Closedat */
+      closedAt: string;
+      /** Averagecloseprice */
+      averageClosePrice: string;
+      /** Realizedpl */
+      realizedPl: string;
+      /** Financing */
+      financing: string;
+      /** Dividendadjustment */
+      dividendAdjustment: string;
+      /** Exitcause */
+      exitCause: string | null;
+    };
+    /** PaperTradeHistoryResponse */
+    PaperTradeHistoryResponse: {
+      /** Items */
+      items: components['schemas']['PaperTradeHistoryItemResponse'][];
     };
     /** PeriodRequest */
     PeriodRequest: {
@@ -2236,6 +2295,37 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['PaperBrokerStateResponse'];
+        };
+      };
+    };
+  };
+  trades_api_v1_paper_trades_get: {
+    parameters: {
+      query?: {
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['PaperTradeHistoryResponse'];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['HTTPValidationError'];
         };
       };
     };

@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
-from typing import Any
+from collections.abc import Callable, Generator
+from typing import Annotated, Any, cast
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.orm import Session
 
+from backend.paper.trade_history import (
+    PaperTradeHistoryReadError,
+    PaperTradeHistoryReadService,
+)
+from backend.persistence.database import session_scope
 from backend.runtime.activation import (
     PaperActivationRequest,
     PaperRuntimeConfigurationError,
@@ -27,6 +33,7 @@ from .schemas import (
     PaperRuntimeActivationResultResponse,
     PaperRuntimeReconcileResponse,
     PaperRuntimeStatusResponse,
+    PaperTradeHistoryResponse,
 )
 from .schemas import (
     PaperStopRequest as PaperStopHttpRequest,
@@ -114,10 +121,30 @@ def _invoke[Result](operation: Callable[[], Result]) -> Result:
 
 
 def create_paper_router(
-    *, service: Any, broker_state_reader: Callable[[], Any] | None = None
+    *,
+    service: Any,
+    broker_state_reader: Callable[[], Any] | None = None,
+    session_factory: Callable[[], Any] | None = None,
+    trade_history_service: PaperTradeHistoryReadService | None = None,
 ) -> APIRouter:
     """Create the local PAPER control/status surface over one service."""
     router = APIRouter(prefix="/api/v1/paper", tags=["paper"])
+    history = trade_history_service or PaperTradeHistoryReadService()
+
+    def session() -> Generator[Session]:
+        if session_factory is None:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": {
+                        "code": "PAPER_TRADE_HISTORY_UNAVAILABLE",
+                        "message": "Completed PAPER Trade history is unavailable.",
+                        "details": {},
+                    }
+                },
+            )
+        with session_scope(cast(Any, session_factory)) as db:
+            yield db
 
     @router.get("/capability", response_model=PaperCapabilityResponse)
     def capability() -> dict[str, object]:
@@ -242,6 +269,38 @@ def create_paper_router(
             "account_currency": str(inventory.identity.base_currency),
             "open_trades": open_trades,
         }
+
+    @router.get("/trades", response_model=PaperTradeHistoryResponse)
+    def trades(
+        db: Session = Depends(session),  # noqa: B008
+        limit: Annotated[int, Query(ge=1, le=50)] = 10,
+    ) -> dict[str, object]:
+        try:
+            items = history.list(db, limit)
+        except PaperTradeHistoryReadError as error:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error": {
+                        "code": error.code,
+                        "message": str(error),
+                        "details": {},
+                    }
+                },
+            ) from error
+        except Exception as error:  # noqa: BLE001
+            logger.error("PAPER Trade history route failed: %s", type(error).__name__)
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "error": {
+                        "code": "PAPER_TRADE_HISTORY_INTERNAL_ERROR",
+                        "message": "Completed PAPER Trade history could not be read.",
+                        "details": {},
+                    }
+                },
+            ) from error
+        return {"items": [item.to_json() for item in items]}
 
     return router
 

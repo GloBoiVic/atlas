@@ -551,6 +551,30 @@ class PaperBrokerStateResponse(StrictModel):
     open_trades: list[PaperBrokerTradeResponse]
 
 
+class PaperTradeHistoryItemResponse(StrictModel):
+    strategy_key: str
+    strategy_name: str
+    strategy_version_number: int
+    instrument: str
+    direction: str
+    units: str
+    entry_price: str
+    entered_at: str
+    stop_price: str | None
+    target_price: str | None
+    initial_risk: str | None
+    closed_at: str
+    average_close_price: str
+    realized_pl: str
+    financing: str
+    dividend_adjustment: str
+    exit_cause: str | None
+
+
+class PaperTradeHistoryResponse(StrictModel):
+    items: list[PaperTradeHistoryItemResponse]
+
+
 class ComparisonDifferenceResponse(StrictModel):
     path: str
     values: dict[str, Any]

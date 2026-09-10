@@ -8,6 +8,7 @@ import { useDisplayTimeZone } from '../app/providers';
 import { EmptyState, LoadingState, useReadResource } from './read-resource';
 import { PaperActiveStatusSection } from './paper-status';
 import { PaperBrokerStateSection } from './paper-broker-state';
+import { PaperTradeHistory } from './paper-trade-history';
 import {
   experimentHeadlineMetrics,
   experimentIdentity,
@@ -287,6 +288,9 @@ export function Overview() {
           <div className="mt-6 border-t border-atlas-border pt-6">
             <PaperActiveStatusSection compact />
           </div>
+        </div>
+        <div className="rounded-lg border border-atlas-border bg-atlas-surface p-5 lg:col-span-3">
+          <PaperTradeHistory compact limit={3} />
         </div>
         <div className="rounded-lg border border-atlas-border bg-atlas-surface p-5">
           <StrategySection />

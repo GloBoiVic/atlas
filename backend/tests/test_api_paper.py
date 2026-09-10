@@ -16,6 +16,7 @@ from backend.api.local_authority import LocalAuthorityMiddleware
 from backend.api.paper import create_paper_router
 from backend.api.schemas import PaperRuntimeActivationResponse
 from backend.domain import FinancialPositionState, ValidatedParameterPayload
+from backend.paper.trade_history import PaperTradeHistoryItem
 from backend.runtime import (
     PaperRuntimeActivation,
     PaperRuntimeActivationResult,
@@ -120,7 +121,47 @@ class _PaperService:
         )
 
 
-def _app(service: object, *, peer: str = "127.0.0.1") -> FastAPI:
+class _ReadSession:
+    def close(self) -> None:
+        pass
+
+
+class _HistoryService:
+    def __init__(self) -> None:
+        self.limits: list[int] = []
+
+    def list(self, _: object, limit: int):
+        self.limits.append(limit)
+        return (
+            PaperTradeHistoryItem(
+                strategy_key="runtime_fixture",
+                strategy_name="Runtime Fixture",
+                strategy_version_number=1,
+                instrument="EUR_USD",
+                direction="SHORT",
+                units="1000",
+                entry_price="1.10000",
+                entered_at="2026-09-03T10:00:00Z",
+                stop_price=None,
+                target_price="1.09000",
+                initial_risk="10.00",
+                closed_at="2026-09-03T11:00:00Z",
+                average_close_price="1.09000",
+                realized_pl="10.00",
+                financing="-0.42",
+                dividend_adjustment="0",
+                exit_cause="TAKE_PROFIT",
+            ),
+        )
+
+
+def _app(
+    service: object,
+    *,
+    peer: str = "127.0.0.1",
+    trade_history_service: object | None = None,
+    session_factory: object | None = None,
+) -> FastAPI:
     app = FastAPI()
     app.add_middleware(LocalAuthorityMiddleware, peer_address_resolver=lambda _: peer)
 
@@ -164,7 +205,13 @@ def _app(service: object, *, peer: str = "127.0.0.1") -> FastAPI:
             status_code=exc.status_code, content=jsonable_encoder(content)
         )
 
-    app.include_router(create_paper_router(service=service))
+    app.include_router(
+        create_paper_router(
+            service=service,
+            trade_history_service=trade_history_service,  # type: ignore[arg-type]
+            session_factory=session_factory,  # type: ignore[arg-type]
+        )
+    )
     return app
 
 
@@ -216,6 +263,49 @@ def test_paper_routes_project_all_control_and_status_seams() -> None:
     assert len(service.activation_requests) == 1
     assert service.stop_requests[0][0] == ACTIVATION_ID
     assert service.reconcile_ids == [ACTIVATION_ID]
+
+
+def test_paper_trade_history_route_is_read_only_and_bounded() -> None:
+    history = _HistoryService()
+    with TestClient(
+        _app(
+            _PaperService(),
+            trade_history_service=history,
+            session_factory=_ReadSession,
+        ),
+        base_url="http://localhost",
+    ) as client:
+        default = client.get("/api/v1/paper/trades")
+        limited = client.get("/api/v1/paper/trades?limit=3")
+        too_small = client.get("/api/v1/paper/trades?limit=0")
+        too_large = client.get("/api/v1/paper/trades?limit=51")
+        posted = client.post("/api/v1/paper/trades")
+
+    assert default.status_code == 200
+    assert limited.status_code == 200
+    assert default.json()["items"][0] == {
+        "strategyKey": "runtime_fixture",
+        "strategyName": "Runtime Fixture",
+        "strategyVersionNumber": 1,
+        "instrument": "EUR_USD",
+        "direction": "SHORT",
+        "units": "1000",
+        "entryPrice": "1.10000",
+        "enteredAt": "2026-09-03T10:00:00Z",
+        "stopPrice": None,
+        "targetPrice": "1.09000",
+        "initialRisk": "10.00",
+        "closedAt": "2026-09-03T11:00:00Z",
+        "averageClosePrice": "1.09000",
+        "realizedPl": "10.00",
+        "financing": "-0.42",
+        "dividendAdjustment": "0",
+        "exitCause": "TAKE_PROFIT",
+    }
+    assert history.limits == [10, 3]
+    assert too_small.status_code == 422
+    assert too_large.status_code == 422
+    assert posted.status_code == 405
 
 
 def test_paper_reconcile_route_projects_bounded_trade_closure() -> None:

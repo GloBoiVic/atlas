@@ -146,6 +146,16 @@ export const atlasApi = {
     request<components['schemas']['PaperBrokerStateResponse']>(
       '/api/v1/paper/broker-state',
     ),
+  listPaperTrades: (
+    query?: operations['trades_api_v1_paper_trades_get']['parameters']['query'],
+  ) => {
+    const params = new URLSearchParams();
+    if (query?.limit !== undefined) params.set('limit', String(query.limit));
+    const suffix = params.size ? `?${params.toString()}` : '';
+    return request<components['schemas']['PaperTradeHistoryResponse']>(
+      `/api/v1/paper/trades${suffix}`,
+    );
+  },
   activePaperStatus: () =>
     request<components['schemas']['PaperRuntimeStatusResponse']>(
       '/api/v1/paper/activations/active',
