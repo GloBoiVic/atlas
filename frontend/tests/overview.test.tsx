@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   listStrategies: vi.fn(),
   listExperiments: vi.fn(),
   paperBrokerState: vi.fn(),
+  listPaperTrades: vi.fn(),
   activePaperStatus: vi.fn(),
 }));
 
@@ -26,6 +27,7 @@ vi.mock('../app/providers', () => ({
 vi.mock('../lib/api-client', () => ({ atlasApi: mocks }));
 
 import { Overview } from '../components/overview';
+import { PaperTradeHistory } from '../components/paper-trade-history';
 
 const brokerState = {
   provider: 'OANDA',
@@ -59,6 +61,26 @@ const completedExperiment = {
     netReturn: { state: 'VALUE', value: 0.017 },
     tradeCount: { state: 'VALUE', value: 1 },
   },
+};
+
+const completedPaperTrade = {
+  strategyKey: 'ema',
+  strategyName: 'EMA Sweep',
+  strategyVersionNumber: 2,
+  instrument: 'EUR_USD',
+  direction: 'SHORT',
+  units: '390663.0000000000',
+  entryPrice: '1.10000',
+  enteredAt: '2026-01-05T08:00:00Z',
+  stopPrice: '1.09500',
+  targetPrice: '1.11000',
+  initialRisk: '0.00500',
+  closedAt: '2026-01-05T09:00:00Z',
+  averageClosePrice: '1.11000',
+  realizedPl: '12.34',
+  financing: '-0.10',
+  dividendAdjustment: '0',
+  exitCause: 'TAKE_PROFIT',
 };
 
 beforeEach(() => {
@@ -98,6 +120,7 @@ beforeEach(() => {
     items: [completedExperiment, { id: 'experiment-2', status: 'RUNNING' }],
   });
   mocks.paperBrokerState.mockResolvedValue(brokerState);
+  mocks.listPaperTrades.mockResolvedValue({ items: [completedPaperTrade] });
   mocks.activePaperStatus.mockResolvedValue(null);
 });
 afterEach(() => cleanup());
@@ -113,6 +136,9 @@ describe('Overview surface', () => {
       await screen.findByRole('heading', { name: 'Paper Trading' }),
     ).toBeInTheDocument();
     expect(
+      await screen.findByRole('heading', { name: 'Recent PAPER trades' }),
+    ).toBeInTheDocument();
+    expect(
       screen.getByRole('heading', { name: 'Strategies' }),
     ).toBeInTheDocument();
     expect(
@@ -123,6 +149,22 @@ describe('Overview surface', () => {
     expect(screen.getAllByText('EMA Sweep v2')).not.toHaveLength(0);
     expect(screen.getByText('Candle Confirmation Break')).toBeInTheDocument();
     expect(screen.getByText('1.70% · 1 trade')).toBeInTheDocument();
+    expect(screen.getByText('EUR/USD')).toBeInTheDocument();
+    expect(screen.getByText('SHORT')).toBeInTheDocument();
+    expect(screen.getByText('390,663 units')).toBeInTheDocument();
+    expect(
+      screen.queryByText('390,663.0000000000 units'),
+    ).not.toBeInTheDocument();
+    expect(screen.getAllByText('Entry')).toHaveLength(2);
+    expect(screen.getByText('Exit')).toBeInTheDocument();
+    expect(screen.getByText('Stop')).toBeInTheDocument();
+    expect(screen.getByText('Target')).toBeInTheDocument();
+    expect(screen.getByText('1.10000')).toBeInTheDocument();
+    expect(screen.getAllByText('1.11000')).toHaveLength(2);
+    expect(screen.getByText('1.09500')).toBeInTheDocument();
+    expect(screen.getByText('Jan 5 · 9:00 AM')).toBeInTheDocument();
+    expect(screen.getByText('Target hit')).toBeInTheDocument();
+    expect(screen.getByText('+$12.34')).toBeInTheDocument();
     expect(screen.getAllByText('Ready')).not.toHaveLength(0);
     expect(screen.getByText('API')).toBeInTheDocument();
     expect(screen.getByText('Database')).toBeInTheDocument();
@@ -155,7 +197,23 @@ describe('Overview surface', () => {
       screen.queryByText('Historical data capability'),
     ).not.toBeInTheDocument();
     expect(mocks.paperBrokerState).toHaveBeenCalledTimes(1);
+    expect(mocks.listPaperTrades).toHaveBeenCalledWith({ limit: 3 });
     expect(mocks.activePaperStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps an unavailable exit cause as compact secondary metadata', async () => {
+    mocks.listPaperTrades.mockResolvedValue({
+      items: [{ ...completedPaperTrade, exitCause: null }],
+    });
+
+    render(<PaperTradeHistory compact limit={3} />);
+
+    expect(
+      await screen.findByText('Exit cause unavailable'),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText('Exit cause', { exact: true }),
+    ).not.toBeInTheDocument();
   });
 
   it('keeps every read section loading independently', () => {
@@ -164,6 +222,7 @@ describe('Overview surface', () => {
     mocks.listStrategies.mockReturnValue(pending);
     mocks.listExperiments.mockReturnValue(pending);
     mocks.paperBrokerState.mockReturnValue(pending);
+    mocks.listPaperTrades.mockReturnValue(pending);
     mocks.activePaperStatus.mockReturnValue(pending);
 
     render(<Overview />);
@@ -173,6 +232,9 @@ describe('Overview surface', () => {
     expect(screen.getByText('Loading Experiments…')).toBeInTheDocument();
     expect(screen.getByText('Loading broker exposure…')).toBeInTheDocument();
     expect(screen.getByText('Loading runtime…')).toBeInTheDocument();
+    expect(
+      screen.getByText('Loading recent PAPER trades…'),
+    ).toBeInTheDocument();
   });
 
   it('keeps successful empty states concise and independent', async () => {
@@ -182,6 +244,7 @@ describe('Overview surface', () => {
       ...brokerState,
       openTrades: [],
     });
+    mocks.listPaperTrades.mockResolvedValue({ items: [] });
 
     render(<Overview />);
 
@@ -189,6 +252,9 @@ describe('Overview surface', () => {
     expect(screen.getByText('No Experiments')).toBeInTheDocument();
     expect(screen.getByText('No open trades')).toBeInTheDocument();
     expect(screen.getByText('No active runtime')).toBeInTheDocument();
+    expect(
+      screen.getByText('No completed PAPER trades yet.'),
+    ).toBeInTheDocument();
     expect(screen.getAllByText('Ready')).not.toHaveLength(0);
     expect(screen.queryByText('Flat')).not.toBeInTheDocument();
   });
@@ -221,6 +287,7 @@ describe('Overview surface', () => {
       await screen.findByText('Strategy catalog offline'),
     ).toBeInTheDocument();
     expect(screen.getByText('EURUSD')).toBeInTheDocument();
+    expect(screen.getByText('EUR/USD')).toBeInTheDocument();
     expect(screen.getByText('Candle Confirmation Break')).toBeInTheDocument();
     expect(screen.getAllByText('Ready')).not.toHaveLength(0);
   });
@@ -238,6 +305,7 @@ describe('Overview surface', () => {
     ).toBeInTheDocument();
     expect(screen.getByText('System read offline')).toBeInTheDocument();
     expect(screen.getByText('EURUSD')).toBeInTheDocument();
+    expect(screen.getByText('EUR/USD')).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: 'Retry' })).not.toHaveLength(
       0,
     );
@@ -285,7 +353,7 @@ describe('Overview surface', () => {
       screen.getByRole('button', { name: 'Refresh broker state' }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByText(/Buy|Sell|Close|Activate|Stop|Reconcile/),
+      screen.queryByText(/Buy|Sell|Activate|Reconcile/),
     ).not.toBeInTheDocument();
   });
 });

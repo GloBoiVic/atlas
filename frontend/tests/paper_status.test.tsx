@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   paperCapability: vi.fn(),
   paperBrokerState: vi.fn(),
+  listPaperTrades: vi.fn(),
   activePaperStatus: vi.fn(),
 }));
 
@@ -52,6 +53,7 @@ beforeEach(() => {
     accountCurrency: 'USD',
     openTrades: [],
   });
+  mocks.listPaperTrades.mockResolvedValue({ items: [] });
   mocks.activePaperStatus.mockResolvedValue(null);
 });
 afterEach(() => cleanup());
@@ -70,6 +72,10 @@ describe('PAPER read-only surface', () => {
     expect(
       screen.getByText(/does not prove broker flatness/),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { name: 'Completed PAPER trades' }),
+    ).toBeInTheDocument();
+    expect(mocks.listPaperTrades).toHaveBeenCalledWith({ limit: 20 });
     expect(screen.getByText('EURUSD')).toBeInTheDocument();
     expect(screen.queryByText('EUR/USD')).not.toBeInTheDocument();
     expect(
@@ -163,6 +169,9 @@ describe('PAPER read-only surface', () => {
     expect(screen.getByText('Loading PAPER capability…')).toBeInTheDocument();
     expect(screen.getByText('Loading PAPER broker state…')).toBeInTheDocument();
     expect(screen.getByText('Loading Runtime status…')).toBeInTheDocument();
+    expect(
+      screen.getByText('Loading completed PAPER trades…'),
+    ).toBeInTheDocument();
   });
 
   it('places broker exposure above runtime and broker before readiness', async () => {
@@ -297,5 +306,80 @@ describe('PAPER read-only surface', () => {
     expect(screen.getByText('100 units')).toBeInTheDocument();
     expect(screen.getByText('200 units')).toBeInTheDocument();
     expect(screen.getAllByText('EURUSD').length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('renders completed trade facts and only promotes exact exit causes', async () => {
+    const trade = {
+      strategyKey: 'ema',
+      strategyName: 'EMA Sweep',
+      strategyVersionNumber: 2,
+      instrument: 'EUR_USD',
+      direction: 'LONG',
+      units: '1000',
+      entryPrice: '1.10000',
+      enteredAt: '2026-01-05T08:00:00Z',
+      stopPrice: '1.09500',
+      targetPrice: '1.11000',
+      initialRisk: '0.00500',
+      closedAt: '2026-01-05T09:00:00Z',
+      averageClosePrice: '1.11000',
+      realizedPl: '12.34',
+      financing: '-0.10',
+      dividendAdjustment: '0.25',
+      exitCause: 'TAKE_PROFIT',
+    };
+    mocks.listPaperTrades.mockResolvedValue({
+      items: [
+        trade,
+        {
+          ...trade,
+          direction: 'SHORT',
+          realizedPl: '-7.89',
+          exitCause: 'STOP_LOSS',
+        },
+        { ...trade, exitCause: 'MARKET_CLOSE' },
+        { ...trade, exitCause: 'MARGIN_CLOSEOUT' },
+        { ...trade, exitCause: 'OTHER' },
+        { ...trade, exitCause: 'UNRESOLVED' },
+        { ...trade, exitCause: 'MULTIPLE' },
+        { ...trade, exitCause: null },
+      ],
+    });
+    render(<PaperStatus />);
+
+    expect(await screen.findByText('Target hit')).toBeInTheDocument();
+    expect(screen.getByText('Stopped out')).toBeInTheDocument();
+    expect(screen.getByText('Market close')).toBeInTheDocument();
+    expect(screen.getByText('Margin closeout')).toBeInTheDocument();
+    expect(screen.getByText('Other broker close')).toBeInTheDocument();
+    expect(screen.getAllByText('Exit cause unavailable')).toHaveLength(3);
+    expect(screen.getAllByText('LONG').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('SHORT').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('+$12.34').length).toBeGreaterThan(0);
+    expect(screen.getByText('-$7.89')).toBeInTheDocument();
+    expect(screen.getAllByText('-$0.10')).toHaveLength(8);
+    expect(screen.getAllByText('+$0.25')).toHaveLength(8);
+    expect(screen.getAllByText('+$0.01')).toHaveLength(8);
+    expect(screen.queryByText('0.00500')).not.toBeInTheDocument();
+    expect(screen.getAllByText('1.09500')).toHaveLength(8);
+    expect(screen.getAllByText('1.11000').length).toBeGreaterThanOrEqual(8);
+    expect(
+      screen.getAllByText(/Jan 5, 2026, 3:00 AM EST/).length,
+    ).toBeGreaterThan(0);
+    expect(screen.queryByText('MULTIPLE')).not.toBeInTheDocument();
+    expect(screen.queryByText('UNRESOLVED')).not.toBeInTheDocument();
+    expect(screen.queryByText('TAKE_PROFIT')).not.toBeInTheDocument();
+  });
+
+  it('keeps history failures non-destructive and retryable', async () => {
+    mocks.listPaperTrades.mockRejectedValue(new Error('provider details'));
+    render(<PaperStatus />);
+
+    expect(
+      await screen.findByText('Completed PAPER trades are unavailable.'),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'PAPER' })).toBeInTheDocument();
+    expect(screen.queryByText('provider details')).not.toBeInTheDocument();
   });
 });

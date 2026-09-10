@@ -6,6 +6,7 @@ import { formatInstrumentDisplay } from '../lib/instrument';
 import { formatInstant } from '../lib/time';
 import { useDisplayTimeZone } from '../app/providers';
 import { PaperBrokerStateSection } from './paper-broker-state';
+import { PaperTradeHistory } from './paper-trade-history';
 import {
   EmptyState,
   LoadingState,
@@ -234,6 +235,9 @@ export function PaperStatus() {
         <div className="space-y-6 rounded-lg border border-atlas-border bg-atlas-surface p-5">
           <PaperActiveStatusSection />
         </div>
+      </div>
+      <div className="rounded-lg border border-atlas-border bg-atlas-surface p-5">
+        <PaperTradeHistory limit={20} />
       </div>
       <aside
         aria-labelledby="paper-safety-heading"

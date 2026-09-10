@@ -31,6 +31,7 @@ from backend.logging import configure_logging
 from backend.market_data.historical_load import HistoricalDataLoadCoordinator
 from backend.market_data.ingestion import MarketDataService
 from backend.paper.reconciliation import PaperReconciliationCoordinator
+from backend.paper.trade_history import PaperTradeHistoryReadService
 from backend.persistence.database import create_database_engine, create_session_factory
 from backend.persistence.experiment_deletion import ExperimentDeletionService
 from backend.persistence.paper_execution_repository import PaperExecutionRepository
@@ -127,6 +128,7 @@ def create_app(
             registry=registry,
             reconciliation=reconciliation,
         )
+    paper_trade_history_service = PaperTradeHistoryReadService()
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -160,6 +162,7 @@ def create_app(
     app.state.experiment_deletion = ExperimentDeletionService()
     app.state.historical_data_coordinator = historical_coordinator
     app.state.paper_runtime_service = paper_runtime_service
+    app.state.paper_trade_history = paper_trade_history_service
     app.include_router(create_health_router(engine))
     app.include_router(
         create_strategy_router(session_factory=session_factory, registry=registry)
@@ -193,6 +196,8 @@ def create_app(
     app.include_router(
         create_paper_router(
             service=paper_runtime_service,
+            session_factory=session_factory,
+            trade_history_service=paper_trade_history_service,
             broker_state_reader=lambda: read_oanda_practice_open_trade_inventory(
                 settings  # type: ignore[arg-type]
             ),
